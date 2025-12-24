@@ -23,6 +23,10 @@ async function createServer() {
         },
         failAction
       },
+      cors: {
+        origin: config.get('cors.origin'),
+        credentials: config.get('cors.credentials')
+      },
       security: {
         hsts: {
           maxAge: 31536000,
