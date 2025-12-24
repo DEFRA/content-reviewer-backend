@@ -26,27 +26,13 @@ const config = convict({
   port: {
     doc: 'The port to bind',
     format: 'port',
-    default: 5000,
+    default: 3001,
     env: 'PORT'
   },
   serviceName: {
     doc: 'Api Service Name',
     format: String,
     default: 'content-reviewer-backend'
-  },
-  cors: {
-    origin: {
-      doc: 'CORS allowed origins',
-      format: Array,
-      default: ['http://localhost:3000'],
-      env: 'CORS_ORIGINS'
-    },
-    credentials: {
-      doc: 'CORS allow credentials',
-      format: Boolean,
-      default: true,
-      env: 'CORS_CREDENTIALS'
-    }
   },
   cdpEnvironment: {
     doc: 'The CDP environment the app is running in. With the addition of "local" for local development',
@@ -88,45 +74,6 @@ const config = convict({
       default: isProduction
         ? ['req.headers.authorization', 'req.headers.cookie', 'res.headers']
         : ['req', 'res', 'responseTime']
-    }
-  },
-  aws: {
-    region: {
-      doc: 'AWS Region',
-      format: String,
-      default: 'eu-west-2',
-      env: 'AWS_REGION'
-    },
-    bedrock: {
-      modelId: {
-        doc: 'AWS Bedrock Model ID',
-        format: String,
-        default: 'anthropic.claude-v2',
-        env: 'BEDROCK_MODEL_ID'
-      },
-      region: {
-        doc: 'AWS Bedrock Region',
-        format: String,
-        default: 'us-east-1',
-        env: 'BEDROCK_REGION'
-      }
-    },
-    s3: {
-      bucket: {
-        doc: 'S3 Bucket for content storage',
-        format: String,
-        default: 'content-reviewer-uploads',
-        env: 'S3_BUCKET'
-      }
-    },
-    sqs: {
-      queueUrl: {
-        doc: 'SQS Queue URL for async processing',
-        format: String,
-        nullable: true,
-        default: null,
-        env: 'SQS_QUEUE_URL'
-      }
     }
   },
   mongo: {
