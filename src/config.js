@@ -132,6 +132,56 @@ const config = convict({
       default: 'x-cdp-request-id',
       env: 'TRACING_HEADER'
     }
+  },
+  cors: {
+    origin: {
+      doc: 'CORS allowed origins',
+      format: Array,
+      default: ['http://localhost:3000'],
+      env: 'CORS_ORIGIN'
+    },
+    credentials: {
+      doc: 'CORS credentials',
+      format: Boolean,
+      default: true,
+      env: 'CORS_CREDENTIALS'
+    }
+  },
+  upload: {
+    s3Bucket: {
+      doc: 'S3 bucket for uploaded files',
+      format: String,
+      default: 'dev-service-optimisation-c63f2',
+      env: 'UPLOAD_S3_BUCKET'
+    },
+    s3Path: {
+      doc: 'S3 path prefix for uploaded files',
+      format: String,
+      default: 'content-uploads',
+      env: 'UPLOAD_S3_PATH'
+    },
+    maxFileSize: {
+      doc: 'Maximum file size in bytes (10MB default)',
+      format: Number,
+      default: 10 * 1024 * 1024,
+      env: 'UPLOAD_MAX_FILE_SIZE'
+    },
+    allowedMimeTypes: {
+      doc: 'Allowed MIME types for uploads',
+      format: Array,
+      default: [
+        'application/pdf',
+        'application/msword',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+      ],
+      env: 'UPLOAD_ALLOWED_MIME_TYPES'
+    },
+    region: {
+      doc: 'AWS region for S3',
+      format: String,
+      default: 'eu-west-2',
+      env: 'AWS_REGION'
+    }
   }
 })
 

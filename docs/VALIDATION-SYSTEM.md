@@ -31,6 +31,7 @@ Frontend Display
 ## Validation Levels
 
 ### Level 1: Critical (MUST PASS)
+
 **These cause FAIL status and trigger retry:**
 
 - ✅ All 11 sections present in markdown
@@ -44,6 +45,7 @@ Frontend Display
 ---
 
 ### Level 2: Important (WARN if fails)
+
 **These cause WARN status but don't block:**
 
 - ⚠️ Character counts within reasonable ranges
@@ -56,6 +58,7 @@ Frontend Display
 ---
 
 ### Level 3: Quality (LOG only)
+
 **These are logged but don't affect status:**
 
 - 📊 Markdown formatting consistency
@@ -132,51 +135,54 @@ Must contain all 6 components:
 ### Basic Validation
 
 ```javascript
-const { validateResponse } = require('./utils/responseValidator');
+const { validateResponse } = require('./utils/responseValidator')
 
-const llmResponse = await getLLMResponse(userInput);
-const validationResult = validateResponse(llmResponse);
+const llmResponse = await getLLMResponse(userInput)
+const validationResult = validateResponse(llmResponse)
 
 if (validationResult.level === 'pass') {
   // Send to frontend
-  return { success: true, response: llmResponse };
+  return { success: true, response: llmResponse }
 }
 
 if (validationResult.level === 'warn') {
   // Send with warning
-  return { 
-    success: true, 
+  return {
+    success: true,
     response: llmResponse,
     warning: 'Response may have minor issues'
-  };
+  }
 }
 
 if (validationResult.level === 'fail') {
   // Retry or error
-  console.error('Validation failed:', validationResult.errors);
+  console.error('Validation failed:', validationResult.errors)
 }
 ```
 
 ### With Auto-Retry
 
 ```javascript
-const { validateResponse, generateRetryPrompt } = require('./utils/responseValidator');
+const {
+  validateResponse,
+  generateRetryPrompt
+} = require('./utils/responseValidator')
 
-let llmResponse = await getLLMResponse(userInput);
-let validationResult = validateResponse(llmResponse);
+let llmResponse = await getLLMResponse(userInput)
+let validationResult = validateResponse(llmResponse)
 
 // Retry once if failed
 if (validationResult.level === 'fail' && validationResult.completeness < 90) {
-  const retryPrompt = generateRetryPrompt(validationResult, userInput);
-  llmResponse = await getLLMResponse(retryPrompt);
-  validationResult = validateResponse(llmResponse);
+  const retryPrompt = generateRetryPrompt(validationResult, userInput)
+  llmResponse = await getLLMResponse(retryPrompt)
+  validationResult = validateResponse(llmResponse)
 }
 
 return {
   success: validationResult.level !== 'fail',
   response: llmResponse,
   validation: validationResult
-};
+}
 ```
 
 ---
@@ -190,6 +196,7 @@ node backend/utils/validationTests.js
 ```
 
 This runs the test suite with mock responses:
+
 - ✅ Complete and valid response
 - ❌ Incomplete response (missing sections)
 - ❌ Invalid JSON structure
@@ -228,36 +235,43 @@ Missing sections: [ 'Content Suitability Assessment', ... ]
 ## Integration Guide
 
 ### Step 1: Update System Prompt
+
 The system prompt in `docs/system-prompt.md` has been updated to:
+
 - Require all 11 sections explicitly
 - Request JSON metadata at the end
 - Show examples of "no issues found" format
 
 ### Step 2: Implement in Controller
+
 The `chatController.js` now:
+
 - Validates every LLM response
 - Auto-retries once if validation fails critically
 - Returns validation metadata to frontend
 
 ### Step 3: Connect Your LLM
+
 Replace the `getLLMResponse()` function in `chatController.js`:
 
 ```javascript
 async function getLLMResponse(message) {
   // Example: OpenAI
   const response = await openai.chat.completions.create({
-    model: "gpt-4",
+    model: 'gpt-4',
     messages: [
-      { role: "system", content: systemPrompt },
-      { role: "user", content: message }
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: message }
     ]
-  });
-  return response.choices[0].message.content;
+  })
+  return response.choices[0].message.content
 }
 ```
 
 ### Step 4: Enhance Frontend
+
 Use the validation metadata in your UI:
+
 - Show completeness score
 - Display issue count badges
 - Filter by priority level
@@ -268,24 +282,28 @@ Use the validation metadata in your UI:
 ## Error Handling
 
 ### Scenario 1: No JSON Block Found
+
 ```
 Error: "No JSON metadata block found in response"
 Action: Return error to user, log for investigation
 ```
 
 ### Scenario 2: Invalid JSON
+
 ```
 Error: "Invalid JSON: Unexpected token..."
 Action: Return error, log raw response for debugging
 ```
 
 ### Scenario 3: Missing Sections
+
 ```
 Error: "Missing required sections: Accessibility Checks, Passive Voice Review"
 Action: Auto-retry with specific instructions
 ```
 
 ### Scenario 4: Out of Range Data
+
 ```
 Warning: "title_character_count (300) out of range [0, 200]"
 Action: Accept but warn user, log for prompt tuning
@@ -324,7 +342,7 @@ console.log('Validation Result:', {
   errors: validationResult.errors.length,
   warnings: validationResult.warnings.length,
   timestamp: new Date().toISOString()
-});
+})
 ```
 
 ---
@@ -332,17 +350,20 @@ console.log('Validation Result:', {
 ## Future Enhancements
 
 ### Phase 1 (Current)
+
 ✅ Basic validation (sections, JSON, data points)
 ✅ Auto-retry logic
 ✅ Mock response testing
 
 ### Phase 2 (Planned)
+
 - [ ] Semantic validation (are responses actually helpful?)
 - [ ] Response quality scoring (beyond completeness)
 - [ ] A/B testing different prompt variations
 - [ ] Response caching for similar content
 
 ### Phase 3 (Advanced)
+
 - [ ] Machine learning to predict validation failures
 - [ ] Automatic prompt optimization based on failure patterns
 - [ ] User feedback integration into validation scores
@@ -353,21 +374,27 @@ console.log('Validation Result:', {
 ## Troubleshooting
 
 ### Issue: Validation always fails
+
 **Check:**
+
 1. Is the system prompt being sent to the LLM?
 2. Is the LLM response being truncated?
 3. Are you using a model with sufficient context window?
 4. Check validation test suite: `node backend/utils/validationTests.js`
 
 ### Issue: JSON parsing fails
+
 **Check:**
+
 1. LLM might be escaping backticks
 2. Response might be truncated mid-JSON
 3. Try with different temperature/top_p settings
 4. Increase max_tokens if response is cut off
 
 ### Issue: Sections not detected
+
 **Check:**
+
 1. Regex in `validateSections()` might need adjustment
 2. LLM might use slightly different heading format
 3. Check exact spacing around `##` in markdown
@@ -377,19 +404,20 @@ console.log('Validation Result:', {
 
 ## Files Reference
 
-| File | Purpose |
-|------|---------|
-| `backend/utils/responseValidator.js` | Core validation logic |
-| `backend/utils/validationTests.js` | Test suite and mock responses |
-| `backend/controllers/chatController.js` | Integration with chat API |
-| `docs/system-prompt.md` | Updated LLM system prompt |
-| `docs/prompt-examples.md` | Example outputs with JSON |
+| File                                    | Purpose                       |
+| --------------------------------------- | ----------------------------- |
+| `backend/utils/responseValidator.js`    | Core validation logic         |
+| `backend/utils/validationTests.js`      | Test suite and mock responses |
+| `backend/controllers/chatController.js` | Integration with chat API     |
+| `docs/system-prompt.md`                 | Updated LLM system prompt     |
+| `docs/prompt-examples.md`               | Example outputs with JSON     |
 
 ---
 
 ## Support
 
 For questions or issues with the validation system:
+
 1. Check the test suite output
 2. Review validation logs in console
 3. Examine raw LLM responses

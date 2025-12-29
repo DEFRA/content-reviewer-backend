@@ -7,6 +7,7 @@ This document provides examples of how the LLM should respond to different types
 ## Example 1: News Article with Multiple Issues
 
 ### User Input:
+
 ```
 Title: Government Delivers New Initiative to Combat Climate Change
 
@@ -29,6 +30,7 @@ For more information click here: www.example.gov.uk
 **Duplication Check:** ⚠️ Climate change initiatives are common on GOV.UK. Check if this duplicates existing content at `/government/news` or under `/environment/climate-change`. If this is an update to an existing policy, consider updating the existing page rather than creating new content.
 
 **User Need:** ⚠️ Partially clear. Users need to know about new environmental policies, but the content needs to specify:
+
 - What exactly is this initiative?
 - Who is it for?
 - What action (if any) can users take?
@@ -46,6 +48,7 @@ For more information click here: www.example.gov.uk
 **Issues identified:**
 
 ❌ **Contains forbidden words:**
+
 - "Delivers" - GOV.UK words to avoid list (pizzas and services are delivered, not abstract concepts)
 - "Combat" - GOV.UK words to avoid list (unless military context)
 
@@ -54,6 +57,7 @@ For more information click here: www.example.gov.uk
 ❌ **Search optimization:** Missing concrete keywords users might search for (e.g., specific environmental action, policy name, affected groups)
 
 **Suggested alternatives:**
+
 - "New grants to help businesses reduce carbon emissions" (58 characters)
 - "£10 million fund launched to support green technology" (54 characters)
 - "Business climate action plan published" (41 characters)
@@ -92,8 +96,9 @@ For more information click here: www.example.gov.uk
 **Plain English Issues:**
 
 ❌ **Forbidden words identified:**
+
 1. "delivered" (line 1) - Use "make," "create," or be specific
-2. "combat" (line 1) - Use "solve," "stop," or "deal with"  
+2. "combat" (line 1) - Use "solve," "stop," or "deal with"
 3. "deployed" (line 1) - Use "use," "build," or "put into place"
 4. "robust" (line 1) - Use "well thought out" or "comprehensive"
 5. "deliver" (line 1) - Use "make" or be specific
@@ -132,18 +137,20 @@ For more information click here: www.example.gov.uk
 **Issues identified:**
 
 ❌ **Missing markdown:** The content appears to be plain text. It should include:
+
 - Proper heading formatting (##, ###)
 - Link markdown: `[descriptive text](https://www.example.gov.uk)`
 
 **Example of correctly formatted content:**
+
 ```markdown
 ## What the initiative includes
 
 The government has announced a new environmental plan. It will:
 
-* provide grants for businesses
-* support sustainable practices
-* help communities take action
+- provide grants for businesses
+- support sustainable practices
+- help communities take action
 
 [Apply for environmental grants](https://www.example.gov.uk/apply)
 ```
@@ -165,6 +172,7 @@ The government has announced a new environmental plan. It will:
 ## User Experience Assessment
 
 ❌ **Audience Needs:** Content is too vague to meet user needs. Users likely want to know:
+
 - Am I eligible for something?
 - Do I need to do something?
 - What are the specifics of this initiative?
@@ -258,23 +266,27 @@ The government has announced a new environmental plan. It will:
 ## Summary of Findings
 
 ### Critical Issues (must be fixed):
+
 1. **Title and summary repeat each other** - Summary must add new information
 2. **Vague content** - Specify what the initiative actually is and who it affects
 3. **Link text violation** - "Click here" is not accessible; use descriptive link text
 4. **Missing Govspeak formatting** - Add proper markdown for headings and links
 
 ### High Priority (strongly recommended):
+
 1. **13 instances of forbidden words** - All need replacing with plain English alternatives
 2. **2 passive voice constructions** - Rewrite in active voice for clarity
 3. **Lacks user-focused information** - Add who can benefit and what action they should take
 4. **Opening "throat-clearing"** - Remove "pleased to announce" and start with key information
 
 ### Medium Priority (should address):
+
 1. **"Stakeholders" is vague** - Specify who you mean (businesses, councils, etc.)
 2. **Check for duplicate content** - Ensure this doesn't repeat existing GOV.UK pages
 3. **Add subheadings** - If content expands, use H2 headings to break up sections
 
 ### Low Priority (nice to have):
+
 1. Consider adding bullet points to list what the initiative includes
 2. Add a call-to-action if users can apply for grants or take specific action
 
@@ -287,11 +299,13 @@ This content announces an important environmental initiative but needs significa
 3. **Title and summary need work** - They repeat each other and don't provide enough detail
 
 **Top 3 improvements needed:**
+
 1. Rewrite to remove all jargon and use plain English throughout
 2. Be specific about what the initiative includes and who it's for
 3. Add proper Govspeak formatting with descriptive links and bullet points
 
 **What's working well:**
+
 - Appropriate content type for an announcement
 - Short, scannable paragraphs
 - No major accessibility barriers beyond language complexity
@@ -301,6 +315,7 @@ This content announces an important environmental initiative but needs significa
 ## Example 2: Guidance Page with Good Structure
 
 ### User Input:
+
 ```
 Title: Apply for a business grant
 
@@ -362,6 +377,7 @@ Applications close on 31 March 2025.
 ✅ **Clear and specific** - Users immediately know this is about applying for a grant
 
 ⚠️ **Could be more specific** - Consider mentioning what the grant is for to improve search optimization:
+
 - "Apply for a business carbon reduction grant" (46 characters)
 - "Get a grant to reduce your business carbon emissions" (53 characters)
 
@@ -440,23 +456,28 @@ Applications close on 31 March 2025.
 ## Govspeak Markdown Analysis
 
 ### Headings
+
 ✅ **Properly formatted:** All headings use `##` for H2
 ✅ **No skipped levels:** Consistent hierarchy
 ✅ **No H1 usage:** Correct - page title serves as H1
 
 ### Lists
+
 ✅ **Unordered lists:** Properly formatted with `*`
 ✅ **Ordered steps:** Correctly use `s1.`, `s2.`, `s3.`, `s4.` prefix
 
 ⚠️ **Missing line break:** Should have an extra blank line after the final step (`s4.`) and before "Applications close..."
 
 ### Links
+
 ✅ **Properly formatted:** `[Apply for the grant](URL)` is correct
 
 ### Special Elements
+
 ✅ **No special callouts needed** for this content type
 
 **Minor issue identified:**
+
 ```markdown
 s4. Submit your application
 
@@ -464,11 +485,13 @@ Applications close on 31 March 2025.
 ```
 
 **Should be:**
+
 ```markdown
 s4. Submit your application
 
 Applications close on 31 March 2025.
 ```
+
 (Extra blank line after step 4)
 
 ---
@@ -516,15 +539,19 @@ Applications close on 31 March 2025.
 ## Summary of Findings
 
 ### Critical Issues (must be fixed):
+
 None! 🎉
 
 ### High Priority (strongly recommended):
+
 None
 
 ### Medium Priority (should address):
+
 1. **Add blank line after step list** - Insert extra line break after `s4.` for proper Govspeak formatting
 
 ### Low Priority (nice to have):
+
 1. **Consider more specific title** - Could mention "carbon reduction" for better search optimization
 2. **Verify uniqueness** - Check no similar content exists elsewhere on GOV.UK
 
@@ -539,9 +566,11 @@ None
 - Strong accessibility
 
 **Top improvement needed:**
+
 - Add the missing line break after the step list (very minor formatting issue)
 
 **What's working exceptionally well:**
+
 - User-focused content that answers "can I apply?" and "how do I apply?"
 - No jargon or forbidden words
 - Perfect scannability with clear headings
@@ -553,6 +582,7 @@ None
 ---
 
 **JSON Metadata:**
+
 ```json
 {
   "validation_metadata": {
@@ -593,6 +623,7 @@ None
 ## Example 3: Content with Accessibility Issues
 
 ### User Input:
+
 ```
 Title: Understanding Digital Transformation in Public Services 🚀
 
@@ -625,6 +656,7 @@ For further information contact: John.Smith@Example.Gov.UK
 **Critical issues:**
 
 ❌ **Contains emoji (🚀):** Emojis should NEVER be used on GOV.UK. They:
+
 - Don't work well with screen readers
 - Appear differently across devices
 - Are not professional for government content
@@ -634,6 +666,7 @@ For further information contact: John.Smith@Example.Gov.UK
 ❌ **Too vague:** "Understanding Digital Transformation" doesn't tell users what they'll learn or do
 
 **Suggested alternatives:**
+
 - "How we're improving online government services" (47 characters)
 - "New digital services for businesses and citizens" (50 characters)
 
@@ -681,11 +714,13 @@ For further information contact: John.Smith@Example.Gov.UK
 ❌ **Download link not properly formatted:**
 
 Current:
+
 ```
 Click here to download our strategy document (PDF)
 ```
 
 Should be:
+
 ```
 $D
 [Digital services strategy](https://www.gov.uk/strategy-doc) (PDF, 1.5MB)
@@ -695,14 +730,17 @@ $D
 ❌ **Email not properly formatted:**
 
 Current:
+
 ```
 John.Smith@Example.Gov.UK
 ```
 
 Should be:
+
 ```
 [john.smith@example.gov.uk](mailto:john.smith@example.gov.uk)
 ```
+
 Or simply: `john.smith@example.gov.uk`
 
 ---
@@ -738,6 +776,7 @@ Or simply: `john.smith@example.gov.uk`
 ## Summary of Findings
 
 ### Critical Issues (must be fixed before publication):
+
 1. **Remove emoji from title** - Accessibility violation
 2. **Fix "click here" link** - Use descriptive text
 3. **Remove ALL CAPS** - Use normal case
@@ -746,12 +785,14 @@ Or simply: `john.smith@example.gov.uk`
 6. **Remove semicolon** - Use full stop instead
 
 ### High Priority (strongly recommended):
+
 1. **Rewrite title** - Remove "transformation," be specific about what's changing
 2. **Expand summary** - Add meaningful information users need
 3. **Replace forbidden words** - "Delivering," "leveraging," all need plain English alternatives
 4. **Remove "&"** - Use "and"
 
 ### Medium Priority (should address):
+
 1. **Add context** - Explain why users should care about this content
 2. **Structure the body** - Add headings and break into scannable sections
 3. **Be specific** - Replace vague terms like "world-class" with concrete benefits
@@ -761,6 +802,7 @@ Or simply: `john.smith@example.gov.uk`
 **This content has multiple critical accessibility and style violations that must be fixed before publication.**
 
 **Top 3 improvements needed:**
+
 1. **Remove emoji and ALL CAPS** - These are accessibility violations
 2. **Fix all link text and formatting** - "Click here" and improperly formatted downloads harm usability
 3. **Replace all jargon** - 6+ forbidden words need plain English alternatives
