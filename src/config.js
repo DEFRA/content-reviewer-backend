@@ -194,5 +194,3 @@ const config = convict({
 config.validate({ allowed: 'strict' })
 
 export { config }
-
-

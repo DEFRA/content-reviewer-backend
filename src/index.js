@@ -12,4 +12,3 @@ process.on('unhandledRejection', (error) => {
   logger.error(error)
   process.exitCode = 1
 })
-
