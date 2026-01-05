@@ -137,7 +137,15 @@ export const uploadRoutes = {
               })
               .code(200)
           } catch (error) {
-            request.logger.error({ error }, 'File upload failed')
+            request.logger.error(
+              {
+                error,
+                errorMessage: error.message,
+                errorStack: error.stack,
+                errorName: error.name
+              },
+              'File upload failed'
+            )
 
             return h
               .response({

@@ -77,6 +77,12 @@ const config = convict({
     }
   },
   mongo: {
+    enabled: {
+      doc: 'Enable MongoDB connection',
+      format: Boolean,
+      default: false,
+      env: 'MONGO_ENABLED'
+    },
     mongoUrl: {
       doc: 'URI for mongodb',
       format: String,
@@ -188,3 +194,5 @@ const config = convict({
 config.validate({ allowed: 'strict' })
 
 export { config }
+
+
