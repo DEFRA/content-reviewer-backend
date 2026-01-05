@@ -50,17 +50,18 @@ async function createServer() {
   // pulse          - provides shutdown handlers
   // mongoDb        - sets up mongo connection pool and attaches to `server` and `request` objects
   // router         - routes used in the app
-  await server.register([
-    requestLogger,
-    requestTracing,
-    secureContext,
-    pulse,
-    {
+  const plugins = [requestLogger, requestTracing, secureContext, pulse, router]
+
+  // Only register MongoDB if enabled in config
+  const mongoConfig = config.get('mongo')
+  if (mongoConfig.enabled !== false) {
+    plugins.splice(4, 0, {
       plugin: mongoDb,
-      options: config.get('mongo')
-    },
-    router
-  ])
+      options: mongoConfig
+    })
+  }
+
+  await server.register(plugins)
 
   return server
 }

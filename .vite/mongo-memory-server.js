@@ -11,7 +11,8 @@ beforeAll(async () => {
     autoStart: false
   })
   process.env.MONGO_URI = globalThis.__MONGO_URI__
-})
+  process.env.MONGO_ENABLED = 'true' // Enable MongoDB for tests
+}, 60000)
 
 afterAll(async () => {
   await teardown()

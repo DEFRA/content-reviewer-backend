@@ -6,9 +6,29 @@ import { config } from '../../config.js'
  */
 class S3Uploader {
   constructor() {
-    this.s3Client = new S3Client({
-      region: config.get('upload.region')
-    })
+    // Check if we should use mock mode (when LocalStack/AWS is not available)
+    this.mockMode = process.env.MOCK_S3_UPLOAD === 'true'
+
+    if (this.mockMode) {
+      console.log(
+        '[S3Uploader] Running in MOCK mode - files will not actually be uploaded'
+      )
+      this.s3Client = null
+    } else {
+      const s3Config = {
+        region: config.get('upload.region')
+      }
+
+      // Add endpoint for LocalStack if configured
+      const awsEndpoint = process.env.AWS_ENDPOINT
+      if (awsEndpoint) {
+        s3Config.endpoint = awsEndpoint
+        s3Config.forcePathStyle = true // Required for LocalStack
+      }
+
+      this.s3Client = new S3Client(s3Config)
+    }
+
     this.bucket = config.get('upload.s3Bucket')
     this.pathPrefix = config.get('upload.s3Path')
   }
@@ -21,6 +41,23 @@ class S3Uploader {
    */
   async uploadFile(file, uploadId) {
     const key = `${this.pathPrefix}/${uploadId}/${file.originalname}`
+
+    // Mock mode - simulate successful upload without actually uploading
+    if (this.mockMode) {
+      console.log(
+        `[S3Uploader MOCK] Simulating upload of ${file.originalname} (${file.size} bytes)`
+      )
+      return {
+        success: true,
+        bucket: this.bucket,
+        key,
+        location: `s3://${this.bucket}/${key}`,
+        fileId: uploadId,
+        filename: file.originalname,
+        size: file.size,
+        contentType: file.mimetype
+      }
+    }
 
     const command = new PutObjectCommand({
       Bucket: this.bucket,
