@@ -188,6 +188,53 @@ const config = convict({
       default: 'eu-west-2',
       env: 'AWS_REGION'
     }
+  },
+  sqs: {
+    queueUrl: {
+      doc: 'SQS queue URL for content review',
+      format: String,
+      default:
+        'https://sqs.eu-west-2.amazonaws.com/332499610595/content_review_status',
+      env: 'SQS_QUEUE_URL'
+    },
+    queueName: {
+      doc: 'SQS queue name',
+      format: String,
+      default: 'content_review_status',
+      env: 'SQS_QUEUE_NAME'
+    },
+    region: {
+      doc: 'AWS region for SQS',
+      format: String,
+      default: 'eu-west-2',
+      env: 'SQS_REGION'
+    },
+    maxMessages: {
+      doc: 'Maximum number of messages to receive at once',
+      format: Number,
+      default: 10,
+      env: 'SQS_MAX_MESSAGES'
+    },
+    waitTimeSeconds: {
+      doc: 'Long polling wait time in seconds',
+      format: Number,
+      default: 20,
+      env: 'SQS_WAIT_TIME_SECONDS'
+    },
+    visibilityTimeout: {
+      doc: 'Message visibility timeout in seconds',
+      format: Number,
+      default: 300,
+      env: 'SQS_VISIBILITY_TIMEOUT'
+    }
+  },
+  aws: {
+    accountId: {
+      doc: 'AWS Account ID',
+      format: String,
+      default: '332499610595',
+      env: 'AWS_ACCOUNT_ID'
+    }
   }
 })
 

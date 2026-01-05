@@ -10,6 +10,7 @@ import { failAction } from './common/helpers/fail-action.js'
 import { pulse } from './common/helpers/pulse.js'
 import { requestTracing } from './common/helpers/request-tracing.js'
 import { setupProxy } from './common/helpers/proxy/setup-proxy.js'
+import { sqsWorker } from './common/helpers/sqs-worker.js'
 
 async function createServer() {
   setupProxy()
@@ -62,6 +63,32 @@ async function createServer() {
   }
 
   await server.register(plugins)
+
+  // Start SQS worker to process messages
+  // Only start if not in MOCK mode and AWS credentials are available
+  const skipWorker =
+    process.env.MOCK_S3_UPLOAD === 'true' ||
+    process.env.SKIP_SQS_WORKER === 'true'
+
+  if (!skipWorker) {
+    server.logger.info('Starting SQS worker for content review queue')
+    sqsWorker.start().catch((error) => {
+      server.logger.error(
+        { error: error.message },
+        'Failed to start SQS worker - will continue without it'
+      )
+    })
+
+    // Stop worker on server stop
+    server.events.on('stop', () => {
+      server.logger.info('Stopping SQS worker')
+      sqsWorker.stop()
+    })
+  } else {
+    server.logger.info(
+      'SQS worker not started (MOCK mode or SKIP_SQS_WORKER=true)'
+    )
+  }
 
   return server
 }

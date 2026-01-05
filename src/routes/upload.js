@@ -3,6 +3,7 @@ import { randomUUID } from 'crypto'
 import mime from 'mime-types'
 import { config } from '../config.js'
 import { s3Uploader } from '../common/helpers/s3-uploader.js'
+import { sqsClient } from '../common/helpers/sqs-client.js'
 
 // Configure multer for memory storage (used for validation reference)
 const storage = multer.memoryStorage()
@@ -60,11 +61,22 @@ export const uploadRoutes = {
           try {
             const data = request.payload
 
+            // Log payload for debugging
+            request.logger.info(
+              {
+                payloadKeys: data ? Object.keys(data) : 'null',
+                hasFile: data ? !!data.file : false
+              },
+              'Upload request received'
+            )
+
             if (!data || !data.file) {
               return h
                 .response({
                   success: false,
-                  error: 'No file provided'
+                  error:
+                    'No file provided. Received fields: ' +
+                    (data ? Object.keys(data).join(', ') : 'none')
                 })
                 .code(400)
             }
@@ -121,8 +133,42 @@ export const uploadRoutes = {
                 size: buffer.length,
                 s3Location: result.location
               },
-              'File uploaded successfully'
+              'File uploaded to S3 successfully'
             )
+
+            // Send message to SQS queue for processing
+            try {
+              const sqsResult = await sqsClient.sendMessage({
+                uploadId: result.fileId,
+                filename: result.filename,
+                s3Bucket: result.bucket,
+                s3Key: result.key,
+                s3Location: result.location,
+                contentType: result.contentType,
+                fileSize: result.size,
+                messageType: 'file_upload',
+                userId: request.headers['x-user-id'] || 'anonymous',
+                sessionId: request.headers['x-session-id'] || null
+              })
+
+              request.logger.info(
+                {
+                  uploadId,
+                  messageId: sqsResult.messageId,
+                  queueUrl: sqsResult.queueUrl
+                },
+                'Message sent to SQS queue for AI review'
+              )
+            } catch (sqsError) {
+              // Log but don't fail the upload if SQS fails
+              request.logger.error(
+                {
+                  uploadId,
+                  error: sqsError.message
+                },
+                'Failed to send message to SQS queue, but file upload succeeded'
+              )
+            }
 
             return h
               .response({
