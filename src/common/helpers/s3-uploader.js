@@ -7,7 +7,12 @@ import { config } from '../../config.js'
 class S3Uploader {
   constructor() {
     // Check if we should use mock mode (when LocalStack/AWS is not available)
-    this.mockMode = process.env.MOCK_S3_UPLOAD === 'true'
+    // Default to mock mode in development if no AWS endpoint is configured
+    const awsEndpoint =
+      process.env.AWS_ENDPOINT || process.env.LOCALSTACK_ENDPOINT
+    this.mockMode =
+      process.env.MOCK_S3_UPLOAD === 'true' ||
+      (!awsEndpoint && process.env.NODE_ENV === 'development')
 
     if (this.mockMode) {
       console.log(
