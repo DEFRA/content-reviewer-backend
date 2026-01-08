@@ -1,10 +1,15 @@
 import { Db, MongoClient } from 'mongodb'
 import { LockManager } from 'mongo-locks'
+import { config } from '../../config.js'
 
 describe('#mongoDb', () => {
   let server
 
-  describe('Set up', () => {
+  // Skip tests if MongoDB is disabled
+  const isMongoEnabled = config.get('mongo.enabled')
+  const describeIfMongoEnabled = isMongoEnabled ? describe : describe.skip
+
+  describeIfMongoEnabled('Set up', () => {
     beforeAll(async () => {
       // Dynamic import needed due to config being updated by vitest-mongodb
       const { createServer } = await import('../../server.js')
@@ -28,7 +33,7 @@ describe('#mongoDb', () => {
     })
   })
 
-  describe('Shut down', () => {
+  describeIfMongoEnabled('Shut down', () => {
     beforeAll(async () => {
       // Dynamic import needed due to config being updated by vitest-mongodb
       const { createServer } = await import('../../server.js')

@@ -66,6 +66,23 @@ To test the application run:
 npm run test
 ```
 
+**Testing SQS Worker:**
+
+To verify the SQS worker is running and processing messages:
+
+```bash
+# Windows PowerShell
+.\test-sqs-worker.ps1
+
+# Linux/Mac or Node.js
+node test-sqs-worker.js
+
+# Or using curl
+curl http://localhost:3001/api/sqs-worker/status
+```
+
+See [TESTING_SQS_WORKER.md](./TESTING_SQS_WORKER.md) for detailed testing instructions.
+
 ### Production
 
 To mimic the application running in `production` mode locally run:
