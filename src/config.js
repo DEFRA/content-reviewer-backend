@@ -153,6 +153,26 @@ const config = convict({
       env: 'CORS_CREDENTIALS'
     }
   },
+  s3: {
+    region: {
+      doc: 'AWS region for S3',
+      format: String,
+      default: 'eu-west-2',
+      env: 'S3_REGION'
+    },
+    bucket: {
+      doc: 'S3 bucket for general storage',
+      format: String,
+      default: 'dev-service-optimisation-c63f2',
+      env: 'S3_BUCKET'
+    },
+    rulesPath: {
+      doc: 'S3 path for rules repository',
+      format: String,
+      default: 'rules',
+      env: 'S3_RULES_PATH'
+    }
+  },
   upload: {
     s3Bucket: {
       doc: 'S3 bucket for uploaded files',
@@ -226,6 +246,33 @@ const config = convict({
       format: Number,
       default: 300,
       env: 'SQS_VISIBILITY_TIMEOUT'
+    }
+  },
+  bedrock: {
+    region: {
+      doc: 'AWS region for Bedrock AI',
+      format: String,
+      default: 'eu-west-2',
+      env: 'BEDROCK_REGION'
+    },
+    inferenceProfileArn: {
+      doc: 'Bedrock inference profile ARN with guardrails',
+      format: String,
+      default:
+        'arn:aws:bedrock:eu-west-2:332499610595:application-inference-profile/wrmld9jrycya',
+      env: 'BEDROCK_INFERENCE_PROFILE_ARN'
+    },
+    maxTokens: {
+      doc: 'Maximum tokens for AI response',
+      format: Number,
+      default: 8000,
+      env: 'BEDROCK_MAX_TOKENS'
+    },
+    temperature: {
+      doc: 'Temperature for AI response (0.0-1.0)',
+      format: Number,
+      default: 0.3,
+      env: 'BEDROCK_TEMPERATURE'
     }
   },
   aws: {

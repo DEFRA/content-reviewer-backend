@@ -1,0 +1,23 @@
+{
+  "Version": "2012-10-17",
+  "Id": "S3EventNotificationPolicy",
+  "Statement": [
+    {
+      "Sid": "AllowS3ToSendMessage",
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "s3.amazonaws.com"
+      },
+      "Action": "sqs:SendMessage",
+      "Resource": "arn:aws:sqs:eu-west-2:332499610595:content_review_status",
+      "Condition": {
+        "StringEquals": {
+          "aws:SourceAccount": "332499610595"
+        },
+        "ArnLike": {
+          "aws:SourceArn": "arn:aws:s3:::dev-service-optimisation-c63f2"
+        }
+      }
+    }
+  ]
+}

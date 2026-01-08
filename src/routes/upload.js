@@ -4,6 +4,7 @@ import mime from 'mime-types'
 import { config } from '../config.js'
 import { s3Uploader } from '../common/helpers/s3-uploader.js'
 import { sqsClient } from '../common/helpers/sqs-client.js'
+import { reviewStatusTracker } from '../common/helpers/review-status-tracker.js'
 
 // Configure multer for memory storage (used for validation reference)
 const storage = multer.memoryStorage()
@@ -58,6 +59,8 @@ export const uploadRoutes = {
           }
         },
         handler: async (request, h) => {
+          let uploadId = null
+
           try {
             const data = request.payload
 
@@ -82,7 +85,23 @@ export const uploadRoutes = {
             }
 
             const file = data.file
-            const uploadId = randomUUID()
+            uploadId = randomUUID()
+            const userId = request.headers['x-user-id'] || 'anonymous'
+            const sessionId = request.headers['x-session-id'] || null
+
+            // Step 1: Create initial status in database
+            await reviewStatusTracker.createStatus(
+              uploadId,
+              file.hapi.filename,
+              userId,
+              {
+                sessionId,
+                userAgent: request.headers['user-agent'],
+                ipAddress: request.info.remoteAddress
+              }
+            )
+
+            request.logger.info({ uploadId }, 'Review status created')
 
             // Validate file type
             const allowedMimeTypes = config.get('upload.allowedMimeTypes')
@@ -90,6 +109,12 @@ export const uploadRoutes = {
               mime.lookup(file.hapi.filename) || 'application/octet-stream'
 
             if (!allowedMimeTypes.includes(detectedMimeType)) {
+              // Mark as failed
+              await reviewStatusTracker.markFailed(
+                uploadId,
+                `File type not allowed: ${detectedMimeType}`
+              )
+
               return h
                 .response({
                   success: false,
@@ -97,6 +122,14 @@ export const uploadRoutes = {
                 })
                 .code(400)
             }
+
+            // Step 2: Update status - reading file
+            await reviewStatusTracker.updateStatus(
+              uploadId,
+              'uploading',
+              'Reading file content',
+              5
+            )
 
             // Read file buffer
             const chunks = []
@@ -107,6 +140,12 @@ export const uploadRoutes = {
 
             // Validate file size
             if (buffer.length > config.get('upload.maxFileSize')) {
+              // Mark as failed
+              await reviewStatusTracker.markFailed(
+                uploadId,
+                `File too large: ${buffer.length} bytes`
+              )
+
               return h
                 .response({
                   success: false,
@@ -114,6 +153,14 @@ export const uploadRoutes = {
                 })
                 .code(400)
             }
+
+            // Step 3: Update status - uploading to S3
+            await reviewStatusTracker.updateStatus(
+              uploadId,
+              'uploading',
+              'Uploading file to S3',
+              10
+            )
 
             // Prepare file object for S3 upload
             const fileObject = {
@@ -136,6 +183,14 @@ export const uploadRoutes = {
               'File uploaded to S3 successfully'
             )
 
+            // Step 4: Update status - file uploaded to S3
+            await reviewStatusTracker.updateStatus(
+              uploadId,
+              'uploaded',
+              'File uploaded successfully to S3',
+              20
+            )
+
             // Send message to SQS queue for processing
             try {
               const sqsResult = await sqsClient.sendMessage({
@@ -147,8 +202,8 @@ export const uploadRoutes = {
                 contentType: result.contentType,
                 fileSize: result.size,
                 messageType: 'file_upload',
-                userId: request.headers['x-user-id'] || 'anonymous',
-                sessionId: request.headers['x-session-id'] || null
+                userId,
+                sessionId
               })
 
               request.logger.info(
@@ -159,6 +214,14 @@ export const uploadRoutes = {
                 },
                 'Message sent to SQS queue for AI review'
               )
+
+              // Step 5: Update status - queued for processing
+              await reviewStatusTracker.updateStatus(
+                uploadId,
+                'queued',
+                'Added to processing queue',
+                30
+              )
             } catch (sqsError) {
               // Log but don't fail the upload if SQS fails
               request.logger.error(
@@ -167,6 +230,14 @@ export const uploadRoutes = {
                   error: sqsError.message
                 },
                 'Failed to send message to SQS queue, but file upload succeeded'
+              )
+
+              // Mark as failed to queue (but file is uploaded)
+              await reviewStatusTracker.updateStatus(
+                uploadId,
+                'uploaded',
+                `File uploaded but failed to queue: ${sqsError.message}`,
+                20
               )
             }
 
@@ -179,7 +250,10 @@ export const uploadRoutes = {
                 contentType: result.contentType,
                 s3Bucket: result.bucket,
                 s3Key: result.key,
-                s3Location: result.location
+                s3Location: result.location,
+                status: 'queued',
+                statusUrl: `/api/status/${result.fileId}`,
+                message: 'File uploaded successfully and queued for processing'
               })
               .code(200)
           } catch (error) {
@@ -193,10 +267,19 @@ export const uploadRoutes = {
               'File upload failed'
             )
 
+            // Mark as failed if uploadId exists
+            if (uploadId) {
+              await reviewStatusTracker.markFailed(
+                uploadId,
+                `Upload failed: ${error.message}`
+              )
+            }
+
             return h
               .response({
                 success: false,
-                error: error.message || 'Upload failed'
+                error: error.message || 'Upload failed',
+                uploadId
               })
               .code(500)
           }

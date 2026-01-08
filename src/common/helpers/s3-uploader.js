@@ -93,6 +93,62 @@ class S3Uploader {
       throw new Error(`S3 upload failed: ${error.message}`)
     }
   }
+
+  /**
+   * Upload buffer directly to S3
+   * @param {Object} options - Upload options
+   * @param {Buffer} options.buffer - File buffer
+   * @param {string} options.filename - File name
+   * @param {string} options.mimetype - MIME type
+   * @param {string} options.folder - Optional folder (default: pathPrefix)
+   * @returns {Promise<Object>} Upload result
+   */
+  async uploadBuffer({ buffer, filename, mimetype, folder = null }) {
+    const basePath = folder || this.pathPrefix
+    const key = `${basePath}/${filename}`
+
+    // Mock mode - simulate successful upload
+    if (this.mockMode) {
+      console.log(
+        `[S3Uploader MOCK] Simulating buffer upload of ${filename} (${buffer.length} bytes)`
+      )
+      return {
+        success: true,
+        bucket: this.bucket,
+        key,
+        location: `s3://${this.bucket}/${key}`,
+        filename,
+        size: buffer.length,
+        contentType: mimetype
+      }
+    }
+
+    const command = new PutObjectCommand({
+      Bucket: this.bucket,
+      Key: key,
+      Body: buffer,
+      ContentType: mimetype,
+      Metadata: {
+        uploadedAt: new Date().toISOString()
+      }
+    })
+
+    try {
+      await this.s3Client.send(command)
+
+      return {
+        success: true,
+        bucket: this.bucket,
+        key,
+        location: `s3://${this.bucket}/${key}`,
+        filename,
+        size: buffer.length,
+        contentType: mimetype
+      }
+    } catch (error) {
+      throw new Error(`S3 buffer upload failed: ${error.message}`)
+    }
+  }
 }
 
 export const s3Uploader = new S3Uploader()
