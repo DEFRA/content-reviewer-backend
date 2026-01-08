@@ -235,6 +235,57 @@ const config = convict({
       default: '332499610595',
       env: 'AWS_ACCOUNT_ID'
     }
+  },
+  bedrock: {
+    enabled: {
+      doc: 'Enable AWS Bedrock AI integration',
+      format: Boolean,
+      default: true,
+      env: 'ENABLE_BEDROCK'
+    },
+    inferenceProfileArn: {
+      doc: 'CDP Bedrock inference profile ARN',
+      format: String,
+      default:
+        'arn:aws:bedrock:eu-west-2:332499610595:application-inference-profile/wrmld9jrycya',
+      env: 'BEDROCK_INFERENCE_PROFILE_ARN'
+    },
+    guardrailArn: {
+      doc: 'CDP Bedrock guardrail ARN (HIGH level with PII Detect)',
+      format: String,
+      default: 'arn:aws:bedrock:eu-west-2:332499610595:guardrail/th34diy2ti2t',
+      env: 'BEDROCK_GUARDRAIL_ARN'
+    },
+    guardrailVersion: {
+      doc: 'Bedrock guardrail version',
+      format: String,
+      default: '1',
+      env: 'BEDROCK_GUARDRAIL_VERSION'
+    },
+    region: {
+      doc: 'AWS region for Bedrock (must match inference profile)',
+      format: String,
+      default: 'eu-west-2',
+      env: 'BEDROCK_REGION'
+    },
+    modelName: {
+      doc: 'Bedrock model name (for reference)',
+      format: String,
+      default: 'anthropic.claude-3-7-sonnet-20250219-v1:0',
+      env: 'BEDROCK_MODEL_NAME'
+    },
+    maxTokens: {
+      doc: 'Maximum tokens in AI response',
+      format: Number,
+      default: 4096,
+      env: 'BEDROCK_MAX_TOKENS'
+    },
+    temperature: {
+      doc: 'AI temperature (0.0-1.0, lower is more focused)',
+      format: Number,
+      default: 0.7,
+      env: 'BEDROCK_TEMPERATURE'
+    }
   }
 })
 
