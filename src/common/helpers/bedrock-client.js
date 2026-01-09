@@ -39,7 +39,12 @@ class BedrockClient {
     logger.info('Bedrock client initialized with CDP inference profile', {
       inferenceProfileArn: this.inferenceProfileArn,
       guardrailArn: this.guardrailArn,
-      region: this.region
+      region: this.region,
+      awsProfile: process.env.AWS_PROFILE || 'none',
+      hasAccessKeyId: !!process.env.AWS_ACCESS_KEY_ID,
+      hasSecretAccessKey: !!process.env.AWS_SECRET_ACCESS_KEY,
+      hasSessionToken: !!process.env.AWS_SESSION_TOKEN,
+      nodeEnv: process.env.NODE_ENV
     })
   }
 
@@ -136,21 +141,91 @@ class BedrockClient {
         stopReason: response.stopReason
       }
     } catch (error) {
-      logger.error('Error calling Bedrock API', {
-        error: error.message,
+      // Extract all possible error properties from AWS SDK errors
+      const errorDetails = {
+        name: error.name,
+        message: error.message,
+        code: error.code,
+        statusCode: error.$metadata?.httpStatusCode,
+        requestId: error.$metadata?.requestId,
+        extendedRequestId: error.$metadata?.extendedRequestId,
+        $fault: error.$fault,
+        $service: error.$service,
         stack: error.stack
-      })
+      }
+
+      // Try to serialize the full error object
+      try {
+        errorDetails.fullError = JSON.stringify(
+          error,
+          Object.getOwnPropertyNames(error),
+          2
+        )
+      } catch (serializeError) {
+        errorDetails.serializationError = 'Could not serialize full error'
+      }
+
+      // Log with all extracted details
+      logger.error('Error calling Bedrock API', errorDetails)
+
+      // Also log to console for immediate visibility
+      console.error('=== BEDROCK API ERROR ===')
+      console.error('Error Name:', error.name)
+      console.error('Error Message:', error.message)
+      console.error('Error Code:', error.code || 'undefined')
+      console.error(
+        'HTTP Status:',
+        error.$metadata?.httpStatusCode || 'undefined'
+      )
+      console.error('Request ID:', error.$metadata?.requestId || 'undefined')
+      console.error('Full Error:', error)
+      console.error('=========================')
+
+      // Handle credential errors with extra diagnostics
+      if (error.name === 'CredentialsProviderError') {
+        console.error('=== CREDENTIAL DIAGNOSTICS ===')
+        console.error('AWS Profile:', process.env.AWS_PROFILE || 'none')
+        console.error('Has Access Key ID:', !!process.env.AWS_ACCESS_KEY_ID)
+        console.error(
+          'Has Secret Access Key:',
+          !!process.env.AWS_SECRET_ACCESS_KEY
+        )
+        console.error('Has Session Token:', !!process.env.AWS_SESSION_TOKEN)
+        console.error('Node Env:', process.env.NODE_ENV)
+        console.error('AWS Region:', this.region)
+        console.error('==============================')
+
+        throw new Error(
+          'AWS credentials not found. In CDP, ensure EC2 instance has IAM role with Bedrock permissions.'
+        )
+      }
 
       // Handle specific AWS errors
       if (error.name === 'AccessDeniedException') {
         throw new Error(
-          'Access denied to Bedrock. Ensure IAM permissions are configured correctly.'
+          'Access denied to Bedrock. Ensure IAM role has bedrock:InvokeModel permission.'
+        )
+      }
+
+      if (error.name === 'ResourceNotFoundException') {
+        throw new Error(
+          `Bedrock resource not found. Check inference profile ARN: ${this.inferenceProfileArn}`
         )
       }
 
       if (error.name === 'ThrottlingException') {
         throw new Error(
           'Bedrock API rate limit exceeded. Please try again later.'
+        )
+      }
+
+      if (error.name === 'ValidationException') {
+        throw new Error(`Bedrock validation error: ${error.message}`)
+      }
+
+      if (error.name === 'ServiceUnavailableException') {
+        throw new Error(
+          'Bedrock service temporarily unavailable. Please retry.'
         )
       }
 
@@ -233,7 +308,22 @@ Provide a detailed quality review following GOV.UK content standards.`
         contentType
       }
     } catch (error) {
-      logger.error('Error reviewing content', { error: error.message })
+      // Extract comprehensive error details
+      const errorDetails = {
+        name: error.name,
+        message: error.message,
+        code: error.code,
+        statusCode: error.$metadata?.httpStatusCode,
+        stack: error.stack
+      }
+
+      logger.error('Error reviewing content', errorDetails)
+
+      // Also log to console for debugging
+      console.error('=== CONTENT REVIEW ERROR ===')
+      console.error('Error:', error)
+      console.error('============================')
+
       throw error
     }
   }
