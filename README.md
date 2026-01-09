@@ -2,8 +2,11 @@
 
 Core delivery platform Node.js Backend Template.
 
+**⚡ Quick Start:** See [QUICK_START.md](./QUICK_START.md) for 5-minute setup guide!
+
 - [Requirements](#requirements)
   - [Node.js](#nodejs)
+- [AWS Configuration](#aws-configuration)
 - [Local development](#local-development)
   - [Setup](#setup)
   - [Development](#development)
@@ -39,6 +42,44 @@ To use the correct version of Node.js for this application, via nvm:
 cd content-reviewer-backend
 nvm use
 ```
+
+## AWS Configuration
+
+This backend supports S3 file uploads and SQS message processing. You can configure AWS access in multiple ways:
+
+### Quick Setup
+
+**For demos/testing (no AWS required):**
+```bash
+cp .env.example .env
+echo "MOCK_S3_UPLOAD=true" >> .env
+npm start
+```
+
+**For real S3 uploads:**
+```bash
+cp .env.example .env
+aws configure --profile your-profile
+echo "AWS_PROFILE=your-profile" >> .env
+node test-aws-credentials.js  # Test your setup
+npm start
+```
+
+### Documentation
+
+- **[QUICK_START.md](./QUICK_START.md)** - Get started in 5 minutes
+- **[AWS_SETUP_GUIDE.md](./AWS_SETUP_GUIDE.md)** - Detailed AWS configuration guide
+- **[test-aws-credentials.js](./test-aws-credentials.js)** - Test your AWS credentials
+
+### Supported Authentication Methods
+
+1. **IAM Role** (recommended for AWS environments)
+2. **AWS Profile** (recommended for local development)
+3. **Environment Variables** (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)
+4. **AWS SSO**
+5. **Mock Mode** (for testing without AWS)
+
+See [AWS_SETUP_GUIDE.md](./AWS_SETUP_GUIDE.md) for detailed instructions.
 
 ## Local development
 

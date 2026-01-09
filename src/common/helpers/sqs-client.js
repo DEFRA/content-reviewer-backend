@@ -14,15 +14,19 @@ class SQSClientHelper {
     }
 
     // Add endpoint for LocalStack if configured
-    const awsEndpoint =
-      process.env.AWS_ENDPOINT || process.env.LOCALSTACK_ENDPOINT
-    if (awsEndpoint) {
-      sqsConfig.endpoint = awsEndpoint
+    const sqsEndpoint = config.get('sqs.endpoint')
+    if (sqsEndpoint) {
+      console.log(`[SQSClient] Using custom SQS endpoint: ${sqsEndpoint}`)
+      sqsConfig.endpoint = sqsEndpoint
     }
 
     this.sqsClient = new SQSClient(sqsConfig)
     this.queueUrl = config.get('sqs.queueUrl')
     this.queueName = config.get('sqs.queueName')
+    
+    console.log(`[SQSClient] Queue Name: ${this.queueName}`)
+    console.log(`[SQSClient] Queue URL: ${this.queueUrl}`)
+    console.log(`[SQSClient] Environment: ${config.get('cdpEnvironment')}`)
   }
 
   /**

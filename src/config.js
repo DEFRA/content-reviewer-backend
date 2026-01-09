@@ -154,6 +154,13 @@ const config = convict({
     }
   },
   s3: {
+    endpoint: {
+      doc: 'S3 endpoint URL (for LocalStack)',
+      format: String,
+      default: null,
+      nullable: true,
+      env: 'S3_ENDPOINT'
+    },
     region: {
       doc: 'AWS region for S3',
       format: String,
@@ -210,6 +217,13 @@ const config = convict({
     }
   },
   sqs: {
+    endpoint: {
+      doc: 'SQS endpoint URL (for LocalStack)',
+      format: String,
+      default: null,
+      nullable: true,
+      env: 'SQS_ENDPOINT'
+    },
     queueUrl: {
       doc: 'SQS queue URL for content review',
       format: String,
@@ -220,7 +234,7 @@ const config = convict({
     queueName: {
       doc: 'SQS queue name',
       format: String,
-      default: 'content_review_status',
+      default: 'content_review_status.fifo',
       env: 'SQS_QUEUE_NAME'
     },
     region: {
@@ -249,6 +263,13 @@ const config = convict({
     }
   },
   bedrock: {
+    endpoint: {
+      doc: 'Bedrock endpoint URL (for LocalStack/testing)',
+      format: String,
+      default: null,
+      nullable: true,
+      env: 'BEDROCK_ENDPOINT'
+    },
     region: {
       doc: 'AWS region for Bedrock AI',
       format: String,

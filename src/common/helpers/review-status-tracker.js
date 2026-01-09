@@ -1,6 +1,6 @@
 import { createLogger } from './logging/logger.js'
 import { s3Uploader } from './s3-uploader.js'
-import { mongodb } from './mongodb.js'
+import { mongodb } from './mongodb-client.js'
 
 const logger = createLogger()
 
