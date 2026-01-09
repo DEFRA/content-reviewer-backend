@@ -199,8 +199,8 @@ ${content}
 Provide a detailed quality review following GOV.UK content standards.`
 
     try {
-      // Build conversation history with system prompt setup
-      const conversationHistory = [
+      // Send to Claude with system context
+      const messages = [
         {
           role: 'user',
           content: [{ text: systemPrompt }]
@@ -215,8 +215,7 @@ Provide a detailed quality review following GOV.UK content standards.`
         }
       ]
 
-      // Send the actual review request with the system context
-      const result = await this.sendMessage(userPrompt, conversationHistory)
+      const result = await this.sendMessage(userPrompt, messages)
 
       if (result.blocked) {
         return {
