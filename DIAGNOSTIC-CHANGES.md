@@ -9,6 +9,7 @@ Added comprehensive error logging and diagnostics to troubleshoot the `/api/revi
 ### 1. `src/common/helpers/bedrock-client.js`
 
 **Changes:**
+
 - Enhanced constructor logging to include credential environment info
 - Added detailed error logging in `sendMessage()` catch block:
   - Full AWS error details (name, message, code, HTTP status, request ID)
@@ -24,6 +25,7 @@ Added comprehensive error logging and diagnostics to troubleshoot the `/api/revi
 ### 2. `src/routes/chat.js`
 
 **Changes:**
+
 - Enhanced error logging in both `chatController` and `reviewController`
 - Added detailed console output for debugging:
   - Error name, message, code
@@ -38,6 +40,7 @@ Added comprehensive error logging and diagnostics to troubleshoot the `/api/revi
 **Purpose:** Diagnostic script to test AWS credentials and Bedrock access
 
 **Features:**
+
 - Environment diagnostics (AWS profile, credentials, region)
 - Bedrock API connectivity test
 - Detailed error reporting
@@ -45,6 +48,7 @@ Added comprehensive error logging and diagnostics to troubleshoot the `/api/revi
 - Required IAM permissions documentation
 
 **Usage:**
+
 ```bash
 node test-aws-credentials.js
 ```
@@ -54,6 +58,7 @@ node test-aws-credentials.js
 **Purpose:** Comprehensive troubleshooting guide
 
 **Contents:**
+
 - Quick diagnosis steps for local and CDP
 - Explanation of enhanced error logging
 - Common issues and solutions:
@@ -126,7 +131,7 @@ When credential errors occur, additional context is provided:
 ### Local Testing
 
 ✅ Test script runs successfully
-✅ Shows expected `CredentialsProviderError` 
+✅ Shows expected `CredentialsProviderError`
 ✅ Provides clear guidance for local vs CDP environments
 ✅ Console output is clear and searchable
 
@@ -134,14 +139,16 @@ When credential errors occur, additional context is provided:
 
 ✅ `/api/review` endpoint triggers enhanced error logging
 ✅ All three error blocks appear in console output:
-   - BEDROCK API ERROR
-   - CONTENT REVIEW ERROR  
-   - REVIEW ENDPOINT ERROR
-✅ Structured logs contain full error details
+
+- BEDROCK API ERROR
+- CONTENT REVIEW ERROR
+- REVIEW ENDPOINT ERROR
+  ✅ Structured logs contain full error details
 
 ## Next Steps for Deployment
 
 1. **Commit changes** (you'll do this manually):
+
    ```bash
    git add src/common/helpers/bedrock-client.js
    git add src/routes/chat.js
@@ -155,6 +162,7 @@ When credential errors occur, additional context is provided:
    - Deploy via CDP pipeline
 
 3. **Test in CDP**:
+
    ```bash
    # SSH into CDP instance
    cd /path/to/app
@@ -162,6 +170,7 @@ When credential errors occur, additional context is provided:
    ```
 
 4. **Test the endpoint**:
+
    ```bash
    curl -X POST https://your-cdp-url/api/review \
      -H "Content-Type: application/json" \
@@ -193,6 +202,7 @@ With these diagnostics in place, you should be able to:
 ## Files Not Modified
 
 The following files remain unchanged:
+
 - `src/config.js` - Configuration already correct
 - `src/plugins/router.js` - Routes already registered
 - `package.json` - All dependencies already installed
@@ -201,6 +211,7 @@ The following files remain unchanged:
 ## Summary
 
 The root cause is likely one of:
+
 1. **No IAM role attached** to EC2 instance in CDP
 2. **IAM role lacks permissions** for Bedrock
 3. **Inference profile ARN** is incorrect

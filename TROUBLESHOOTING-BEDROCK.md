@@ -57,6 +57,7 @@ When the server starts, you'll see:
 When the `/api/review` endpoint fails, you'll see three error blocks:
 
 #### A. Bedrock API Error Block
+
 ```
 === BEDROCK API ERROR ===
 Error Name: CredentialsProviderError
@@ -69,6 +70,7 @@ Full Error: [error object]
 ```
 
 #### B. Credential Diagnostics (for credential errors only)
+
 ```
 === CREDENTIAL DIAGNOSTICS ===
 AWS Profile: none
@@ -81,6 +83,7 @@ AWS Region: eu-west-2
 ```
 
 #### C. Route Handler Error Block
+
 ```
 === REVIEW ENDPOINT ERROR ===
 Error Name: Error
@@ -95,6 +98,7 @@ Full Error: [error object]
 ### Issue 1: CredentialsProviderError in CDP
 
 **Symptoms:**
+
 - `/api/review` returns 500 error
 - Logs show: `CredentialsProviderError: Could not load credentials from any providers`
 
@@ -103,11 +107,12 @@ Full Error: [error object]
 **Solutions:**
 
 1. **Check IAM Role is Attached**
+
    ```bash
    # On the CDP instance
    curl http://169.254.169.254/latest/meta-data/iam/info
    ```
-   
+
    Should return JSON with IAM role details. If it returns 404, no role is attached.
 
 2. **Attach IAM Role** (via AWS Console or CDP deployment config)
@@ -124,6 +129,7 @@ Full Error: [error object]
 ### Issue 2: AccessDeniedException
 
 **Symptoms:**
+
 - `/api/review` returns 500 error
 - Logs show: `AccessDeniedException: User is not authorized`
 
@@ -156,6 +162,7 @@ Add these permissions to the IAM role policy:
 ### Issue 3: ResourceNotFoundException
 
 **Symptoms:**
+
 - Logs show: `ResourceNotFoundException: Could not find the requested resource`
 
 **Root Cause:** Inference profile ARN or guardrail ARN is incorrect
@@ -172,6 +179,7 @@ Add these permissions to the IAM role policy:
 ### Issue 4: ThrottlingException
 
 **Symptoms:**
+
 - Logs show: `ThrottlingException: Rate exceeded`
 
 **Root Cause:** Too many requests to Bedrock API
@@ -187,16 +195,19 @@ Implement retry logic with exponential backoff (already in error messages)
 Search for these patterns:
 
 1. **For credential errors:**
+
    ```
    "CREDENTIAL DIAGNOSTICS"
    ```
 
 2. **For Bedrock API errors:**
+
    ```
    "BEDROCK API ERROR"
    ```
 
 3. **For endpoint errors:**
+
    ```
    "REVIEW ENDPOINT ERROR"
    ```
@@ -209,11 +220,13 @@ Search for these patterns:
 ## Testing After Fixes
 
 1. **Test with the diagnostic script:**
+
    ```bash
    node test-aws-credentials.js
    ```
 
 2. **Test the actual endpoint:**
+
    ```bash
    curl -X POST https://your-cdp-url/api/review \
      -H "Content-Type: application/json" \
@@ -234,6 +247,7 @@ If `/api/chat` works but `/api/review` fails with credential errors, possible re
 4. **Resource Permissions**: Chat and review might need different permissions
 
 To diagnose, check:
+
 - Token expiration time in IMDS metadata
 - Time between requests
 - Different resource ARNs being accessed
@@ -271,6 +285,7 @@ curl http://169.254.169.254/latest/meta-data/iam/security-credentials/
 ## Contact
 
 If issues persist after trying these solutions, provide:
+
 - Full error output from the console logs (=== blocks)
 - Output of `node test-aws-credentials.js` in CDP
 - IAM role ARN and attached policies
