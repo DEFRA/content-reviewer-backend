@@ -80,14 +80,6 @@ const chatController = {
 
       logger.error('Error in chat endpoint', errorDetails)
 
-      // Log to console for immediate visibility
-      console.error('=== CHAT ENDPOINT ERROR ===')
-      console.error('Error Name:', error.name)
-      console.error('Error Message:', error.message)
-      console.error('Is Boom:', Boom.isBoom(error))
-      console.error('Full Error:', error)
-      console.error('===========================')
-
       if (Boom.isBoom(error)) {
         throw error
       }
@@ -169,14 +161,6 @@ const reviewController = {
       }
 
       logger.error('Error in review endpoint', errorDetails)
-
-      // Log to console for immediate visibility
-      console.error('=== REVIEW ENDPOINT ERROR ===')
-      console.error('Error Name:', error.name)
-      console.error('Error Message:', error.message)
-      console.error('Is Boom:', Boom.isBoom(error))
-      console.error('Full Error:', error)
-      console.error('=============================')
 
       if (Boom.isBoom(error)) {
         throw error
