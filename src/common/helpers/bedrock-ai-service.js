@@ -5,15 +5,24 @@ import {
 import { config } from '../../config.js'
 import { createLogger } from './logging/logger.js'
 import { rulesRepository } from './rules-repository.js'
+import { mockAIService } from './mock-ai-service.js'
 
 const logger = createLogger()
 
 /**
  * Bedrock AI Service
  * Handles content review using AWS Bedrock Claude 3.7 Sonnet
+ * Or uses mock AI service for development/testing
  */
 class BedrockAIService {
   constructor() {
+    this.useMockAI = config.get('bedrock.useMockAI')
+    
+    if (this.useMockAI) {
+      logger.warn('Using MOCK AI Service - for development/testing only!')
+      return
+    }
+
     const bedrockConfig = {
       region: config.get('bedrock.region') || 'eu-west-2'
     }
@@ -42,6 +51,12 @@ class BedrockAIService {
    * @returns {Promise<Object>} Structured review result
    */
   async reviewContent(documentContent, filename, metadata = {}) {
+    // Use mock AI service if configured
+    if (this.useMockAI) {
+      logger.info({ filename }, 'Using mock AI service for review')
+      return await mockAIService.reviewContent(documentContent, filename)
+    }
+
     try {
       logger.info(
         {

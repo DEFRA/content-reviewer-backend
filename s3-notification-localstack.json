@@ -1,0 +1,19 @@
+{
+  "QueueConfigurations": [
+    {
+      "Id": "content-review-upload-event",
+      "QueueArn": "arn:aws:sqs:eu-west-2:000000000000:content_review_status",
+      "Events": ["s3:ObjectCreated:*"],
+      "Filter": {
+        "Key": {
+          "FilterRules": [
+            {
+              "Name": "prefix",
+              "Value": "content-uploads/"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

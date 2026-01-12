@@ -96,17 +96,38 @@ if ($LASTEXITCODE -eq 0 -or $bucketResult -like "*already exists*") {
     Write-Host "   You can create it manually later" -ForegroundColor Yellow
 }
 
-# 8. Create SQS queue (optional)
+# 8. Create SQS queue (Standard)
 Write-Host "`n8️⃣  Creating SQS queue..." -ForegroundColor Blue
-$queueResult = aws --endpoint-url=http://localhost:4566 sqs create-queue --queue-name content_review_status 2>&1
+$queueResult = aws --endpoint-url=http://localhost:4566 sqs create-queue --queue-name content_review_status --region eu-west-2 2>&1
 if ($LASTEXITCODE -eq 0 -or $queueResult -like "*already exists*") {
     Write-Host "   ✓ Queue ready: content_review_status" -ForegroundColor Green
 } else {
     Write-Host "   ⚠️  Queue creation skipped (AWS CLI not available)" -ForegroundColor Yellow
 }
 
-# 9. Configure .env
-Write-Host "`n9️⃣  Configuring .env file..." -ForegroundColor Blue
+# 9. Configure S3 Event Notification (NEW - Event-driven architecture)
+Write-Host "`n9  Configuring S3 Event Notification..." -ForegroundColor Blue
+
+# s3-notification-localstack.json file should already exist
+# Apply S3 event notification
+$s3NotifyResult = aws --endpoint-url=http://localhost:4566 s3api put-bucket-notification-configuration --bucket dev-service-optimisation-c63f2 --notification-configuration file://s3-notification-localstack.json 2>&1
+
+if ($LASTEXITCODE -eq 0) {
+    Write-Host "   OK S3 event notification configured" -ForegroundColor Green
+    Write-Host "   -> S3 uploads will automatically trigger SQS messages" -ForegroundColor Cyan
+} else {
+    Write-Host "   WARNING S3 event notification configuration skipped" -ForegroundColor Yellow
+    Write-Host "   (Manual SQS calls from backend will still work)" -ForegroundColor White
+}
+
+# Verify S3 notification configuration
+$verifyResult = aws --endpoint-url=http://localhost:4566 s3api get-bucket-notification-configuration --bucket dev-service-optimisation-c63f2 2>&1
+if ($LASTEXITCODE -eq 0) {
+    Write-Host "   OK S3 event notification verified" -ForegroundColor Green
+}
+
+# 10. Configure .env
+Write-Host "`n10 Configuring .env file..." -ForegroundColor Blue
 
 if (-not (Test-Path .env)) {
     if (Test-Path .env.example) {
@@ -138,6 +159,7 @@ UPLOAD_S3_PATH=content-uploads
 
 # SQS Configuration
 SQS_QUEUE_URL=http://localhost:4566/000000000000/content_review_status
+SQS_QUEUE_NAME=content_review_status
 SQS_REGION=eu-west-2
 
 # Development Settings
@@ -146,6 +168,11 @@ LOG_LEVEL=debug
 
 # Disable mock mode (use real LocalStack)
 # MOCK_S3_UPLOAD=false
+
+# S3 Event Trigger Mode
+# Set to 'true' to use S3 automatic event notifications (recommended)
+# Set to 'false' to use manual SQS calls from upload route
+S3_EVENT_TRIGGER_ENABLED=true
 "@
     
     $envConfig | Add-Content .env
@@ -154,7 +181,7 @@ LOG_LEVEL=debug
     Write-Host "   ℹ️  .env already contains AWS configuration" -ForegroundColor Cyan
 }
 
-# 10. Summary
+# 11. Summary
 Write-Host "`n" -NoNewline
 Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Green
 Write-Host "✅ LocalStack Setup Complete!" -ForegroundColor Green
@@ -171,10 +198,15 @@ Write-Host ""
 Write-Host "🪣 S3 Resources:" -ForegroundColor Cyan
 Write-Host "   • Bucket: dev-service-optimisation-c63f2" -ForegroundColor White
 Write-Host "   • Path: content-uploads/" -ForegroundColor White
+Write-Host "   • Event: Automatic S3 → SQS trigger enabled ⚡" -ForegroundColor Green
 Write-Host ""
 
 Write-Host "📬 SQS Resources:" -ForegroundColor Cyan
-Write-Host "   • Queue: content_review_status" -ForegroundColor White
+Write-Host "   • Queue: content_review_status (Standard)" -ForegroundColor White
+Write-Host ""
+
+Write-Host "⚡ Event-Driven Architecture:" -ForegroundColor Cyan
+Write-Host "   Upload → S3 → Auto Event → SQS → Worker → Bedrock AI" -ForegroundColor Yellow
 Write-Host ""
 
 Write-Host "🚀 Next Steps:" -ForegroundColor Cyan

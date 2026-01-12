@@ -216,6 +216,12 @@ const config = convict({
       env: 'AWS_REGION'
     }
   },
+  s3EventTriggerEnabled: {
+    doc: 'Enable S3 automatic event notifications to SQS (recommended). Set to false to use manual SQS calls from upload route.',
+    format: Boolean,
+    default: false,
+    env: 'S3_EVENT_TRIGGER_ENABLED'
+  },
   sqs: {
     endpoint: {
       doc: 'SQS endpoint URL (for LocalStack)',
@@ -234,7 +240,7 @@ const config = convict({
     queueName: {
       doc: 'SQS queue name',
       format: String,
-      default: 'content_review_status.fifo',
+      default: 'content_review_status',
       env: 'SQS_QUEUE_NAME'
     },
     region: {
@@ -263,6 +269,12 @@ const config = convict({
     }
   },
   bedrock: {
+    useMockAI: {
+      doc: 'Use mock AI service instead of real AWS Bedrock (for development/testing)',
+      format: Boolean,
+      default: false,
+      env: 'USE_MOCK_AI'
+    },
     endpoint: {
       doc: 'Bedrock endpoint URL (for LocalStack/testing)',
       format: String,

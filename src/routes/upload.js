@@ -191,7 +191,8 @@ export const uploadRoutes = {
               20
             )
 
-            // Send message to SQS queue for processing
+            // Step 5: Send message to SQS queue for processing
+            // Always send directly to SQS (don't rely on S3 events)
             try {
               const sqsResult = await sqsClient.sendMessage({
                 uploadId: result.fileId,
@@ -215,7 +216,7 @@ export const uploadRoutes = {
                 'Message sent to SQS queue for AI review'
               )
 
-              // Step 5: Update status - queued for processing
+              // Update status - queued for processing
               await reviewStatusTracker.updateStatus(
                 uploadId,
                 'queued',
@@ -223,23 +224,23 @@ export const uploadRoutes = {
                 30
               )
             } catch (sqsError) {
-              // Log but don't fail the upload if SQS fails
-              request.logger.error(
-                {
-                  uploadId,
-                  error: sqsError.message
-                },
-                'Failed to send message to SQS queue, but file upload succeeded'
-              )
+                // Log but don't fail the upload if SQS fails
+                request.logger.error(
+                  {
+                    uploadId,
+                    error: sqsError.message
+                  },
+                  'Failed to send message to SQS queue, but file upload succeeded'
+                )
 
-              // Mark as failed to queue (but file is uploaded)
-              await reviewStatusTracker.updateStatus(
-                uploadId,
-                'uploaded',
-                `File uploaded but failed to queue: ${sqsError.message}`,
-                20
-              )
-            }
+                // Mark as failed to queue (but file is uploaded)
+                await reviewStatusTracker.updateStatus(
+                  uploadId,
+                  'uploaded',
+                  `File uploaded but failed to queue: ${sqsError.message}`,
+                  20
+                )
+              }
 
             return h
               .response({

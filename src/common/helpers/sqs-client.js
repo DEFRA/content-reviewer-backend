@@ -50,7 +50,10 @@ class SQSClientHelper {
       sessionId: messageData.sessionId || null
     }
 
-    const command = new SendMessageCommand({
+    // Check if this is a FIFO queue (ends with .fifo)
+    const isFifoQueue = this.queueName.endsWith('.fifo')
+
+    const commandParams = {
       QueueUrl: this.queueUrl,
       MessageBody: JSON.stringify(messageBody),
       MessageAttributes: {
@@ -67,7 +70,15 @@ class SQSClientHelper {
           StringValue: messageData.contentType || 'text/plain'
         }
       }
-    })
+    }
+
+    // Add FIFO-specific parameters only if it's a FIFO queue
+    if (isFifoQueue) {
+      commandParams.MessageGroupId = messageData.uploadId // Group by upload ID
+      commandParams.MessageDeduplicationId = `${messageData.uploadId}-${Date.now()}` // Ensure uniqueness
+    }
+
+    const command = new SendMessageCommand(commandParams)
 
     try {
       const result = await this.sqsClient.send(command)

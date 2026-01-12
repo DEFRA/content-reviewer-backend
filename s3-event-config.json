@@ -1,0 +1,19 @@
+﻿{
+  "QueueConfigurations": [
+    {
+      "Id": "content-upload-notification",
+      "QueueArn": "arn:aws:sqs:us-east-1:000000000000:content_review_status",
+      "Events": ["s3:ObjectCreated:*"],
+      "Filter": {
+        "Key": {
+          "FilterRules": [
+            {
+              "Name": "prefix",
+              "Value": "content-uploads/"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

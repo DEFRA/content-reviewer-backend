@@ -202,12 +202,17 @@ class SQSWorker {
 
       // Update status: processing started
       if (uploadId) {
-        await reviewStatusTracker.updateStatus(
-          uploadId,
-          'processing',
-          'Worker started processing',
-          35
-        )
+        try {
+          await reviewStatusTracker.updateStatus(
+            uploadId,
+            'processing',
+            'Worker started processing',
+            35
+          )
+        } catch (error) {
+          logger.warn({ uploadId, error: error.message }, 'Could not update status - may not exist in memory')
+          // Continue processing even if status update fails
+        }
       }
 
       // Process the content review
@@ -237,10 +242,14 @@ class SQSWorker {
 
       // Mark as failed if we have uploadId
       if (uploadId) {
-        await reviewStatusTracker.markFailed(
-          uploadId,
-          `Processing failed: ${error.message}`
-        )
+        try {
+          await reviewStatusTracker.markFailed(
+            uploadId,
+            `Processing failed: ${error.message}`
+          )
+        } catch (updateError) {
+          logger.warn({ uploadId, error: updateError.message }, 'Could not mark as failed - status may not exist')
+        }
       }
 
       // Message will become visible again after visibility timeout
@@ -261,38 +270,75 @@ class SQSWorker {
           uploadId: messageBody.uploadId,
           messageType: messageBody.messageType,
           filename: messageBody.filename,
-          s3Location: messageBody.s3Location
+          s3Location: messageBody.s3Location,
+          hasDirectTextContent: !!messageBody.textContent
         },
         'Content review requested'
       )
 
-      // Step 1: Downloading and extracting from S3
-      await reviewStatusTracker.updateStatus(
-        uploadId,
-        'downloading',
-        'Downloading file from S3',
-        45
-      )
+      let extractedContent
+      let extractionMetadata = {}
 
-      // Extract text content from document
-      const extractionResult = await documentExtractor.extractText(
-        messageBody.s3Bucket,
-        messageBody.s3Key,
-        messageBody.contentType
-      )
-
-      const extractedContent = extractionResult.text
-      const extractionMetadata = extractionResult.metadata
-
-      logger.info(
-        {
+      // Check if this is direct text content or file upload
+      if (messageBody.messageType === 'text_content' && messageBody.textContent) {
+        // Direct text content - no S3 download needed
+        logger.info({ uploadId }, 'Processing direct text content')
+        
+        await reviewStatusTracker.updateStatus(
           uploadId,
-          extractionMethod: extractionResult.extractionMethod,
-          contentLength: extractedContent.length,
-          wordCount: extractionMetadata.wordCount
-        },
-        'File downloaded and text extracted from S3'
-      )
+          'processing',
+          'Processing text content',
+          45
+        )
+
+        extractedContent = messageBody.textContent
+        extractionMetadata = {
+          extractionMethod: 'direct_text',
+          wordCount: extractedContent.split(/\s+/).length,
+          characterCount: extractedContent.length,
+          contentType: 'text/plain'
+        }
+
+        logger.info(
+          {
+            uploadId,
+            extractionMethod: 'direct_text',
+            contentLength: extractedContent.length,
+            wordCount: extractionMetadata.wordCount
+          },
+          'Text content received directly'
+        )
+      } else {
+        // File upload - download and extract from S3
+        logger.info({ uploadId }, 'Processing uploaded file from S3')
+        
+        await reviewStatusTracker.updateStatus(
+          uploadId,
+          'downloading',
+          'Downloading file from S3',
+          45
+        )
+
+        // Extract text content from document
+        const extractionResult = await documentExtractor.extractText(
+          messageBody.s3Bucket,
+          messageBody.s3Key,
+          messageBody.contentType
+        )
+
+        extractedContent = extractionResult.text
+        extractionMetadata = extractionResult.metadata
+
+        logger.info(
+          {
+            uploadId,
+            extractionMethod: extractionResult.extractionMethod,
+            contentLength: extractedContent.length,
+            wordCount: extractionMetadata.wordCount
+          },
+          'File downloaded and text extracted from S3'
+        )
+      }
 
       // Step 2: Analyzing content
       await reviewStatusTracker.updateStatus(

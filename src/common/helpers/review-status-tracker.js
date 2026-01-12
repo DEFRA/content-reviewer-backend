@@ -1,24 +1,42 @@
 import { createLogger } from './logging/logger.js'
 import { s3Uploader } from './s3-uploader.js'
 import { mongodb } from './mongodb-client.js'
+import { memoryStatusTracker } from './memory-status-tracker.js'
+import { config } from '../../config.js'
 
 const logger = createLogger()
 
 /**
  * Review Status Tracker
  * Manages status updates for content review workflow
+ * Uses MongoDB if enabled, otherwise falls back to in-memory storage
  */
 class ReviewStatusTracker {
   constructor() {
     this.collectionName = 'review_statuses'
+    this.mongoEnabled = config.get('mongo.enabled')
+    
+    if (!this.mongoEnabled) {
+      logger.warn('MongoDB is disabled. Using in-memory status tracker. Data will be lost on restart.')
+    }
   }
 
   /**
-   * Get MongoDB collection
+   * Get MongoDB collection (only if MongoDB is enabled)
    */
   async getCollection() {
+    if (!this.mongoEnabled) {
+      throw new Error('MongoDB is not enabled')
+    }
     const db = await mongodb.getDb()
     return db.collection(this.collectionName)
+  }
+
+  /**
+   * Delegate to appropriate storage backend
+   */
+  getBackend() {
+    return this.mongoEnabled ? this : memoryStatusTracker
   }
 
   /**
@@ -30,6 +48,10 @@ class ReviewStatusTracker {
    * @returns {Promise<Object>} Created status document
    */
   async createStatus(uploadId, filename, userId, metadata = {}) {
+    if (!this.mongoEnabled) {
+      return memoryStatusTracker.createStatus(uploadId, filename, userId, metadata)
+    }
+
     const collection = await this.getCollection()
 
     const status = {
@@ -65,6 +87,14 @@ class ReviewStatusTracker {
    * @returns {Promise<Object>} Update result
    */
   async updateStatus(uploadId, newStatus, message = '', progress = null) {
+    if (!this.mongoEnabled) {
+      return memoryStatusTracker.updateStatus(uploadId, {
+        status: newStatus,
+        message,
+        progress
+      })
+    }
+
     const collection = await this.getCollection()
 
     const statusUpdate = {
@@ -103,6 +133,10 @@ class ReviewStatusTracker {
    * @returns {Promise<Object>} Status document
    */
   async getStatus(uploadId) {
+    if (!this.mongoEnabled) {
+      return memoryStatusTracker.getStatus(uploadId)
+    }
+
     const collection = await this.getCollection()
     return await collection.findOne({ uploadId })
   }
@@ -113,6 +147,10 @@ class ReviewStatusTracker {
    * @returns {Promise<Array>} Status history array
    */
   async getStatusHistory(uploadId) {
+    if (!this.mongoEnabled) {
+      return memoryStatusTracker.getStatusHistory(uploadId)
+    }
+
     const status = await this.getStatus(uploadId)
     return status?.statusHistory || []
   }
@@ -124,6 +162,10 @@ class ReviewStatusTracker {
    * @returns {Promise<Array>} Array of status documents
    */
   async getUserStatuses(userId, limit = 50) {
+    if (!this.mongoEnabled) {
+      return memoryStatusTracker.getUserStatuses(userId, limit)
+    }
+
     const collection = await this.getCollection()
     return await collection
       .find({ userId })
@@ -139,6 +181,10 @@ class ReviewStatusTracker {
    * @returns {Promise<Array>} Array of status documents
    */
   async getAllStatuses(limit = 50, statusFilter = null) {
+    if (!this.mongoEnabled) {
+      return memoryStatusTracker.getAllStatuses(limit, statusFilter)
+    }
+
     const collection = await this.getCollection()
     const query = statusFilter ? { status: statusFilter } : {}
 
@@ -156,29 +202,35 @@ class ReviewStatusTracker {
    * @returns {Promise<Object>} Update result
    */
   async markFailed(uploadId, errorMessage) {
+    if (!this.mongoEnabled) {
+      return memoryStatusTracker.markFailed(uploadId, errorMessage)
+    }
+
     const collection = await this.getCollection()
 
-    const result = await collection.updateOne(
-      { uploadId },
-      {
-        $set: {
-          status: 'failed',
-          error: errorMessage,
-          failedAt: new Date(),
-          updatedAt: new Date()
-        },
-        $push: {
-          statusHistory: {
-            status: 'failed',
-            timestamp: new Date(),
-            message: errorMessage
-          }
-        }
-      }
-    )
+    const historyEntry = {
+      status: 'failed',
+      timestamp: new Date(),
+      message: errorMessage,
+      error: errorMessage
+    }
 
+    const updateDoc = {
+      $set: {
+        status: 'failed',
+        failedAt: new Date(),
+        updatedAt: new Date(),
+        error: errorMessage
+      },
+      $push: {
+        statusHistory: historyEntry
+      }
+    }
+
+    await collection.updateOne({ uploadId }, updateDoc)
     logger.error({ uploadId, error: errorMessage }, 'Review marked as failed')
-    return result
+    
+    return { uploadId, status: 'failed', error: errorMessage }
   }
 
   /**
@@ -188,9 +240,7 @@ class ReviewStatusTracker {
    * @returns {Promise<Object>} Update result
    */
   async markCompleted(uploadId, resultData = {}) {
-    const collection = await this.getCollection()
-
-    // Step 1: Save results to S3 for long-term storage
+    // Step 1: Save results to S3 for long-term storage (regardless of MongoDB status)
     let s3ResultLocation = null
     try {
       const resultFileName = `${uploadId}-review-result.json`
@@ -212,11 +262,18 @@ class ReviewStatusTracker {
     } catch (error) {
       logger.error(
         { uploadId, error: error.message },
-        'Failed to save results to S3, continuing with MongoDB only'
+        'Failed to save results to S3, continuing with status update'
       )
     }
 
-    // Step 2: Update MongoDB with results and S3 location
+    // Step 2: Update status tracker (MongoDB or memory)
+    if (!this.mongoEnabled) {
+      return memoryStatusTracker.markCompleted(uploadId, resultData)
+    }
+
+    const collection = await this.getCollection()
+
+    // Step 3: Update MongoDB with results and S3 location
     const result = await collection.updateOne(
       { uploadId },
       {
@@ -250,6 +307,10 @@ class ReviewStatusTracker {
    * @returns {Promise<Object>} Delete result
    */
   async deleteStatus(uploadId) {
+    if (!this.mongoEnabled) {
+      return memoryStatusTracker.deleteStatus(uploadId)
+    }
+
     const collection = await this.getCollection()
     return await collection.deleteOne({ uploadId })
   }
@@ -260,12 +321,61 @@ class ReviewStatusTracker {
    * @returns {Promise<Object>} Statistics object
    */
   async getStatistics(userId = null) {
+    if (!this.mongoEnabled) {
+      return memoryStatusTracker.getStatistics(userId)
+    }
+
     const collection = await this.getCollection()
     const query = userId ? { userId } : {}
 
     const stats = await collection
       .aggregate([
         { $match: query },
+        {
+          $group: {
+            _id: '$status',
+            count: { $sum: 1 }
+          }
+        }
+      ])
+      .toArray()
+
+    const result = {
+      total: 0,
+      uploading: 0,
+      uploaded: 0,
+      queued: 0,
+      processing: 0,
+      downloading: 0,
+      analyzing: 0,
+      reviewing: 0,
+      finalizing: 0,
+      completed: 0,
+      failed: 0,
+      cancelled: 0
+    }
+
+    stats.forEach((stat) => {
+      result[stat._id] = stat.count
+      result.total += stat.count
+    })
+
+    return result
+  }
+
+  /**
+   * Get statistics by status
+   */
+  async getStatisticsByStatus() {
+    if (!this.mongoEnabled) {
+      // For memory tracker, calculate statistics from in-memory data
+      return memoryStatusTracker.getStatistics()
+    }
+
+    const collection = await this.getCollection()
+
+    const stats = await collection
+      .aggregate([
         {
           $group: {
             _id: '$status',
