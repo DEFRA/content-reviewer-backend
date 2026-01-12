@@ -103,6 +103,7 @@ const reviewController = {
     timeout: {
       server: 4500 // 4.5 seconds - must complete before nginx 5s timeout
     }
+    // No timeout override - let nginx handle the 5s timeout
   },
   handler: async (request, h) => {
     try {

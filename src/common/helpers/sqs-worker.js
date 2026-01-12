@@ -3,10 +3,19 @@ import {
   ReceiveMessageCommand,
   DeleteMessageCommand
 } from '@aws-sdk/client-sqs'
+import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3'
 import { config } from '../../config.js'
 import { createLogger } from './logging/logger.js'
+import { bedrockClient } from './bedrock-client.js'
+import { reviewRepository } from './review-repository.js'
+import { textExtractor } from './text-extractor.js'
+import { readFileSync } from 'fs'
+import { join, dirname } from 'path'
+import { fileURLToPath } from 'url'
 
 const logger = createLogger()
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = dirname(__filename)
 
 /**
  * SQS Worker to process messages from content review queue
@@ -30,6 +39,26 @@ class SQSWorker {
     this.maxMessages = config.get('sqs.maxMessages')
     this.waitTimeSeconds = config.get('sqs.waitTimeSeconds')
     this.visibilityTimeout = config.get('sqs.visibilityTimeout')
+
+    // Initialize S3 client for downloading files
+    const s3Config = {
+      region: config.get('upload.region')
+    }
+    if (awsEndpoint) {
+      s3Config.endpoint = awsEndpoint
+      s3Config.forcePathStyle = true
+    }
+    this.s3Client = new S3Client(s3Config)
+
+    // Load system prompt
+    try {
+      const promptPath = join(__dirname, '../../..', 'docs', 'system-prompt.md')
+      this.systemPrompt = readFileSync(promptPath, 'utf-8')
+      logger.info('System prompt loaded successfully')
+    } catch (error) {
+      logger.error({ error: error.message }, 'Failed to load system prompt')
+      this.systemPrompt = 'You are a helpful content reviewer assistant.'
+    }
   }
 
   /**
@@ -184,44 +213,152 @@ class SQSWorker {
    * @param {Object} messageBody - Message body from SQS
    */
   async processContentReview(messageBody) {
+    const reviewId = messageBody.uploadId
+
     logger.info(
       {
-        uploadId: messageBody.uploadId,
+        reviewId,
         messageType: messageBody.messageType,
-        filename: messageBody.filename,
-        s3Location: messageBody.s3Location
+        filename: messageBody.filename
       },
-      'Content review requested'
+      'Starting content review'
     )
 
-    // TODO: Your colleague will implement this
-    // This is where the AI content review will happen:
-    // 1. If file upload: Download file from S3
-    // 2. Extract text content from file
-    // 3. Send to AI prompt for review
-    // 4. Get review results
-    // 5. Store results (database/S3)
-    // 6. Optionally notify user
+    try {
+      // Update review status to processing
+      await reviewRepository.updateReviewStatus(reviewId, 'processing')
 
-    // Simulate processing time
-    await this.sleep(1000)
+      let textContent = ''
 
-    // Placeholder response
-    const reviewResult = {
-      uploadId: messageBody.uploadId,
-      status: 'pending_ai_integration',
-      message:
-        'File received and queued. AI review integration will be implemented by your colleague.',
-      s3Location: messageBody.s3Location,
-      processedAt: new Date().toISOString()
+      // Extract text based on message type
+      if (messageBody.messageType === 'file_review') {
+        // Download file from S3
+        logger.info(
+          { reviewId, s3Key: messageBody.s3Key },
+          'Downloading file from S3'
+        )
+
+        const s3Response = await this.s3Client.send(
+          new GetObjectCommand({
+            Bucket: messageBody.s3Bucket,
+            Key: messageBody.s3Key
+          })
+        )
+
+        // Convert stream to buffer
+        const chunks = []
+        for await (const chunk of s3Response.Body) {
+          chunks.push(chunk)
+        }
+        const buffer = Buffer.concat(chunks)
+
+        // Extract text from file
+        logger.info(
+          { reviewId, mimeType: messageBody.contentType },
+          'Extracting text from file'
+        )
+
+        textContent = await textExtractor.extractText(
+          buffer,
+          messageBody.contentType,
+          messageBody.filename
+        )
+
+        logger.info(
+          {
+            reviewId,
+            extractedLength: textContent.length,
+            wordCount: textExtractor.countWords(textContent)
+          },
+          'Text extracted successfully'
+        )
+      } else if (messageBody.messageType === 'text_review') {
+        // Use text content directly
+        textContent = messageBody.textContent
+        logger.info(
+          { reviewId, contentLength: textContent.length },
+          'Using direct text content'
+        )
+      } else {
+        throw new Error(`Unknown message type: ${messageBody.messageType}`)
+      }
+
+      // Prepare prompt for Bedrock
+      const userPrompt = `Please review the following content:\n\n---\n${textContent}\n---\n\nProvide a comprehensive content review following the guidelines in your system prompt.`
+
+      logger.info(
+        { reviewId, promptLength: userPrompt.length },
+        'Sending to Bedrock for review'
+      )
+
+      // Send to Bedrock with system prompt
+      const bedrockResponse = await bedrockClient.sendMessage(userPrompt, [
+        {
+          role: 'user',
+          content: [{ text: this.systemPrompt }]
+        },
+        {
+          role: 'assistant',
+          content: [
+            {
+              text: 'I understand. I will review content according to GOV.UK standards and provide structured feedback as specified.'
+            }
+          ]
+        }
+      ])
+
+      if (!bedrockResponse.success) {
+        throw new Error(
+          bedrockResponse.blocked
+            ? 'Content blocked by guardrails'
+            : 'Bedrock review failed'
+        )
+      }
+
+      logger.info(
+        {
+          reviewId,
+          responseLength: bedrockResponse.content.length,
+          usage: bedrockResponse.usage
+        },
+        'Review completed successfully'
+      )
+
+      // Save review result
+      await reviewRepository.saveReviewResult(
+        reviewId,
+        {
+          reviewContent: bedrockResponse.content,
+          guardrailAssessment: bedrockResponse.guardrailAssessment,
+          stopReason: bedrockResponse.stopReason,
+          completedAt: new Date()
+        },
+        bedrockResponse.usage
+      )
+
+      logger.info({ reviewId }, 'Review saved to database')
+
+      return {
+        reviewId,
+        status: 'completed',
+        message: 'Review completed successfully'
+      }
+    } catch (error) {
+      logger.error(
+        {
+          reviewId,
+          error: error.message,
+          stack: error.stack
+        },
+        'Review processing failed'
+      )
+
+      // Save error to database
+      await reviewRepository.saveReviewError(reviewId, error.message)
+
+      // Re-throw to mark message as failed (will retry)
+      throw error
     }
-
-    logger.info(
-      { uploadId: messageBody.uploadId, result: reviewResult },
-      'Content review placeholder executed'
-    )
-
-    return reviewResult
   }
 
   /**
