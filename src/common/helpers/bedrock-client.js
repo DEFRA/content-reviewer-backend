@@ -235,34 +235,15 @@ class BedrockClient {
    * @returns {Promise<Object>} Review with suggestions and assessment
    */
   async reviewContent(content, contentType = 'general') {
-    // Shortened prompt to reduce processing time (must complete within 5 seconds for CDP nginx)
-    const systemPrompt = `You are a GOV.UK content reviewer. Assess content for clarity, plain English, structure, and accessibility. Provide: Overall Assessment, Strengths, Issues, Suggestions, and a Compliance Score (0-10).`
+    // Ultra-short prompt to maximize speed (must complete within 5 seconds for CDP nginx)
+    const userPrompt = `Review this content for GOV.UK compliance. Assess clarity, plain English, structure. Provide: assessment, 2 strengths, 2 issues, 2 suggestions, score (0-10).
 
-    const userPrompt = `Review this ${contentType} content following GOV.UK standards:
-
-${content}
-
-Provide a concise review with: assessment, strengths, issues, suggestions, and score.`
+Content:
+${content}`
 
     try {
-      // Build conversation history with system prompt setup
-      const conversationHistory = [
-        {
-          role: 'user',
-          content: [{ text: systemPrompt }]
-        },
-        {
-          role: 'assistant',
-          content: [
-            {
-              text: 'I understand. I will review content according to GOV.UK standards.'
-            }
-          ]
-        }
-      ]
-
-      // Send the actual review request with the system context
-      const result = await this.sendMessage(userPrompt, conversationHistory)
+      // Send direct message without conversation history to minimize processing time
+      const result = await this.sendMessage(userPrompt, [])
 
       if (result.blocked) {
         return {
