@@ -91,6 +91,7 @@ const chatController = {
 
 /**
  * Content review endpoint - Review content for quality and GOV.UK compliance
+ * Note: CDP nginx has a 5-second timeout for this endpoint
  */
 const reviewController = {
   options: {
@@ -98,6 +99,9 @@ const reviewController = {
     cors: {
       origin: config.get('cors.origin'),
       credentials: config.get('cors.credentials')
+    },
+    timeout: {
+      server: 4500 // 4.5 seconds - must complete before nginx 5s timeout
     }
   },
   handler: async (request, h) => {
@@ -164,6 +168,17 @@ const reviewController = {
 
       if (Boom.isBoom(error)) {
         throw error
+      }
+
+      // Check for timeout errors
+      if (
+        error.message?.includes('timeout') ||
+        error.name === 'TimeoutError' ||
+        error.code === 'ETIMEDOUT'
+      ) {
+        throw Boom.gatewayTimeout(
+          'Content review took too long to process. Please try with shorter content or contact support.'
+        )
       }
 
       throw Boom.internal('Failed to process content review')

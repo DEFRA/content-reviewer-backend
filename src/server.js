@@ -37,6 +37,10 @@ async function createServer() {
         xss: 'enabled',
         noSniff: true,
         xframe: true
+      },
+      timeout: {
+        socket: 90000, // 90 seconds - must be less than nginx timeout
+        server: 85000 // 85 seconds - allow time for response before socket closes
       }
     },
     router: {
