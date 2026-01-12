@@ -168,32 +168,16 @@ class BedrockClient {
       // Log with all extracted details
       logger.error('Error calling Bedrock API', errorDetails)
 
-      // Also log to console for immediate visibility
-      console.error('=== BEDROCK API ERROR ===')
-      console.error('Error Name:', error.name)
-      console.error('Error Message:', error.message)
-      console.error('Error Code:', error.code || 'undefined')
-      console.error(
-        'HTTP Status:',
-        error.$metadata?.httpStatusCode || 'undefined'
-      )
-      console.error('Request ID:', error.$metadata?.requestId || 'undefined')
-      console.error('Full Error:', error)
-      console.error('=========================')
-
       // Handle credential errors with extra diagnostics
       if (error.name === 'CredentialsProviderError') {
-        console.error('=== CREDENTIAL DIAGNOSTICS ===')
-        console.error('AWS Profile:', process.env.AWS_PROFILE || 'none')
-        console.error('Has Access Key ID:', !!process.env.AWS_ACCESS_KEY_ID)
-        console.error(
-          'Has Secret Access Key:',
-          !!process.env.AWS_SECRET_ACCESS_KEY
-        )
-        console.error('Has Session Token:', !!process.env.AWS_SESSION_TOKEN)
-        console.error('Node Env:', process.env.NODE_ENV)
-        console.error('AWS Region:', this.region)
-        console.error('==============================')
+        logger.error('AWS Credential diagnostics', {
+          awsProfile: process.env.AWS_PROFILE || 'none',
+          hasAccessKeyId: !!process.env.AWS_ACCESS_KEY_ID,
+          hasSecretAccessKey: !!process.env.AWS_SECRET_ACCESS_KEY,
+          hasSessionToken: !!process.env.AWS_SESSION_TOKEN,
+          nodeEnv: process.env.NODE_ENV,
+          awsRegion: this.region
+        })
 
         throw new Error(
           'AWS credentials not found. In CDP, ensure EC2 instance has IAM role with Bedrock permissions.'
@@ -318,11 +302,6 @@ Provide a detailed quality review following GOV.UK content standards.`
       }
 
       logger.error('Error reviewing content', errorDetails)
-
-      // Also log to console for debugging
-      console.error('=== CONTENT REVIEW ERROR ===')
-      console.error('Error:', error)
-      console.error('============================')
 
       throw error
     }
