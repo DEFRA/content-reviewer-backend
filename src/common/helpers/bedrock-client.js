@@ -31,9 +31,13 @@ class BedrockClient {
     this.region = config.get('bedrock.region')
     this.maxTokens = config.get('bedrock.maxTokens')
     this.temperature = config.get('bedrock.temperature')
+    this.timeout = 30000 // 30 seconds timeout - reduced to work with CDP's 5s nginx timeout on review endpoint
 
     this.client = new BedrockRuntimeClient({
-      region: this.region
+      region: this.region,
+      requestHandler: {
+        requestTimeout: this.timeout
+      }
     })
 
     logger.info('Bedrock client initialized with CDP inference profile', {
@@ -213,6 +217,12 @@ class BedrockClient {
         )
       }
 
+      if (error.name === 'TimeoutError' || error.code === 'ETIMEDOUT') {
+        throw new Error(
+          'Bedrock API request timed out. The request took too long to process.'
+        )
+      }
+
       throw new Error(`Bedrock API error: ${error.message}`)
     }
   }
@@ -225,37 +235,14 @@ class BedrockClient {
    * @returns {Promise<Object>} Review with suggestions and assessment
    */
   async reviewContent(content, contentType = 'general') {
-    const systemPrompt = `You are a content quality reviewer for GOV.UK services. Your role is to assess content for:
+    // Shortened prompt to reduce processing time (must complete within 5 seconds for CDP nginx)
+    const systemPrompt = `You are a GOV.UK content reviewer. Assess content for clarity, plain English, structure, and accessibility. Provide: Overall Assessment, Strengths, Issues, Suggestions, and a Compliance Score (0-10).`
 
-1. **Clarity**: Is the content clear and easy to understand?
-2. **Plain English**: Does it follow GOV.UK plain English guidelines?
-3. **Structure**: Is it well-organized with clear headings and sections?
-4. **Accessibility**: Is it accessible to all users?
-5. **Action-oriented**: Does it help users complete their task?
-6. **Tone**: Is the tone appropriate (friendly, professional, helpful)?
+    const userPrompt = `Review this ${contentType} content following GOV.UK standards:
 
-Provide your review in the following format:
-
-**Overall Assessment**: [Brief summary]
-
-**Strengths**:
-- [List key strengths]
-
-**Issues Found**:
-- [List specific issues with line references if applicable]
-
-**Suggestions**:
-- [Actionable suggestions for improvement]
-
-**Compliance Score**: [Score out of 10]`
-
-    const userPrompt = `Please review the following ${contentType} content:
-
----
 ${content}
----
 
-Provide a detailed quality review following GOV.UK content standards.`
+Provide a concise review with: assessment, strengths, issues, suggestions, and score.`
 
     try {
       // Build conversation history with system prompt setup
