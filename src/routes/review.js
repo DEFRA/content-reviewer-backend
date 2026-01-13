@@ -346,7 +346,7 @@ export const reviewRoutes = {
 
             // Format reviews for response
             const formattedReviews = reviews.map((review) => ({
-              id: review._id,
+              id: review.id || review._id, // Support both S3 (id) and MongoDB (_id)
               status: review.status,
               sourceType: review.sourceType,
               fileName: review.fileName,
@@ -356,7 +356,8 @@ export const reviewRoutes = {
               hasResult: !!review.result,
               hasError: !!review.error,
               processingTime: review.processingCompletedAt
-                ? review.processingCompletedAt - review.processingStartedAt
+                ? new Date(review.processingCompletedAt) -
+                  new Date(review.processingStartedAt)
                 : null
             }))
 

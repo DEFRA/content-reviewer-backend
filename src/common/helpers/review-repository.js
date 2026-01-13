@@ -341,6 +341,39 @@ class ReviewRepositoryS3 {
   }
 
   /**
+   * Get all reviews (alias for getRecentReviews for compatibility)
+   * @param {number} limit - Maximum number of reviews to return
+   * @param {number} skip - Number of reviews to skip (not used in S3, use continuationToken instead)
+   * @returns {Promise<Array>} Array of reviews
+   */
+  async getAllReviews(limit = 50, skip = 0) {
+    const { reviews } = await this.getRecentReviews({ limit })
+    // S3 doesn't support skip, so we just return the recent reviews
+    // For proper pagination, use getRecentReviews with continuationToken
+    return reviews
+  }
+
+  /**
+   * Get total review count (estimated for S3)
+   * @returns {Promise<number>} Estimated total count
+   */
+  async getReviewCount() {
+    try {
+      const listCommand = new ListObjectsV2Command({
+        Bucket: this.bucket,
+        Prefix: this.prefix,
+        MaxKeys: 1000 // Get up to 1000 to estimate
+      })
+
+      const response = await this.s3Client.send(listCommand)
+      return response.KeyCount || 0
+    } catch (error) {
+      logger.error({ error: error.message }, 'Failed to get review count')
+      return 0
+    }
+  }
+
+  /**
    * Get reviews by status
    * @param {string} status - Status to filter by
    * @param {Object} options - Query options
