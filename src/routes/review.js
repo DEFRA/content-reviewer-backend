@@ -365,6 +365,7 @@ export const reviewRoutes = {
               .response({
                 success: true,
                 reviews: formattedReviews,
+                total: totalCount, // Add total at root level for compatibility
                 pagination: {
                   total: totalCount,
                   limit,
@@ -372,6 +373,8 @@ export const reviewRoutes = {
                   returned: formattedReviews.length
                 }
               })
+              .type('application/json')
+              .header('Content-Encoding', 'identity')
               .code(200)
           } catch (error) {
             request.logger.error(
