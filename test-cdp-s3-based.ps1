@@ -58,10 +58,10 @@ catch {
 }
 Write-Host ""
 
-# Test 3: Check if review endpoints are registered
+# Test 3: Check if review endpoints are registered (using /api/reviews)
 Write-Host "TEST 3: Check Review Endpoints Registration" -ForegroundColor Yellow
 try {
-    $response = Invoke-WebRequest -Uri "$baseUrl/api/review/worker-status" -Method GET -Headers $headers -ErrorAction Stop
+    $response = Invoke-WebRequest -Uri "$baseUrl/api/reviews" -Method GET -Headers $headers -ErrorAction Stop
     Write-Host "SUCCESS: Review endpoints are registered (Status: $($response.StatusCode))" -ForegroundColor Green
 }
 catch {
@@ -70,8 +70,8 @@ catch {
         Write-Host "FAILED: Review endpoints NOT registered (404 Not Found)" -ForegroundColor Red
         Write-Host "  The review.js routes are not loaded in the backend" -ForegroundColor Yellow
     }
-    elseif ($statusCode -eq 500) {
-        Write-Host "SUCCESS: Review endpoints ARE registered (500 means S3 config issue, not routing)" -ForegroundColor Green
+    elseif ($statusCode -eq 500 -or $statusCode -eq 200) {
+        Write-Host "SUCCESS: Review endpoints ARE registered" -ForegroundColor Green
     }
     else {
         Write-Host "INFO: Got status code: $statusCode" -ForegroundColor Yellow
@@ -159,7 +159,7 @@ else {
 # Test 6: Get Review History
 Write-Host "TEST 6: Get Review History" -ForegroundColor Yellow
 try {
-    $response = Invoke-RestMethod -Uri "$baseUrl/api/review/history?limit=5" -Method GET -Headers $headers
+    $response = Invoke-RestMethod -Uri "$baseUrl/api/reviews?limit=5" -Method GET -Headers $headers
     
     Write-Host "SUCCESS: Retrieved review history" -ForegroundColor Green
     Write-Host "  Total reviews: $($response.reviews.Count)" -ForegroundColor Gray
