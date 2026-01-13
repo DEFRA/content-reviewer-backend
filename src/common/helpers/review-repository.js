@@ -131,9 +131,8 @@ class ReviewRepositoryS3 {
     // Since we don't know the exact date, we'll try recent dates or search
 
     try {
-      // Strategy 1: Try today first
-      const today = new Date()
-      let key = this.getReviewKey(reviewId)
+      // Strategy 1: Try today first (getReviewKey uses current date)
+      const key = this.getReviewKey(reviewId)
 
       const command = new GetObjectCommand({
         Bucket: this.bucket,
