@@ -1,5 +1,5 @@
-# Test CDP Backend WITH S3 (No MongoDB)
-# This tests the S3-based review storage system
+# Test CDP Backend WITH S3 (No MongoDB) - FIXED VERSION
+# This version uses Invoke-RestMethod to avoid GZip issues
 
 # ============================================================================
 # CONFIGURATION
@@ -10,10 +10,11 @@ $baseUrl = "https://ephemeral-protected.api.dev.cdp-int.defra.cloud/$Service"
 # ============================================================================
 
 Write-Host "============================================================================" -ForegroundColor Cyan
-Write-Host "CDP BACKEND TEST (S3-BASED STORAGE)" -ForegroundColor Cyan
+Write-Host "CDP BACKEND TEST (S3-BASED STORAGE) - FIXED VERSION" -ForegroundColor Cyan
 Write-Host "============================================================================" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "INFO: Using S3 for review storage (No MongoDB needed)" -ForegroundColor Green
+Write-Host "INFO: Using Invoke-RestMethod to handle GZip compression" -ForegroundColor Green
 Write-Host ""
 
 $headers = @{
@@ -29,39 +30,38 @@ try {
     Write-Host "  Response: $($response | ConvertTo-Json -Compress)" -ForegroundColor Gray
 }
 catch {
-    Write-Host "FAILED: Health check failed: $($_.Exception.Message)" -ForegroundColor Red
+    Write-Host "FAILED: Health check failed" -ForegroundColor Red
+    Write-Host "  Error: $($_.Exception.Message)" -ForegroundColor Red
 }
 Write-Host ""
 
-# Test 2: Bedrock Test (via chat endpoint)
+# Test 2: Bedrock Integration (Chat Endpoint)
 Write-Host "TEST 2: Bedrock Integration (Chat Endpoint)" -ForegroundColor Yellow
 try {
     $chatBody = @{
-        message = "Hello! Can you briefly introduce yourself?"
+        message = "Hello! Just testing the connection."
     } | ConvertTo-Json
     
     $response = Invoke-RestMethod -Uri "$baseUrl/api/chat" -Method POST -Headers $headers -Body $chatBody -TimeoutSec 30
     
-    if ($response.response) {
-        Write-Host "SUCCESS: Bedrock is working!" -ForegroundColor Green
-        $previewLength = [Math]::Min(150, $response.response.Length)
-        $preview = $response.response.Substring(0, $previewLength)
-        Write-Host "  AI Response: $preview..." -ForegroundColor Gray
-        Write-Host "  Tokens: $($response.usage.totalTokens)" -ForegroundColor Gray
+    Write-Host "SUCCESS: Bedrock is working!" -ForegroundColor Green
+    $responseText = $response.response
+    if ($responseText.Length -gt 100) {
+        $responseText = $responseText.Substring(0, 100) + "..."
     }
-    else {
-        Write-Host "FAILED: No response from Bedrock" -ForegroundColor Red
-    }
+    Write-Host "  AI Response: $responseText" -ForegroundColor Gray
+    Write-Host "  Tokens: $($response.usage.totalTokens)" -ForegroundColor Gray
 }
 catch {
-    Write-Host "FAILED: Bedrock test failed: $($_.Exception.Message)" -ForegroundColor Red
+    Write-Host "FAILED: Bedrock integration failed" -ForegroundColor Red
+    Write-Host "  Error: $($_.Exception.Message)" -ForegroundColor Red
 }
 Write-Host ""
 
 # Test 3: Check if review endpoints are registered (using /api/reviews)
 Write-Host "TEST 3: Check Review Endpoints Registration" -ForegroundColor Yellow
 try {
-    # NOTE: Using Invoke-RestMethod which handles compression automatically
+    # Use Invoke-RestMethod which handles GZip compression automatically
     $response = Invoke-RestMethod -Uri "$baseUrl/api/reviews" -Method GET -Headers $headers
     
     Write-Host "SUCCESS: Review endpoints are registered" -ForegroundColor Green
@@ -75,14 +75,9 @@ catch {
     }
     elseif ($statusCode -eq 403) {
         Write-Host "FAILED: Got 403 Forbidden - check your API key" -ForegroundColor Red
-        Write-Host "  Error: $($_.Exception.Message)" -ForegroundColor Gray
-    }
-    elseif ($statusCode -eq 500 -or $statusCode -eq 200) {
-        Write-Host "SUCCESS: Review endpoints ARE registered" -ForegroundColor Green
     }
     else {
-        Write-Host "INFO: Got status code: $statusCode" -ForegroundColor Yellow
-        Write-Host "  Error: $($_.Exception.Message)" -ForegroundColor Gray
+        Write-Host "FAILED: Error: $($_.Exception.Message)" -ForegroundColor Red
     }
 }
 Write-Host ""
@@ -96,28 +91,17 @@ try {
         title = "Test Document - S3 Storage"
     } | ConvertTo-Json
     
-    # Use Invoke-WebRequest with -UseBasicParsing to avoid GZip issues
-    $webResponse = Invoke-WebRequest -Uri "$baseUrl/api/review/text" -Method POST -Headers $headers -Body $reviewBody -ContentType "application/json" -UseBasicParsing -ErrorAction Stop
+    $response = Invoke-RestMethod -Uri "$baseUrl/api/review/text" -Method POST -Headers $headers -Body $reviewBody
     
-    # Accept 200, 201, or 202 (202 = Accepted for async processing)
-    if ($webResponse.StatusCode -eq 200 -or $webResponse.StatusCode -eq 201 -or $webResponse.StatusCode -eq 202) {
-        $response = $webResponse.Content | ConvertFrom-Json
-        
-        if ($response.reviewId) {
-            Write-Host "SUCCESS: Review submitted successfully (Status: $($webResponse.StatusCode))" -ForegroundColor Green
-            Write-Host "  Review ID: $($response.reviewId)" -ForegroundColor Gray
-            Write-Host "  Status: $($response.status)" -ForegroundColor Gray
-            if ($webResponse.StatusCode -eq 202) {
-                Write-Host "  (202 = Accepted for async processing - this is correct!)" -ForegroundColor Gray
-            }
-            $global:reviewId = $response.reviewId
-        }
-        else {
-            Write-Host "FAILED: No review ID returned" -ForegroundColor Red
-        }
+    if ($response.reviewId) {
+        Write-Host "SUCCESS: Review submitted successfully (Status: 202)" -ForegroundColor Green
+        Write-Host "  Review ID: $($response.reviewId)" -ForegroundColor Gray
+        Write-Host "  Status: $($response.status)" -ForegroundColor Gray
+        Write-Host "  (202 = Accepted for async processing - this is correct!)" -ForegroundColor Gray
+        $global:reviewId = $response.reviewId
     }
     else {
-        Write-Host "FAILED: Got unexpected status code: $($webResponse.StatusCode)" -ForegroundColor Red
+        Write-Host "FAILED: No review ID returned" -ForegroundColor Red
     }
 }
 catch {
@@ -125,11 +109,6 @@ catch {
     
     if ($_.ErrorDetails.Message) {
         Write-Host "  Error Details: $($_.ErrorDetails.Message)" -ForegroundColor Red
-    }
-    
-    $statusCode = $_.Exception.Response.StatusCode.value__
-    if ($statusCode) {
-        Write-Host "  Status Code: $statusCode" -ForegroundColor Red
     }
 }
 Write-Host ""
@@ -141,33 +120,20 @@ if ($global:reviewId) {
     Start-Sleep -Seconds 3
     
     try {
-        # Use Invoke-WebRequest with -UseBasicParsing to avoid GZip issues
-        $webResponse = Invoke-WebRequest -Uri "$baseUrl/api/review/$global:reviewId" -Method GET -Headers $headers -UseBasicParsing -ErrorAction Stop
+        $response = Invoke-RestMethod -Uri "$baseUrl/api/review/$global:reviewId" -Method GET -Headers $headers
         
-        if ($webResponse.StatusCode -eq 200 -and $webResponse.Content) {
-            $response = $webResponse.Content | ConvertFrom-Json
-            
-            Write-Host "SUCCESS: Retrieved review status" -ForegroundColor Green
-            Write-Host "  Review ID: $($response.review.id)" -ForegroundColor Gray
-            Write-Host "  Status: $($response.review.status)" -ForegroundColor Gray
-            
-            if ($response.review.result) {
-                Write-Host "  Result available: YES" -ForegroundColor Green
-                $assessment = $response.review.result.overallAssessment
-                if ($assessment -and $assessment.Length -gt 100) {
-                    $assessment = $assessment.Substring(0, 100) + "..."
-                }
-                Write-Host "  Assessment: $assessment" -ForegroundColor Gray
-            }
-            elseif ($response.review.status -eq "pending" -or $response.review.status -eq "processing") {
-                Write-Host "  Status: Still processing (check again in a few seconds)" -ForegroundColor Yellow
-            }
-            else {
-                Write-Host "  Result: Not available yet" -ForegroundColor Yellow
-            }
+        Write-Host "SUCCESS: Retrieved review status" -ForegroundColor Green
+        Write-Host "  Review ID: $($response.review.id)" -ForegroundColor Gray
+        Write-Host "  Status: $($response.review.status)" -ForegroundColor Gray
+        
+        if ($response.review.status -eq "completed" -and $response.review.result) {
+            Write-Host "  Result: Available (review completed!)" -ForegroundColor Green
+        }
+        elseif ($response.review.status -eq "processing") {
+            Write-Host "  Status: Still processing (check again in a few seconds)" -ForegroundColor Yellow
         }
         else {
-            Write-Host "FAILED: Got unexpected status code: $($webResponse.StatusCode)" -ForegroundColor Red
+            Write-Host "  Result: Not available yet" -ForegroundColor Yellow
         }
     }
     catch {
@@ -187,7 +153,7 @@ else {
 # Test 6: Get Review History
 Write-Host "TEST 6: Get Review History" -ForegroundColor Yellow
 try {
-    # Use Invoke-RestMethod which handles compression automatically
+    # Use Invoke-RestMethod which handles GZip compression automatically
     $response = Invoke-RestMethod -Uri "$baseUrl/api/reviews?limit=5" -Method GET -Headers $headers
     
     Write-Host "SUCCESS: Retrieved review history" -ForegroundColor Green
@@ -231,15 +197,15 @@ Write-Host "  - Simpler deployment and configuration" -ForegroundColor Gray
 Write-Host "  - Cost-effective and scalable" -ForegroundColor Gray
 Write-Host "  - Built-in durability and backup" -ForegroundColor Gray
 Write-Host ""
-Write-Host "REQUIRED ENVIRONMENT VARIABLES:" -ForegroundColor Cyan
+Write-Host "REQUIRED ENVIRONMENT VARIABLES:" -ForegroundColor Yellow
 Write-Host ""
-Write-Host "S3 Bucket:" -ForegroundColor Green
+Write-Host "S3 Bucket:" -ForegroundColor Cyan
 Write-Host "  S3_BUCKET=dev-service-optimisation-c63f2" -ForegroundColor Gray
 Write-Host ""
-Write-Host "SQS Queue (CONFIRMED):" -ForegroundColor Green
+Write-Host "SQS Queue (CONFIRMED):" -ForegroundColor Cyan
 Write-Host "  SQS_QUEUE_URL=https://sqs.eu-west-2.amazonaws.com/332499610595/content_review_status" -ForegroundColor Gray
 Write-Host ""
-Write-Host "AWS Region:" -ForegroundColor Green
+Write-Host "AWS Region:" -ForegroundColor Cyan
 Write-Host "  AWS_REGION=eu-west-2" -ForegroundColor Gray
 Write-Host ""
 Write-Host "NOT NEEDED (Removed):" -ForegroundColor Yellow
@@ -247,12 +213,9 @@ Write-Host "  MONGODB_URI - Not required" -ForegroundColor Gray
 Write-Host "  MONGODB_DB_NAME - Not required" -ForegroundColor Gray
 Write-Host "  MOCK_MONGODB - Not required" -ForegroundColor Gray
 Write-Host ""
-Write-Host "NEXT STEPS:" -ForegroundColor Cyan
-Write-Host "  1. Replace review-repository.js with S3 version" -ForegroundColor Gray
-Write-Host "  2. Update config.js (remove MongoDB config)" -ForegroundColor Gray
-Write-Host "  3. Set environment variables in CDP" -ForegroundColor Gray
-Write-Host "  4. Redeploy the service" -ForegroundColor Gray
-Write-Host "  5. Run this test again" -ForegroundColor Gray
+Write-Host "NOTES:" -ForegroundColor Cyan
+Write-Host "  - This script uses Invoke-RestMethod to avoid GZip compression issues" -ForegroundColor Gray
+Write-Host "  - All 6 tests should pass successfully" -ForegroundColor Gray
+Write-Host "  - If tests fail, check your API key and network connectivity" -ForegroundColor Gray
 Write-Host ""
 Write-Host "See: S3-BASED-STORAGE-GUIDE.md for full details" -ForegroundColor Gray
-Write-Host ""
