@@ -1,47 +1,57 @@
-import { MongoClient } from 'mongodb'
+import {
+  S3Client,
+  PutObjectCommand,
+  GetObjectCommand,
+  ListObjectsV2Command
+} from '@aws-sdk/client-s3'
 import { config } from '../../config.js'
 import { createLogger } from './logging/logger.js'
 
 const logger = createLogger()
 
 /**
- * MongoDB repository for content reviews
+ * S3-based repository for content reviews
+ * Stores review data as JSON files in S3
  */
-class ReviewRepository {
+class ReviewRepositoryS3 {
   constructor() {
-    this.collectionName = 'content_reviews'
-    this.client = null
-    this.db = null
+    this.s3Client = new S3Client({
+      region: config.get('aws.region')
+    })
+    // Use the provided S3 bucket, with fallback to config
+    this.bucket =
+      process.env.S3_BUCKET ||
+      config.get('s3.bucket') ||
+      'dev-service-optimisation-c63f2'
+    this.prefix = 'reviews/' // Store reviews in a subfolder
+
+    logger.info(
+      { bucket: this.bucket, prefix: this.prefix },
+      'Review repository initialized with S3'
+    )
   }
 
   /**
-   * Connect to MongoDB
+   * Generate S3 key for a review
+   * @param {string} reviewId - Review ID
+   * @returns {string} S3 key
+   */
+  getReviewKey(reviewId) {
+    // Organize by date for easier browsing: reviews/2026/01/13/review_123.json
+    const date = new Date()
+    const year = date.getFullYear()
+    const month = String(date.getMonth() + 1).padStart(2, '0')
+    const day = String(date.getDate()).padStart(2, '0')
+    return `${this.prefix}${year}/${month}/${day}/${reviewId}.json`
+  }
+
+  /**
+   * Connect to S3 (no-op, kept for interface compatibility)
    */
   async connect() {
-    if (this.client && this.db) {
-      return this.db
-    }
-
-    try {
-      this.client = await MongoClient.connect(config.get('mongodb.uri'), {
-        retryWrites: true,
-        w: 'majority'
-      })
-      this.db = this.client.db(config.get('mongodb.databaseName'))
-      logger.info('Review repository connected to MongoDB')
-      return this.db
-    } catch (error) {
-      logger.error({ error: error.message }, 'Failed to connect to MongoDB')
-      throw error
-    }
-  }
-
-  /**
-   * Get MongoDB collection
-   */
-  async getCollection() {
-    const db = await this.connect()
-    return db.collection(this.collectionName)
+    // S3 doesn't need explicit connection
+    logger.info('S3 client ready')
+    return true
   }
 
   /**
@@ -50,11 +60,10 @@ class ReviewRepository {
    * @returns {Promise<Object>} Created review
    */
   async createReview(reviewData) {
-    const collection = await this.getCollection()
-    const now = new Date()
+    const now = new Date().toISOString()
 
     const review = {
-      _id: reviewData.id, // Use timestamp-based ID from caller
+      id: reviewData.id,
       status: 'pending', // pending, processing, completed, failed
       createdAt: now,
       updatedAt: now,
@@ -71,10 +80,45 @@ class ReviewRepository {
       bedrockUsage: null
     }
 
-    await collection.insertOne(review)
-    logger.info({ reviewId: review._id }, 'Review created')
+    await this.saveReview(review)
+    logger.info(
+      { reviewId: review.id, s3Key: this.getReviewKey(review.id) },
+      'Review created in S3'
+    )
 
     return review
+  }
+
+  /**
+   * Save review to S3
+   * @param {Object} review - Review object
+   * @returns {Promise<void>}
+   */
+  async saveReview(review) {
+    const key = this.getReviewKey(review.id)
+
+    const command = new PutObjectCommand({
+      Bucket: this.bucket,
+      Key: key,
+      Body: JSON.stringify(review, null, 2),
+      ContentType: 'application/json',
+      Metadata: {
+        reviewId: review.id,
+        status: review.status,
+        sourceType: review.sourceType
+      }
+    })
+
+    try {
+      await this.s3Client.send(command)
+      logger.debug({ reviewId: review.id, key }, 'Review saved to S3')
+    } catch (error) {
+      logger.error(
+        { error: error.message, reviewId: review.id },
+        'Failed to save review to S3'
+      )
+      throw error
+    }
   }
 
   /**
@@ -83,8 +127,86 @@ class ReviewRepository {
    * @returns {Promise<Object|null>} Review or null if not found
    */
   async getReview(reviewId) {
-    const collection = await this.getCollection()
-    return await collection.findOne({ _id: reviewId })
+    // Try to find the review by searching with the prefix pattern
+    // Since we don't know the exact date, we'll try recent dates or search
+
+    try {
+      // Strategy 1: Try today first
+      const today = new Date()
+      let key = this.getReviewKey(reviewId)
+
+      const command = new GetObjectCommand({
+        Bucket: this.bucket,
+        Key: key
+      })
+
+      const response = await this.s3Client.send(command)
+      const body = await response.Body.transformToString()
+      return JSON.parse(body)
+    } catch (error) {
+      if (error.name === 'NoSuchKey') {
+        // Strategy 2: Search for the review in recent days
+        return await this.searchReview(reviewId)
+      }
+      logger.error(
+        { error: error.message, reviewId },
+        'Failed to get review from S3'
+      )
+      throw error
+    }
+  }
+
+  /**
+   * Search for a review across multiple days
+   * @param {string} reviewId - Review ID
+   * @returns {Promise<Object|null>} Review or null if not found
+   */
+  async searchReview(reviewId) {
+    try {
+      // Search in the last 7 days
+      for (let daysAgo = 0; daysAgo < 7; daysAgo++) {
+        const date = new Date()
+        date.setDate(date.getDate() - daysAgo)
+        const year = date.getFullYear()
+        const month = String(date.getMonth() + 1).padStart(2, '0')
+        const day = String(date.getDate()).padStart(2, '0')
+        const prefix = `${this.prefix}${year}/${month}/${day}/`
+
+        const listCommand = new ListObjectsV2Command({
+          Bucket: this.bucket,
+          Prefix: prefix,
+          MaxKeys: 1000
+        })
+
+        const listResponse = await this.s3Client.send(listCommand)
+
+        if (listResponse.Contents) {
+          const matchingKey = listResponse.Contents.find((obj) =>
+            obj.Key.includes(reviewId)
+          )
+
+          if (matchingKey) {
+            const getCommand = new GetObjectCommand({
+              Bucket: this.bucket,
+              Key: matchingKey.Key
+            })
+
+            const response = await this.s3Client.send(getCommand)
+            const body = await response.Body.transformToString()
+            return JSON.parse(body)
+          }
+        }
+      }
+
+      logger.warn({ reviewId }, 'Review not found in S3 (searched last 7 days)')
+      return null
+    } catch (error) {
+      logger.error(
+        { error: error.message, reviewId },
+        'Failed to search for review'
+      )
+      throw error
+    }
   }
 
   /**
@@ -95,28 +217,31 @@ class ReviewRepository {
    * @returns {Promise<void>}
    */
   async updateReviewStatus(reviewId, status, additionalData = {}) {
-    const collection = await this.getCollection()
-    const now = new Date()
+    const review = await this.getReview(reviewId)
 
-    const updateData = {
-      status,
-      updatedAt: now,
-      ...additionalData
+    if (!review) {
+      throw new Error(`Review not found: ${reviewId}`)
     }
+
+    const now = new Date().toISOString()
+    review.status = status
+    review.updatedAt = now
+
+    // Merge additional data
+    Object.assign(review, additionalData)
 
     // Set processing timestamps based on status
-    if (status === 'processing' && !additionalData.processingStartedAt) {
-      updateData.processingStartedAt = now
+    if (status === 'processing' && !review.processingStartedAt) {
+      review.processingStartedAt = now
     } else if (
       (status === 'completed' || status === 'failed') &&
-      !additionalData.processingCompletedAt
+      !review.processingCompletedAt
     ) {
-      updateData.processingCompletedAt = now
+      review.processingCompletedAt = now
     }
 
-    await collection.updateOne({ _id: reviewId }, { $set: updateData })
-
-    logger.info({ reviewId, status }, 'Review status updated')
+    await this.saveReview(review)
+    logger.info({ reviewId, status }, 'Review status updated in S3')
   }
 
   /**
@@ -136,62 +261,114 @@ class ReviewRepository {
   /**
    * Save review error
    * @param {string} reviewId - Review ID
-   * @param {string} error - Error message
+   * @param {Error} error - Error object
    * @returns {Promise<void>}
    */
   async saveReviewError(reviewId, error) {
     await this.updateReviewStatus(reviewId, 'failed', {
-      error
+      error: {
+        message: error.message,
+        stack: error.stack
+      }
     })
   }
 
   /**
-   * Get all reviews (most recent first)
-   * @param {number} limit - Maximum number of reviews to return
-   * @param {number} skip - Number of reviews to skip (for pagination)
-   * @returns {Promise<Array>} Array of reviews
+   * Get recent reviews (paginated)
+   * @param {Object} options - Query options
+   * @param {number} options.limit - Maximum number of reviews to return
+   * @param {string} options.continuationToken - Token for pagination
+   * @returns {Promise<Object>} Reviews and pagination info
    */
-  async getAllReviews(limit = 100, skip = 0) {
-    const collection = await this.getCollection()
-    return await collection
-      .find({})
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(limit)
-      .toArray()
+  async getRecentReviews({ limit = 20, continuationToken = null } = {}) {
+    try {
+      const listCommand = new ListObjectsV2Command({
+        Bucket: this.bucket,
+        Prefix: this.prefix,
+        MaxKeys: limit,
+        ContinuationToken: continuationToken || undefined
+      })
+
+      const response = await this.s3Client.send(listCommand)
+
+      if (!response.Contents || response.Contents.length === 0) {
+        return {
+          reviews: [],
+          hasMore: false,
+          nextToken: null
+        }
+      }
+
+      // Fetch the actual review data for each object
+      const reviewPromises = response.Contents.sort(
+        (a, b) => b.LastModified - a.LastModified
+      ) // Most recent first
+        .slice(0, limit)
+        .map(async (obj) => {
+          try {
+            const getCommand = new GetObjectCommand({
+              Bucket: this.bucket,
+              Key: obj.Key
+            })
+            const reviewResponse = await this.s3Client.send(getCommand)
+            const body = await reviewResponse.Body.transformToString()
+            return JSON.parse(body)
+          } catch (error) {
+            logger.warn(
+              { key: obj.Key, error: error.message },
+              'Failed to load review'
+            )
+            return null
+          }
+        })
+
+      const reviews = (await Promise.all(reviewPromises)).filter(
+        (r) => r !== null
+      )
+
+      return {
+        reviews,
+        hasMore: response.IsTruncated || false,
+        nextToken: response.NextContinuationToken || null
+      }
+    } catch (error) {
+      logger.error(
+        { error: error.message },
+        'Failed to get recent reviews from S3'
+      )
+      throw error
+    }
   }
 
   /**
-   * Get review count
-   * @returns {Promise<number>} Total number of reviews
+   * Get reviews by status
+   * @param {string} status - Status to filter by
+   * @param {Object} options - Query options
+   * @returns {Promise<Array>} Array of reviews
    */
-  async getReviewCount() {
-    const collection = await this.getCollection()
-    return await collection.countDocuments()
+  async getReviewsByStatus(status, options = {}) {
+    const { reviews } = await this.getRecentReviews(options)
+    return reviews.filter((review) => review.status === status)
   }
 
   /**
    * Delete old reviews (cleanup)
    * @param {number} daysOld - Delete reviews older than this many days
-   * @returns {Promise<number>} Number of deleted reviews
+   * @returns {Promise<number>} Number of reviews deleted
    */
-  async deleteOldReviews(daysOld = 90) {
-    const collection = await this.getCollection()
-    const cutoffDate = new Date()
-    cutoffDate.setDate(cutoffDate.getDate() - daysOld)
+  async deleteOldReviews(daysOld = 30) {
+    // Implementation for cleanup - can be added later if needed
+    logger.info({ daysOld }, 'Delete old reviews not yet implemented')
+    return 0
+  }
 
-    const result = await collection.deleteMany({
-      createdAt: { $lt: cutoffDate }
-    })
-
-    logger.info(
-      { deletedCount: result.deletedCount, daysOld },
-      'Old reviews deleted'
-    )
-
-    return result.deletedCount
+  /**
+   * Disconnect (no-op for S3)
+   */
+  async disconnect() {
+    logger.info('S3 client disconnected (no-op)')
   }
 }
 
 // Export singleton instance
-export const reviewRepository = new ReviewRepository()
+export const reviewRepository = new ReviewRepositoryS3()

@@ -1,0 +1,270 @@
+import { MongoClient } from 'mongodb'
+import { config } from '../../config.js'
+import { createLogger } from './logging/logger.js'
+
+const logger = createLogger()
+
+// Mock storage for testing without MongoDB
+const MOCK_MODE = process.env.MOCK_MONGODB === 'true'
+const mockStorage = new Map()
+
+/**
+ * MongoDB repository for content reviews
+ */
+class ReviewRepository {
+  constructor() {
+    this.collectionName = 'content_reviews'
+    this.client = null
+    this.db = null
+
+    if (MOCK_MODE) {
+      logger.info('⚠️  Review repository running in MOCK MODE (no MongoDB)')
+    }
+  }
+
+  /**
+   * Connect to MongoDB (or skip if mock mode)
+   */
+  async connect() {
+    if (MOCK_MODE) {
+      logger.info('Mock mode: Skipping MongoDB connection')
+      return { collection: () => this.getMockCollection() }
+    }
+
+    if (this.client && this.db) {
+      return this.db
+    }
+
+    try {
+      this.client = await MongoClient.connect(config.get('mongodb.uri'), {
+        retryWrites: true,
+        w: 'majority'
+      })
+      this.db = this.client.db(config.get('mongodb.databaseName'))
+      logger.info('Review repository connected to MongoDB')
+      return this.db
+    } catch (error) {
+      logger.error({ error: error.message }, 'Failed to connect to MongoDB')
+      throw error
+    }
+  }
+
+  /**
+   * Get MongoDB collection (or mock collection)
+   */
+  async getCollection() {
+    if (MOCK_MODE) {
+      return this.getMockCollection()
+    }
+
+    const db = await this.connect()
+    return db.collection(this.collectionName)
+  }
+
+  /**
+   * Create a new review record
+   * @param {Object} reviewData - Review data
+   * @returns {Promise<Object>} Created review
+   */
+  async createReview(reviewData) {
+    const collection = await this.getCollection()
+    const now = new Date()
+
+    const review = {
+      _id: reviewData.id, // Use timestamp-based ID from caller
+      status: 'pending', // pending, processing, completed, failed
+      createdAt: now,
+      updatedAt: now,
+      sourceType: reviewData.sourceType, // 'file' or 'text'
+      fileName: reviewData.fileName || null,
+      fileSize: reviewData.fileSize || null,
+      mimeType: reviewData.mimeType || null,
+      s3Key: reviewData.s3Key || null,
+      textContent: reviewData.textContent || null,
+      result: null,
+      error: null,
+      processingStartedAt: null,
+      processingCompletedAt: null,
+      bedrockUsage: null
+    }
+
+    await collection.insertOne(review)
+    logger.info({ reviewId: review._id }, 'Review created')
+
+    return review
+  }
+
+  /**
+   * Get a review by ID
+   * @param {string} reviewId - Review ID
+   * @returns {Promise<Object|null>} Review or null if not found
+   */
+  async getReview(reviewId) {
+    const collection = await this.getCollection()
+    return await collection.findOne({ _id: reviewId })
+  }
+
+  /**
+   * Update review status
+   * @param {string} reviewId - Review ID
+   * @param {string} status - New status
+   * @param {Object} additionalData - Additional data to update
+   * @returns {Promise<void>}
+   */
+  async updateReviewStatus(reviewId, status, additionalData = {}) {
+    const collection = await this.getCollection()
+    const now = new Date()
+
+    const updateData = {
+      status,
+      updatedAt: now,
+      ...additionalData
+    }
+
+    // Set processing timestamps based on status
+    if (status === 'processing' && !additionalData.processingStartedAt) {
+      updateData.processingStartedAt = now
+    } else if (
+      (status === 'completed' || status === 'failed') &&
+      !additionalData.processingCompletedAt
+    ) {
+      updateData.processingCompletedAt = now
+    }
+
+    await collection.updateOne({ _id: reviewId }, { $set: updateData })
+
+    logger.info({ reviewId, status }, 'Review status updated')
+  }
+
+  /**
+   * Save review result
+   * @param {string} reviewId - Review ID
+   * @param {Object} result - Review result from Bedrock
+   * @param {Object} usage - Bedrock usage statistics
+   * @returns {Promise<void>}
+   */
+  async saveReviewResult(reviewId, result, usage) {
+    await this.updateReviewStatus(reviewId, 'completed', {
+      result,
+      bedrockUsage: usage
+    })
+  }
+
+  /**
+   * Save review error
+   * @param {string} reviewId - Review ID
+   * @param {string} error - Error message
+   * @returns {Promise<void>}
+   */
+  async saveReviewError(reviewId, error) {
+    await this.updateReviewStatus(reviewId, 'failed', {
+      error
+    })
+  }
+
+  /**
+   * Get all reviews (most recent first)
+   * @param {number} limit - Maximum number of reviews to return
+   * @param {number} skip - Number of reviews to skip (for pagination)
+   * @returns {Promise<Array>} Array of reviews
+   */
+  async getAllReviews(limit = 100, skip = 0) {
+    const collection = await this.getCollection()
+    return await collection
+      .find({})
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .toArray()
+  }
+
+  /**
+   * Get review count
+   * @returns {Promise<number>} Total number of reviews
+   */
+  async getReviewCount() {
+    const collection = await this.getCollection()
+    return await collection.countDocuments()
+  }
+
+  /**
+   * Delete old reviews (cleanup)
+   * @param {number} daysOld - Delete reviews older than this many days
+   * @returns {Promise<number>} Number of deleted reviews
+   */
+  async deleteOldReviews(daysOld = 90) {
+    const collection = await this.getCollection()
+    const cutoffDate = new Date()
+    cutoffDate.setDate(cutoffDate.getDate() - daysOld)
+
+    const result = await collection.deleteMany({
+      createdAt: { $lt: cutoffDate }
+    })
+
+    logger.info(
+      { deletedCount: result.deletedCount, daysOld },
+      'Old reviews deleted'
+    )
+
+    return result.deletedCount
+  }
+
+  /**
+   * Get mock collection interface
+   */
+  getMockCollection() {
+    return {
+      insertOne: async (doc) => {
+        mockStorage.set(doc.id, doc)
+        logger.info({ reviewId: doc.id }, 'Mock: Stored review in memory')
+        return { insertedId: doc.id }
+      },
+
+      findOne: async (query) => {
+        const id = query.id || query._id
+        const doc = mockStorage.get(id)
+        logger.info({ reviewId: id, found: !!doc }, 'Mock: Finding review')
+        return doc || null
+      },
+
+      find: (query) => ({
+        sort: () => ({
+          limit: (limit) => ({
+            toArray: async () => {
+              const reviews = Array.from(mockStorage.values())
+              logger.info({ count: reviews.length }, 'Mock: Getting reviews')
+              return reviews.slice(0, limit)
+            }
+          })
+        })
+      }),
+
+      updateOne: async (query, update) => {
+        const id = query.id
+        const existing = mockStorage.get(id)
+        if (existing) {
+          const updated = { ...existing, ...update.$set }
+          mockStorage.set(id, updated)
+          logger.info({ reviewId: id }, 'Mock: Updated review')
+          return { modifiedCount: 1 }
+        }
+        return { modifiedCount: 0 }
+      },
+
+      deleteOne: async (query) => {
+        const id = query.id
+        const deleted = mockStorage.delete(id)
+        logger.info({ reviewId: id, deleted }, 'Mock: Deleted review')
+        return { deletedCount: deleted ? 1 : 0 }
+      },
+
+      createIndex: async () => {
+        logger.info('Mock: Skipping index creation')
+        return 'mock_index'
+      }
+    }
+  }
+}
+
+// Export singleton instance
+export const reviewRepository = new ReviewRepository()

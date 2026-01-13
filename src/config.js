@@ -228,12 +228,32 @@ const config = convict({
       env: 'SQS_VISIBILITY_TIMEOUT'
     }
   },
+  s3: {
+    bucket: {
+      doc: 'S3 bucket for uploads and review results',
+      format: String,
+      default: 'dev-service-optimisation-c63f2',
+      env: 'S3_BUCKET'
+    },
+    region: {
+      doc: 'AWS region for S3',
+      format: String,
+      default: 'eu-west-2',
+      env: 'AWS_REGION'
+    }
+  },
   aws: {
     accountId: {
       doc: 'AWS Account ID',
       format: String,
       default: '332499610595',
       env: 'AWS_ACCOUNT_ID'
+    },
+    region: {
+      doc: 'AWS region (global)',
+      format: String,
+      default: 'eu-west-2',
+      env: 'AWS_REGION'
     }
   },
   bedrock: {
