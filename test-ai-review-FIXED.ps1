@@ -1,4 +1,4 @@
-# Test AI Content Review Outputs
+# Test AI Content Review Outputs - FIXED VERSION
 # This script submits content and displays the AI review results
 
 # ============================================================================
@@ -15,7 +15,7 @@ $headers = @{
 }
 
 Write-Host "============================================================================" -ForegroundColor Cyan
-Write-Host "AI CONTENT REVIEW OUTPUT TEST" -ForegroundColor Cyan
+Write-Host "AI CONTENT REVIEW OUTPUT TEST - FIXED" -ForegroundColor Cyan
 Write-Host "============================================================================`n" -ForegroundColor Cyan
 
 # Sample content to test
@@ -71,7 +71,10 @@ try {
         try {
             $result = Invoke-RestMethod -Uri "$baseUrl/api/review/$reviewId" -Method GET -Headers $headers
             
-            if ($result.review.status -eq "completed") {
+            # Check status and display results
+            $reviewStatus = $result.review.status
+            
+            if ($reviewStatus -eq "completed") {
                 $completed = $true
                 $aiResult = $result.review.result
                 
@@ -101,7 +104,8 @@ try {
                         }
                         Write-Host ""
                     }
-                } else {
+                }
+                else {
                     Write-Host "ISSUES: None found ✓" -ForegroundColor Green
                     Write-Host ""
                 }
@@ -132,31 +136,39 @@ try {
                     Write-Host "  Output tokens: $($result.review.bedrockUsage.outputTokens)" -ForegroundColor Gray
                     Write-Host "  Total tokens: $($result.review.bedrockUsage.totalTokens)" -ForegroundColor Gray
                     
-                    $processingTime = (New-TimeSpan -Start $result.review.processingStartedAt -End $result.review.processingCompletedAt).TotalSeconds
-                    Write-Host "  Processing time: $([math]::Round($processingTime, 1)) seconds" -ForegroundColor Gray
+                    if ($result.review.processingStartedAt -and $result.review.processingCompletedAt) {
+                        $processingTime = (New-TimeSpan -Start $result.review.processingStartedAt -End $result.review.processingCompletedAt).TotalSeconds
+                        Write-Host "  Processing time: $([math]::Round($processingTime, 1)) seconds" -ForegroundColor Gray
+                    }
                 }
-                
-            } elseif ($result.review.status -eq "failed") {
-                Write-Host "`nFAILED: Review processing failed" -ForegroundColor Red
-                Write-Host "  Error: $($result.review.error.message)" -ForegroundColor Red
-                break
-            } else {
-                Write-Host "    Status: $($result.review.status)" -ForegroundColor Gray
             }
-        } catch {
+            
+            if ($reviewStatus -eq "failed") {
+                Write-Host "`nFAILED: Review processing failed" -ForegroundColor Red
+                if ($result.review.error -and $result.review.error.message) {
+                    Write-Host "  Error: $($result.review.error.message)" -ForegroundColor Red
+                }
+                break
+            }
+            
+            if ($reviewStatus -ne "completed" -and $reviewStatus -ne "failed") {
+                Write-Host "    Status: $reviewStatus" -ForegroundColor Gray
+            }
+        }
+        catch {
             Write-Host "    Error checking status: $($_.Exception.Message)" -ForegroundColor Red
         }
-    } # End while loop
+    }
     
     if (-not $completed) {
         Write-Host "`nTIMEOUT: Review is still processing" -ForegroundColor Yellow
         Write-Host "  Review ID: $reviewId" -ForegroundColor Gray
         Write-Host "`nYou can check the status manually:" -ForegroundColor Yellow
-        Write-Host "  `$response = Invoke-RestMethod -Uri '$baseUrl/api/review/$reviewId' -Method GET -Headers @{'x-api-key'='$ApiKey'}" -ForegroundColor Gray
+        Write-Host "  `$response = Invoke-RestMethod -Uri '$baseUrl/api/review/$reviewId' -Method GET -Headers @{'x-api-key'='YOUR_KEY'}" -ForegroundColor Gray
         Write-Host "  `$response.review | ConvertTo-Json -Depth 10" -ForegroundColor Gray
     }
-    
-} catch {
+}
+catch {
     Write-Host "`nERROR: Failed to submit review" -ForegroundColor Red
     Write-Host "  $($_.Exception.Message)" -ForegroundColor Red
     if ($_.ErrorDetails.Message) {
