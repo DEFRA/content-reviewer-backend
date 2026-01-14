@@ -132,8 +132,7 @@ class ReviewRepositoryS3 {
 
     try {
       // Strategy 1: Try today first
-      const today = new Date()
-      let key = this.getReviewKey(reviewId)
+      const key = this.getReviewKey(reviewId)
 
       const command = new GetObjectCommand({
         Bucket: this.bucket,
