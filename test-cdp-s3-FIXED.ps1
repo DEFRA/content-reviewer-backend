@@ -20,6 +20,7 @@ Write-Host ""
 $headers = @{
     "x-api-key" = $ApiKey
     "Content-Type" = "application/json"
+    "Accept-Encoding" = "identity"  # Disable compression to avoid GZip errors
 }
 
 # Test 1: Health Check
