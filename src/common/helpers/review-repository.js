@@ -131,7 +131,7 @@ class ReviewRepositoryS3 {
     // Since we don't know the exact date, we'll try recent dates or search
 
     try {
-      // Strategy 1: Try today first (getReviewKey uses current date)
+      // Strategy 1: Try today first
       const key = this.getReviewKey(reviewId)
 
       const command = new GetObjectCommand({
@@ -340,39 +340,6 @@ class ReviewRepositoryS3 {
   }
 
   /**
-   * Get all reviews (alias for getRecentReviews for compatibility)
-   * @param {number} limit - Maximum number of reviews to return
-   * @param {number} skip - Number of reviews to skip (not used in S3, use continuationToken instead)
-   * @returns {Promise<Array>} Array of reviews
-   */
-  async getAllReviews(limit = 50, skip = 0) {
-    const { reviews } = await this.getRecentReviews({ limit })
-    // S3 doesn't support skip, so we just return the recent reviews
-    // For proper pagination, use getRecentReviews with continuationToken
-    return reviews
-  }
-
-  /**
-   * Get total review count (estimated for S3)
-   * @returns {Promise<number>} Estimated total count
-   */
-  async getReviewCount() {
-    try {
-      const listCommand = new ListObjectsV2Command({
-        Bucket: this.bucket,
-        Prefix: this.prefix,
-        MaxKeys: 1000 // Get up to 1000 to estimate
-      })
-
-      const response = await this.s3Client.send(listCommand)
-      return response.KeyCount || 0
-    } catch (error) {
-      logger.error({ error: error.message }, 'Failed to get review count')
-      return 0
-    }
-  }
-
-  /**
    * Get reviews by status
    * @param {string} status - Status to filter by
    * @param {Object} options - Query options
@@ -381,6 +348,54 @@ class ReviewRepositoryS3 {
   async getReviewsByStatus(status, options = {}) {
     const { reviews } = await this.getRecentReviews(options)
     return reviews.filter((review) => review.status === status)
+  }
+
+  /**
+   * Get all reviews (paginated)
+   * @param {number} limit - Maximum number of reviews to return
+   * @param {number} skip - Number of reviews to skip (for pagination)
+   * @returns {Promise<Array>} Array of reviews
+   */
+  async getAllReviews(limit = 50, skip = 0) {
+    try {
+      // Get more than needed to handle skip
+      const fetchLimit = limit + skip
+      const { reviews } = await this.getRecentReviews({ limit: fetchLimit })
+
+      // Apply skip and limit
+      return reviews.slice(skip, skip + limit)
+    } catch (error) {
+      logger.error({ error: error.message }, 'Failed to get all reviews')
+      throw error
+    }
+  }
+
+  /**
+   * Get total count of reviews
+   * @returns {Promise<number>} Total number of reviews
+   */
+  async getReviewCount() {
+    try {
+      const listCommand = new ListObjectsV2Command({
+        Bucket: this.bucket,
+        Prefix: this.prefix
+      })
+
+      let count = 0
+      let continuationToken = null
+
+      do {
+        listCommand.input.ContinuationToken = continuationToken
+        const response = await this.s3Client.send(listCommand)
+        count += response.KeyCount || 0
+        continuationToken = response.NextContinuationToken
+      } while (continuationToken)
+
+      return count
+    } catch (error) {
+      logger.error({ error: error.message }, 'Failed to get review count')
+      throw error
+    }
   }
 
   /**
