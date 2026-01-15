@@ -351,8 +351,10 @@ export const reviewRoutes = {
               status: review.status,
               sourceType: review.sourceType,
               fileName: review.fileName,
+              filename: review.fileName, // For frontend compatibility (lowercase)
               fileSize: review.fileSize,
               createdAt: review.createdAt,
+              uploadedAt: review.createdAt, // For frontend compatibility
               updatedAt: review.updatedAt,
               hasResult: !!review.result,
               hasError: !!review.error,
