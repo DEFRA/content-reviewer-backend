@@ -30,11 +30,11 @@ for ($i = 1; $i -le 8; $i++) {
     try {
         $result = Invoke-RestMethod -Uri "$baseUrl/api/review/$reviewId" -Method GET -Headers $headers
         
-        if ($result.review.status -eq "completed") {
+        if ($result.data.status -eq "completed") {
             Write-Host "`n============================================" -ForegroundColor Green
             Write-Host "AI REVIEW COMPLETED!" -ForegroundColor Green
             Write-Host "============================================`n" -ForegroundColor Green
-            Write-Host $result.review.result.reviewContent
+            Write-Host $result.data.result.reviewContent
             Write-Host "`n============================================`n" -ForegroundColor Green
             break
         }

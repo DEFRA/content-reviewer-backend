@@ -4,6 +4,7 @@ import mime from 'mime-types'
 import { config } from '../config.js'
 import { s3Uploader } from '../common/helpers/s3-uploader.js'
 import { sqsClient } from '../common/helpers/sqs-client.js'
+import { reviewRepository } from '../common/helpers/review-repository.js'
 
 // Configure multer for memory storage (used for validation reference)
 const storage = multer.memoryStorage()
@@ -136,9 +137,34 @@ export const uploadRoutes = {
               'File uploaded to S3 successfully'
             )
 
+            // Create review record with pending status
+            const reviewId = `review_${Date.now()}_${randomUUID()}`
+
+            await reviewRepository.createReview({
+              id: reviewId,
+              sourceType: 'file',
+              fileName: result.filename,
+              s3Bucket: result.bucket,
+              s3Key: result.key,
+              s3Location: result.location,
+              contentType: result.contentType,
+              fileSize: result.size,
+              uploadId: result.fileId
+            })
+
+            request.logger.info(
+              {
+                reviewId,
+                uploadId,
+                filename: result.filename
+              },
+              'Review record created'
+            )
+
             // Send message to SQS queue for processing
             try {
               const sqsResult = await sqsClient.sendMessage({
+                reviewId, // Include reviewId in SQS message
                 uploadId: result.fileId,
                 filename: result.filename,
                 s3Bucket: result.bucket,
@@ -153,6 +179,7 @@ export const uploadRoutes = {
 
               request.logger.info(
                 {
+                  reviewId,
                   uploadId,
                   messageId: sqsResult.messageId,
                   queueUrl: sqsResult.queueUrl
@@ -163,6 +190,7 @@ export const uploadRoutes = {
               // Log but don't fail the upload if SQS fails
               request.logger.error(
                 {
+                  reviewId,
                   uploadId,
                   error: sqsError.message
                 },
@@ -173,6 +201,7 @@ export const uploadRoutes = {
             return h
               .response({
                 success: true,
+                reviewId, // Return reviewId for frontend redirect
                 uploadId: result.fileId,
                 filename: result.filename,
                 size: result.size,

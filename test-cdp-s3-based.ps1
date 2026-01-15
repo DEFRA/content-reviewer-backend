@@ -148,18 +148,18 @@ if ($global:reviewId) {
             $response = $webResponse.Content | ConvertFrom-Json
             
             Write-Host "SUCCESS: Retrieved review status" -ForegroundColor Green
-            Write-Host "  Review ID: $($response.review.id)" -ForegroundColor Gray
-            Write-Host "  Status: $($response.review.status)" -ForegroundColor Gray
+            Write-Host "  Review ID: $($response.data.id)" -ForegroundColor Gray
+            Write-Host "  Status: $($response.data.status)" -ForegroundColor Gray
             
-            if ($response.review.result) {
+            if ($response.data.result) {
                 Write-Host "  Result available: YES" -ForegroundColor Green
-                $assessment = $response.review.result.overallAssessment
+                $assessment = $response.data.result.overallAssessment
                 if ($assessment -and $assessment.Length -gt 100) {
                     $assessment = $assessment.Substring(0, 100) + "..."
                 }
                 Write-Host "  Assessment: $assessment" -ForegroundColor Gray
             }
-            elseif ($response.review.status -eq "pending" -or $response.review.status -eq "processing") {
+            elseif ($response.data.status -eq "pending" -or $response.data.status -eq "processing") {
                 Write-Host "  Status: Still processing (check again in a few seconds)" -ForegroundColor Yellow
             }
             else {
