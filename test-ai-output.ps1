@@ -71,9 +71,9 @@ try {
         try {
             $result = Invoke-RestMethod -Uri "$baseUrl/api/review/$reviewId" -Method GET -Headers $headers
             
-            if ($result.review.status -eq "completed") {
+            if ($result.data.status -eq "completed") {
                 $completed = $true
-                $aiResult = $result.review.result
+                $aiResult = $result.data.result
                 
                 Write-Host "`n============================================================================" -ForegroundColor Green
                 Write-Host "AI REVIEW RESULTS" -ForegroundColor Green
@@ -125,23 +125,23 @@ try {
                 }
                 
                 # Token usage
-                if ($result.review.bedrockUsage) {
+                if ($result.data.bedrockUsage) {
                     Write-Host "============================================================================" -ForegroundColor Gray
                     Write-Host "AI Usage Stats:" -ForegroundColor Gray
-                    Write-Host "  Input tokens: $($result.review.bedrockUsage.inputTokens)" -ForegroundColor Gray
-                    Write-Host "  Output tokens: $($result.review.bedrockUsage.outputTokens)" -ForegroundColor Gray
-                    Write-Host "  Total tokens: $($result.review.bedrockUsage.totalTokens)" -ForegroundColor Gray
+                    Write-Host "  Input tokens: $($result.data.bedrockUsage.inputTokens)" -ForegroundColor Gray
+                    Write-Host "  Output tokens: $($result.data.bedrockUsage.outputTokens)" -ForegroundColor Gray
+                    Write-Host "  Total tokens: $($result.data.bedrockUsage.totalTokens)" -ForegroundColor Gray
                     
-                    $processingTime = (New-TimeSpan -Start $result.review.processingStartedAt -End $result.review.processingCompletedAt).TotalSeconds
+                    $processingTime = (New-TimeSpan -Start $result.data.processingStartedAt -End $result.data.processingCompletedAt).TotalSeconds
                     Write-Host "  Processing time: $([math]::Round($processingTime, 1)) seconds" -ForegroundColor Gray
                 }
                 
-            } elseif ($result.review.status -eq "failed") {
+            } elseif ($result.data.status -eq "failed") {
                 Write-Host "`nFAILED: Review processing failed" -ForegroundColor Red
-                Write-Host "  Error: $($result.review.error.message)" -ForegroundColor Red
+                Write-Host "  Error: $($result.data.error.message)" -ForegroundColor Red
                 break
             } else {
-                Write-Host "    Status: $($result.review.status)" -ForegroundColor Gray
+                Write-Host "    Status: $($result.data.status)" -ForegroundColor Gray
             }
         } catch {
             Write-Host "    Error checking status: $($_.Exception.Message)" -ForegroundColor Red
@@ -153,7 +153,7 @@ try {
         Write-Host "  Review ID: $reviewId" -ForegroundColor Gray
         Write-Host "`nYou can check the status manually:" -ForegroundColor Yellow
         Write-Host "  `$response = Invoke-RestMethod -Uri '$baseUrl/api/review/$reviewId' -Method GET -Headers @{'x-api-key'='$ApiKey'}" -ForegroundColor Gray
-        Write-Host "  `$response.review | ConvertTo-Json -Depth 10" -ForegroundColor Gray
+        Write-Host "  `$response.data | ConvertTo-Json -Depth 10" -ForegroundColor Gray
     }
     
 } catch {

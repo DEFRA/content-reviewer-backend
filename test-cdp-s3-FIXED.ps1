@@ -124,13 +124,13 @@ if ($global:reviewId) {
         $response = Invoke-RestMethod -Uri "$baseUrl/api/review/$global:reviewId" -Method GET -Headers $headers
         
         Write-Host "SUCCESS: Retrieved review status" -ForegroundColor Green
-        Write-Host "  Review ID: $($response.review.id)" -ForegroundColor Gray
-        Write-Host "  Status: $($response.review.status)" -ForegroundColor Gray
+        Write-Host "  Review ID: $($response.data.id)" -ForegroundColor Gray
+        Write-Host "  Status: $($response.data.status)" -ForegroundColor Gray
         
-        if ($response.review.status -eq "completed" -and $response.review.result) {
+        if ($response.data.status -eq "completed" -and $response.data.result) {
             Write-Host "  Result: Available (review completed!)" -ForegroundColor Green
         }
-        elseif ($response.review.status -eq "processing") {
+        elseif ($response.data.status -eq "processing") {
             Write-Host "  Status: Still processing (check again in a few seconds)" -ForegroundColor Yellow
         }
         else {
