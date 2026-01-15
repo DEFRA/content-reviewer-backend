@@ -346,19 +346,26 @@ export const reviewRoutes = {
 
             // Format reviews for response
             const formattedReviews = reviews.map((review) => ({
-              id: review.id || review._id, // Support both S3 (id) and MongoDB (_id)
+              id: review.id || review._id, // S3 uses 'id', MongoDB used '_id'
+              reviewId: review.id || review._id, // For frontend compatibility
               status: review.status,
               sourceType: review.sourceType,
               fileName: review.fileName,
+              filename: review.fileName, // For frontend compatibility (lowercase)
               fileSize: review.fileSize,
               createdAt: review.createdAt,
+              uploadedAt: review.createdAt, // For frontend compatibility
               updatedAt: review.updatedAt,
               hasResult: !!review.result,
               hasError: !!review.error,
-              processingTime: review.processingCompletedAt
-                ? new Date(review.processingCompletedAt) -
-                  new Date(review.processingStartedAt)
-                : null
+              processingTime:
+                review.processingCompletedAt && review.processingStartedAt
+                  ? Math.round(
+                      (new Date(review.processingCompletedAt).getTime() -
+                        new Date(review.processingStartedAt).getTime()) /
+                        1000
+                    )
+                  : null
             }))
 
             return h
