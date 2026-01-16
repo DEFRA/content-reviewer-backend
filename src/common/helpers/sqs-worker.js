@@ -158,6 +158,8 @@ class SQSWorker {
    * @param {Object} message - SQS message
    */
   async processMessage(message) {
+    const startTime = performance.now()
+
     try {
       const body = JSON.parse(message.Body)
 
@@ -165,9 +167,12 @@ class SQSWorker {
         {
           messageId: message.MessageId,
           uploadId: body.uploadId,
-          messageType: body.messageType
+          reviewId: body.reviewId,
+          messageType: body.messageType,
+          s3Key: body.s3Key,
+          receiptHandle: message.ReceiptHandle?.substring(0, 20) + '...'
         },
-        'Processing message'
+        'Processing SQS message started'
       )
 
       // TODO: This is where your colleague will integrate the AI review logic
@@ -177,21 +182,31 @@ class SQSWorker {
       // Delete message from queue after successful processing
       await this.deleteMessage(message.ReceiptHandle)
 
+      const endTime = performance.now()
+      const duration = Math.round(endTime - startTime)
+
       logger.info(
         {
           messageId: message.MessageId,
-          uploadId: body.uploadId
+          uploadId: body.uploadId,
+          reviewId: body.reviewId,
+          durationMs: duration
         },
-        'Message processed successfully'
+        `SQS message processed successfully in ${duration}ms`
       )
     } catch (error) {
+      const endTime = performance.now()
+      const duration = Math.round(endTime - startTime)
+
       logger.error(
         {
           messageId: message.MessageId,
           error: error.message,
-          stack: error.stack
+          errorName: error.name,
+          stack: error.stack,
+          durationMs: duration
         },
-        'Failed to process message'
+        `Failed to process SQS message after ${duration}ms: ${error.message}`
       )
       // Message will become visible again after visibility timeout
       // and will be retried
@@ -204,14 +219,17 @@ class SQSWorker {
    */
   async processContentReview(messageBody) {
     const reviewId = messageBody.uploadId
+    const processingStartTime = performance.now()
 
     logger.info(
       {
         reviewId,
         messageType: messageBody.messageType,
-        filename: messageBody.filename
+        filename: messageBody.filename,
+        s3Key: messageBody.s3Key,
+        fileSize: messageBody.fileSize
       },
-      'Starting content review'
+      'Content review processing started'
     )
 
     try {
@@ -224,9 +242,15 @@ class SQSWorker {
       if (messageBody.messageType === 'file_review') {
         // Download file from S3
         logger.info(
-          { reviewId, s3Key: messageBody.s3Key },
-          'Downloading file from S3'
+          {
+            reviewId,
+            s3Bucket: messageBody.s3Bucket,
+            s3Key: messageBody.s3Key
+          },
+          'S3 file download started'
         )
+
+        const s3StartTime = performance.now()
 
         const s3Response = await this.s3Client.send(
           new GetObjectCommand({
@@ -242,11 +266,30 @@ class SQSWorker {
         }
         const buffer = Buffer.concat(chunks)
 
+        const s3EndTime = performance.now()
+        const s3Duration = Math.round(s3EndTime - s3StartTime)
+
+        logger.info(
+          {
+            reviewId,
+            s3Key: messageBody.s3Key,
+            downloadedBytes: buffer.length,
+            durationMs: s3Duration
+          },
+          `S3 file downloaded in ${s3Duration}ms`
+        )
+
         // Extract text from file
         logger.info(
-          { reviewId, mimeType: messageBody.contentType },
-          'Extracting text from file'
+          {
+            reviewId,
+            mimeType: messageBody.contentType,
+            fileSize: buffer.length
+          },
+          'Text extraction started'
         )
+
+        const extractStartTime = performance.now()
 
         textContent = await textExtractor.extractText(
           buffer,
@@ -254,20 +297,30 @@ class SQSWorker {
           messageBody.filename
         )
 
+        const extractEndTime = performance.now()
+        const extractDuration = Math.round(extractEndTime - extractStartTime)
+
         logger.info(
           {
             reviewId,
             extractedLength: textContent.length,
-            wordCount: textExtractor.countWords(textContent)
+            wordCount: textExtractor.countWords(textContent),
+            durationMs: extractDuration
           },
-          'Text extracted successfully'
+          `Text extracted successfully in ${extractDuration}ms`
         )
       } else if (messageBody.messageType === 'text_review') {
         // Download text content from S3 (following reference architecture)
         logger.info(
-          { reviewId, s3Key: messageBody.s3Key },
-          'Downloading text content from S3'
+          {
+            reviewId,
+            s3Bucket: messageBody.s3Bucket,
+            s3Key: messageBody.s3Key
+          },
+          'S3 text content download started'
         )
+
+        const s3StartTime = performance.now()
 
         const s3Response = await this.s3Client.send(
           new GetObjectCommand({
@@ -284,9 +337,16 @@ class SQSWorker {
         const buffer = Buffer.concat(chunks)
         textContent = buffer.toString('utf-8')
 
+        const s3EndTime = performance.now()
+        const s3Duration = Math.round(s3EndTime - s3StartTime)
+
         logger.info(
-          { reviewId, contentLength: textContent.length },
-          'Text content retrieved from S3'
+          {
+            reviewId,
+            contentLength: textContent.length,
+            durationMs: s3Duration
+          },
+          `Text content retrieved from S3 in ${s3Duration}ms`
         )
       } else {
         throw new Error(`Unknown message type: ${messageBody.messageType}`)
@@ -296,19 +356,34 @@ class SQSWorker {
       const userPrompt = `Please review the following content:\n\n---\n${textContent}\n---\n\nProvide a comprehensive content review following the guidelines in your system prompt.`
 
       logger.info(
-        { reviewId, promptLength: userPrompt.length },
-        'Sending to Bedrock for review'
+        {
+          reviewId,
+          promptLength: userPrompt.length,
+          textContentLength: textContent.length
+        },
+        'Bedrock AI review started'
       )
 
       // Load system prompt from S3
+      const promptLoadStartTime = performance.now()
       const systemPrompt = await promptManager.getSystemPrompt()
+      const promptLoadEndTime = performance.now()
+      const promptLoadDuration = Math.round(
+        promptLoadEndTime - promptLoadStartTime
+      )
 
       logger.info(
-        { reviewId, systemPromptLength: systemPrompt.length },
-        'System prompt loaded from S3'
+        {
+          reviewId,
+          systemPromptLength: systemPrompt.length,
+          durationMs: promptLoadDuration
+        },
+        `System prompt loaded from S3 in ${promptLoadDuration}ms`
       )
 
       // Send to Bedrock with system prompt
+      const bedrockStartTime = performance.now()
+
       const bedrockResponse = await bedrockClient.sendMessage(userPrompt, [
         {
           role: 'user',
@@ -324,7 +399,20 @@ class SQSWorker {
         }
       ])
 
+      const bedrockEndTime = performance.now()
+      const bedrockDuration = Math.round(bedrockEndTime - bedrockStartTime)
+
       if (!bedrockResponse.success) {
+        logger.error(
+          {
+            reviewId,
+            blocked: bedrockResponse.blocked,
+            reason: bedrockResponse.reason,
+            durationMs: bedrockDuration
+          },
+          `Bedrock AI review failed after ${bedrockDuration}ms`
+        )
+
         throw new Error(
           bedrockResponse.blocked
             ? 'Content blocked by guardrails'
@@ -336,9 +424,12 @@ class SQSWorker {
         {
           reviewId,
           responseLength: bedrockResponse.content.length,
-          usage: bedrockResponse.usage
+          inputTokens: bedrockResponse.usage?.inputTokens,
+          outputTokens: bedrockResponse.usage?.outputTokens,
+          totalTokens: bedrockResponse.usage?.totalTokens,
+          durationMs: bedrockDuration
         },
-        'Review completed successfully'
+        `Bedrock AI review completed successfully in ${bedrockDuration}ms`
       )
 
       // Save review result

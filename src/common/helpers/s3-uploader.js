@@ -1,5 +1,8 @@
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3'
 import { config } from '../../config.js'
+import { createLogger } from './logging/logger.js'
+
+const logger = createLogger()
 
 /**
  * S3 Client for file uploads
@@ -47,11 +50,31 @@ class S3Uploader {
   async uploadFile(file, uploadId) {
     const key = `${this.pathPrefix}/${uploadId}/${file.originalname}`
 
+    logger.info(
+      {
+        uploadId,
+        filename: file.originalname,
+        size: file.size,
+        contentType: file.mimetype,
+        bucket: this.bucket,
+        key
+      },
+      'S3 file upload started'
+    )
+
+    const startTime = performance.now()
+
     // Mock mode - simulate successful upload without actually uploading
     if (this.mockMode) {
-      console.log(
-        `[S3Uploader MOCK] Simulating upload of ${file.originalname} (${file.size} bytes)`
+      logger.warn(
+        {
+          uploadId,
+          filename: file.originalname,
+          size: file.size
+        },
+        '[MOCK MODE] Simulating S3 file upload - not actually uploading'
       )
+
       return {
         success: true,
         bucket: this.bucket,
@@ -79,6 +102,22 @@ class S3Uploader {
     try {
       await this.s3Client.send(command)
 
+      const endTime = performance.now()
+      const duration = Math.round(endTime - startTime)
+
+      logger.info(
+        {
+          uploadId,
+          filename: file.originalname,
+          size: file.size,
+          bucket: this.bucket,
+          key,
+          s3Location: `s3://${this.bucket}/${key}`,
+          durationMs: duration
+        },
+        `S3 file upload completed in ${duration}ms`
+      )
+
       return {
         success: true,
         bucket: this.bucket,
@@ -90,6 +129,23 @@ class S3Uploader {
         contentType: file.mimetype
       }
     } catch (error) {
+      const endTime = performance.now()
+      const duration = Math.round(endTime - startTime)
+
+      logger.error(
+        {
+          uploadId,
+          filename: file.originalname,
+          bucket: this.bucket,
+          key,
+          error: error.message,
+          errorName: error.name,
+          errorCode: error.Code,
+          durationMs: duration
+        },
+        `S3 file upload failed after ${duration}ms: ${error.message}`
+      )
+
       throw new Error(`S3 upload failed: ${error.message}`)
     }
   }
@@ -105,11 +161,30 @@ class S3Uploader {
     const filename = `${title.replace(/[^a-zA-Z0-9-_]/g, '_')}.txt`
     const key = `${this.pathPrefix}/${uploadId}/${filename}`
 
+    logger.info(
+      {
+        uploadId,
+        filename,
+        contentLength: textContent.length,
+        bucket: this.bucket,
+        key
+      },
+      'S3 text content upload started'
+    )
+
+    const startTime = performance.now()
+
     // Mock mode - simulate successful upload without actually uploading
     if (this.mockMode) {
-      console.log(
-        `[S3Uploader MOCK] Simulating upload of text content (${textContent.length} characters)`
+      logger.warn(
+        {
+          uploadId,
+          filename,
+          contentLength: textContent.length
+        },
+        '[MOCK MODE] Simulating S3 text upload - not actually uploading'
       )
+
       return {
         success: true,
         bucket: this.bucket,
@@ -138,6 +213,22 @@ class S3Uploader {
     try {
       await this.s3Client.send(command)
 
+      const endTime = performance.now()
+      const duration = Math.round(endTime - startTime)
+
+      logger.info(
+        {
+          uploadId,
+          filename,
+          contentLength: textContent.length,
+          bucket: this.bucket,
+          key,
+          s3Location: `s3://${this.bucket}/${key}`,
+          durationMs: duration
+        },
+        `S3 text upload completed in ${duration}ms`
+      )
+
       return {
         success: true,
         bucket: this.bucket,
@@ -149,6 +240,23 @@ class S3Uploader {
         contentType: 'text/plain'
       }
     } catch (error) {
+      const endTime = performance.now()
+      const duration = Math.round(endTime - startTime)
+
+      logger.error(
+        {
+          uploadId,
+          filename,
+          bucket: this.bucket,
+          key,
+          error: error.message,
+          errorName: error.name,
+          errorCode: error.Code,
+          durationMs: duration
+        },
+        `S3 text upload failed after ${duration}ms: ${error.message}`
+      )
+
       throw new Error(`S3 text upload failed: ${error.message}`)
     }
   }

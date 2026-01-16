@@ -46,6 +46,21 @@ class SQSClientHelper {
       sessionId: messageData.sessionId || null
     }
 
+    logger.info(
+      {
+        uploadId: messageData.uploadId,
+        reviewId: messageData.reviewId,
+        messageType: messageData.messageType,
+        queueUrl: this.queueUrl,
+        queueName: this.queueName,
+        s3Key: messageData.s3Key,
+        fileSize: messageData.fileSize
+      },
+      'Sending message to SQS queue'
+    )
+
+    const startTime = performance.now()
+
     const command = new SendMessageCommand({
       QueueUrl: this.queueUrl,
       MessageBody: JSON.stringify(messageBody),
@@ -68,13 +83,19 @@ class SQSClientHelper {
     try {
       const result = await this.sqsClient.send(command)
 
+      const endTime = performance.now()
+      const duration = Math.round(endTime - startTime)
+
       logger.info(
         {
           messageId: result.MessageId,
           uploadId: messageData.uploadId,
-          queueUrl: this.queueUrl
+          reviewId: messageData.reviewId,
+          queueUrl: this.queueUrl,
+          queueName: this.queueName,
+          durationMs: duration
         },
-        'Message sent to SQS queue successfully'
+        `SQS message sent successfully in ${duration}ms`
       )
 
       return {
@@ -83,14 +104,23 @@ class SQSClientHelper {
         queueUrl: this.queueUrl
       }
     } catch (error) {
+      const endTime = performance.now()
+      const duration = Math.round(endTime - startTime)
+
       logger.error(
         {
           error: error.message,
+          errorName: error.name,
+          errorCode: error.Code,
           uploadId: messageData.uploadId,
-          queueUrl: this.queueUrl
+          reviewId: messageData.reviewId,
+          queueUrl: this.queueUrl,
+          queueName: this.queueName,
+          durationMs: duration
         },
-        'Failed to send message to SQS queue'
+        `SQS message send failed after ${duration}ms: ${error.message}`
       )
+
       throw new Error(`SQS send failed: ${error.message}`)
     }
   }
