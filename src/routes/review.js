@@ -154,6 +154,105 @@ export const reviewRoutes = {
        * POST /api/review/text
        * Submit text content for review (async)
        */
+
+      // Shared handler for text review (supports both /api/review/text and /api/review-text)
+      const textReviewHandler = async (request, h) => {
+        try {
+          // Support both 'content' and 'textContent' field names
+          const { content, textContent, title } = request.payload
+          const reviewContent = content || textContent
+
+          if (!reviewContent || typeof reviewContent !== 'string') {
+            return h
+              .response({
+                success: false,
+                error:
+                  'Content is required and must be a string (use "content" or "textContent" field)'
+              })
+              .code(400)
+          }
+
+          if (reviewContent.length < 10) {
+            return h
+              .response({
+                success: false,
+                error: 'Content must be at least 10 characters'
+              })
+              .code(400)
+          }
+
+          if (reviewContent.length > 100000) {
+            return h
+              .response({
+                success: false,
+                error: 'Content must not exceed 100,000 characters'
+              })
+              .code(400)
+          }
+
+          const reviewId = `review_${Date.now()}_${randomUUID()}`
+
+          // Generate descriptive filename from content if no title provided
+          const filename =
+            title ||
+            `Pasted Content (${reviewContent.substring(0, 50).replace(/\s+/g, ' ').trim()}${reviewContent.length > 50 ? '...' : ''})`
+
+          // Create review record in MongoDB
+          await reviewRepository.createReview({
+            id: reviewId,
+            sourceType: 'text',
+            fileName: filename,
+            textContent: reviewContent
+          })
+
+          // Queue review job in SQS
+          await sqsClient.sendMessage({
+            uploadId: reviewId,
+            filename,
+            messageType: 'text_review',
+            textContent: reviewContent,
+            contentType: 'text/plain',
+            fileSize: reviewContent.length,
+            userId: request.headers['x-user-id'] || 'anonymous',
+            sessionId: request.headers['x-session-id'] || null
+          })
+
+          request.logger.info(
+            {
+              reviewId,
+              contentLength: reviewContent.length,
+              filename
+            },
+            'Text review queued successfully'
+          )
+
+          return h
+            .response({
+              success: true,
+              reviewId,
+              filename,
+              status: 'pending',
+              message: 'Review queued for processing'
+            })
+            .code(202)
+        } catch (error) {
+          request.logger.error(
+            {
+              error: error.message,
+              stack: error.stack
+            },
+            'Failed to queue text review'
+          )
+
+          return h
+            .response({
+              success: false,
+              error: error.message || 'Failed to queue text review'
+            })
+            .code(500)
+        }
+      }
+
       server.route({
         method: 'POST',
         path: '/api/review/text',
@@ -266,14 +365,24 @@ export const reviewRoutes = {
               'Failed to queue text review'
             )
 
-            return h
-              .response({
-                success: false,
-                error: error.message || 'Failed to queue text review'
-              })
-              .code(500)
+      /**
+       * POST /api/review-text (alias for backward compatibility)
+       * Submit text content for review (async)
+       */
+      server.route({
+        method: 'POST',
+        path: '/api/review-text',
+        options: {
+          payload: {
+            maxBytes: 1024 * 1024, // 1MB max for text
+            parse: true
+          },
+          cors: {
+            origin: config.get('cors.origin'),
+            credentials: config.get('cors.credentials')
           }
-        }
+        },
+        handler: textReviewHandler
       })
 
       /**
