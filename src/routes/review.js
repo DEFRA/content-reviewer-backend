@@ -34,10 +34,29 @@ export const reviewRoutes = {
           }
         },
         handler: async (request, h) => {
+          const requestStartTime = performance.now()
+
           try {
             const data = request.payload
 
+            request.logger.info(
+              {
+                endpoint: '/api/review/file',
+                hasFile: !!data?.file,
+                payloadKeys: data ? Object.keys(data) : []
+              },
+              'File review request received'
+            )
+
             if (!data || !data.file) {
+              request.logger.warn(
+                {
+                  endpoint: '/api/review/file',
+                  error: 'No file provided'
+                },
+                'File review request rejected - no file'
+              )
+
               return h
                 .response({
                   success: false,
@@ -49,12 +68,31 @@ export const reviewRoutes = {
             const file = data.file
             const reviewId = `review_${Date.now()}_${randomUUID()}`
 
+            request.logger.info(
+              {
+                reviewId,
+                filename: file.hapi.filename,
+                contentType: file.hapi.headers['content-type']
+              },
+              'Processing file review request'
+            )
+
             // Validate file type
             const allowedMimeTypes = config.get('upload.allowedMimeTypes')
             const detectedMimeType =
               mime.lookup(file.hapi.filename) || 'application/octet-stream'
 
             if (!allowedMimeTypes.includes(detectedMimeType)) {
+              request.logger.warn(
+                {
+                  reviewId,
+                  filename: file.hapi.filename,
+                  detectedMimeType,
+                  allowedMimeTypes
+                },
+                'File type not allowed'
+              )
+
               return h
                 .response({
                   success: false,
@@ -70,8 +108,27 @@ export const reviewRoutes = {
             }
             const buffer = Buffer.concat(chunks)
 
+            request.logger.info(
+              {
+                reviewId,
+                filename: file.hapi.filename,
+                fileSize: buffer.length
+              },
+              'File buffer read successfully'
+            )
+
             // Validate file size
             if (buffer.length > config.get('upload.maxFileSize')) {
+              request.logger.warn(
+                {
+                  reviewId,
+                  filename: file.hapi.filename,
+                  fileSize: buffer.length,
+                  maxFileSize: config.get('upload.maxFileSize')
+                },
+                'File size exceeds limit'
+              )
+
               return h
                 .response({
                   success: false,
@@ -100,9 +157,19 @@ export const reviewRoutes = {
               s3Key: s3Result.key
             })
 
+            request.logger.info(
+              {
+                reviewId,
+                filename: file.hapi.filename,
+                s3Key: s3Result.key
+              },
+              'Review record created in database'
+            )
+
             // Queue review job in SQS
             await sqsClient.sendMessage({
               uploadId: reviewId,
+              reviewId,
               filename: file.hapi.filename,
               s3Bucket: s3Result.bucket,
               s3Key: s3Result.key,
@@ -114,13 +181,20 @@ export const reviewRoutes = {
               sessionId: request.headers['x-session-id'] || null
             })
 
+            const requestEndTime = performance.now()
+            const requestDuration = Math.round(
+              requestEndTime - requestStartTime
+            )
+
             request.logger.info(
               {
                 reviewId,
                 filename: file.hapi.filename,
-                size: buffer.length
+                fileSize: buffer.length,
+                s3Key: s3Result.key,
+                durationMs: requestDuration
               },
-              'Review queued successfully'
+              `File review queued successfully in ${requestDuration}ms`
             )
 
             return h
@@ -132,12 +206,19 @@ export const reviewRoutes = {
               })
               .code(202)
           } catch (error) {
+            const requestEndTime = performance.now()
+            const requestDuration = Math.round(
+              requestEndTime - requestStartTime
+            )
+
             request.logger.error(
               {
                 error: error.message,
-                stack: error.stack
+                errorName: error.name,
+                stack: error.stack,
+                durationMs: requestDuration
               },
-              'Failed to queue review'
+              `Failed to queue file review after ${requestDuration}ms`
             )
 
             return h
@@ -168,10 +249,30 @@ export const reviewRoutes = {
           }
         },
         handler: async (request, h) => {
+          const requestStartTime = performance.now()
+
           try {
             const { content, title } = request.payload
 
+            request.logger.info(
+              {
+                endpoint: '/api/review/text',
+                hasContent: !!content,
+                contentLength: content?.length,
+                title: title || 'untitled'
+              },
+              'Text review request received'
+            )
+
             if (!content || typeof content !== 'string') {
+              request.logger.warn(
+                {
+                  endpoint: '/api/review/text',
+                  error: 'Content is required and must be a string'
+                },
+                'Text review request rejected - invalid content'
+              )
+
               return h
                 .response({
                   success: false,
@@ -181,6 +282,14 @@ export const reviewRoutes = {
             }
 
             if (content.length < 10) {
+              request.logger.warn(
+                {
+                  endpoint: '/api/review/text',
+                  contentLength: content.length
+                },
+                'Text review request rejected - content too short'
+              )
+
               return h
                 .response({
                   success: false,
@@ -190,6 +299,14 @@ export const reviewRoutes = {
             }
 
             if (content.length > 100000) {
+              request.logger.warn(
+                {
+                  endpoint: '/api/review/text',
+                  contentLength: content.length
+                },
+                'Text review request rejected - content too long'
+              )
+
               return h
                 .response({
                   success: false,
@@ -199,6 +316,15 @@ export const reviewRoutes = {
             }
 
             const reviewId = `review_${Date.now()}_${randomUUID()}`
+
+            request.logger.info(
+              {
+                reviewId,
+                contentLength: content.length,
+                title: title || 'Text Content'
+              },
+              'Processing text review request'
+            )
 
             // Upload text content to S3 (following reference architecture)
             const s3Result = await s3Uploader.uploadTextContent(
@@ -226,9 +352,18 @@ export const reviewRoutes = {
               s3Key: s3Result.key
             })
 
+            request.logger.info(
+              {
+                reviewId,
+                s3Key: s3Result.key
+              },
+              'Review record created in database'
+            )
+
             // Queue review job in SQS (send only reference, not content)
             await sqsClient.sendMessage({
               uploadId: reviewId,
+              reviewId,
               filename: title || 'Text Content',
               messageType: 'text_review',
               s3Bucket: s3Result.bucket,
@@ -240,13 +375,19 @@ export const reviewRoutes = {
               sessionId: request.headers['x-session-id'] || null
             })
 
+            const requestEndTime = performance.now()
+            const requestDuration = Math.round(
+              requestEndTime - requestStartTime
+            )
+
             request.logger.info(
               {
                 reviewId,
                 contentLength: content.length,
-                title
+                s3Key: s3Result.key,
+                durationMs: requestDuration
               },
-              'Text review queued successfully'
+              `Text review queued successfully in ${requestDuration}ms`
             )
 
             return h
@@ -258,12 +399,19 @@ export const reviewRoutes = {
               })
               .code(202)
           } catch (error) {
+            const requestEndTime = performance.now()
+            const requestDuration = Math.round(
+              requestEndTime - requestStartTime
+            )
+
             request.logger.error(
               {
                 error: error.message,
-                stack: error.stack
+                errorName: error.name,
+                stack: error.stack,
+                durationMs: requestDuration
               },
-              'Failed to queue text review'
+              `Failed to queue text review after ${requestDuration}ms`
             )
 
             return h
@@ -290,12 +438,29 @@ export const reviewRoutes = {
           }
         },
         handler: async (request, h) => {
+          const requestStartTime = performance.now()
+
           try {
             const { id } = request.params
+
+            request.logger.info(
+              {
+                reviewId: id,
+                endpoint: '/api/review/{id}'
+              },
+              'Review status request received'
+            )
 
             const review = await reviewRepository.getReview(id)
 
             if (!review) {
+              request.logger.warn(
+                {
+                  reviewId: id
+                },
+                'Review not found'
+              )
+
               return h
                 .response({
                   success: false,
@@ -303,6 +468,23 @@ export const reviewRoutes = {
                 })
                 .code(404)
             }
+
+            const requestEndTime = performance.now()
+            const requestDuration = Math.round(
+              requestEndTime - requestStartTime
+            )
+
+            request.logger.info(
+              {
+                reviewId: id,
+                status: review.status,
+                sourceType: review.sourceType,
+                hasResult: !!review.result,
+                hasError: !!review.error,
+                durationMs: requestDuration
+              },
+              `Review status retrieved in ${requestDuration}ms`
+            )
 
             // Return review without internal fields
             return h
@@ -327,12 +509,19 @@ export const reviewRoutes = {
               })
               .code(200)
           } catch (error) {
+            const requestEndTime = performance.now()
+            const requestDuration = Math.round(
+              requestEndTime - requestStartTime
+            )
+
             request.logger.error(
               {
                 error: error.message,
-                reviewId: request.params.id
+                errorName: error.name,
+                reviewId: request.params.id,
+                durationMs: requestDuration
               },
-              'Failed to get review'
+              `Failed to retrieve review after ${requestDuration}ms`
             )
 
             return h
