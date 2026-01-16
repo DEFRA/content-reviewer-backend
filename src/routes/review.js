@@ -154,105 +154,6 @@ export const reviewRoutes = {
        * POST /api/review/text
        * Submit text content for review (async)
        */
-
-      // Shared handler for text review (supports both /api/review/text and /api/review-text)
-      const textReviewHandler = async (request, h) => {
-        try {
-          // Support both 'content' and 'textContent' field names
-          const { content, textContent, title } = request.payload
-          const reviewContent = content || textContent
-
-          if (!reviewContent || typeof reviewContent !== 'string') {
-            return h
-              .response({
-                success: false,
-                error:
-                  'Content is required and must be a string (use "content" or "textContent" field)'
-              })
-              .code(400)
-          }
-
-          if (reviewContent.length < 10) {
-            return h
-              .response({
-                success: false,
-                error: 'Content must be at least 10 characters'
-              })
-              .code(400)
-          }
-
-          if (reviewContent.length > 100000) {
-            return h
-              .response({
-                success: false,
-                error: 'Content must not exceed 100,000 characters'
-              })
-              .code(400)
-          }
-
-          const reviewId = `review_${Date.now()}_${randomUUID()}`
-
-          // Generate descriptive filename from content if no title provided
-          const filename =
-            title ||
-            `Pasted Content (${reviewContent.substring(0, 50).replace(/\s+/g, ' ').trim()}${reviewContent.length > 50 ? '...' : ''})`
-
-          // Create review record in MongoDB
-          await reviewRepository.createReview({
-            id: reviewId,
-            sourceType: 'text',
-            fileName: filename,
-            textContent: reviewContent
-          })
-
-          // Queue review job in SQS
-          await sqsClient.sendMessage({
-            uploadId: reviewId,
-            filename,
-            messageType: 'text_review',
-            textContent: reviewContent,
-            contentType: 'text/plain',
-            fileSize: reviewContent.length,
-            userId: request.headers['x-user-id'] || 'anonymous',
-            sessionId: request.headers['x-session-id'] || null
-          })
-
-          request.logger.info(
-            {
-              reviewId,
-              contentLength: reviewContent.length,
-              filename
-            },
-            'Text review queued successfully'
-          )
-
-          return h
-            .response({
-              success: true,
-              reviewId,
-              filename,
-              status: 'pending',
-              message: 'Review queued for processing'
-            })
-            .code(202)
-        } catch (error) {
-          request.logger.error(
-            {
-              error: error.message,
-              stack: error.stack
-            },
-            'Failed to queue text review'
-          )
-
-          return h
-            .response({
-              success: false,
-              error: error.message || 'Failed to queue text review'
-            })
-            .code(500)
-        }
-      }
-
       server.route({
         method: 'POST',
         path: '/api/review/text',
@@ -266,27 +167,113 @@ export const reviewRoutes = {
             credentials: config.get('cors.credentials')
           }
         },
-        handler: textReviewHandler
-      })
+        handler: async (request, h) => {
+          try {
+            const { content, title } = request.payload
 
-      /**
-       * POST /api/review-text (alias for backward compatibility)
-       * Submit text content for review (async)
-       */
-      server.route({
-        method: 'POST',
-        path: '/api/review-text',
-        options: {
-          payload: {
-            maxBytes: 1024 * 1024, // 1MB max for text
-            parse: true
-          },
-          cors: {
-            origin: config.get('cors.origin'),
-            credentials: config.get('cors.credentials')
+            if (!content || typeof content !== 'string') {
+              return h
+                .response({
+                  success: false,
+                  error: 'Content is required and must be a string'
+                })
+                .code(400)
+            }
+
+            if (content.length < 10) {
+              return h
+                .response({
+                  success: false,
+                  error: 'Content must be at least 10 characters'
+                })
+                .code(400)
+            }
+
+            if (content.length > 100000) {
+              return h
+                .response({
+                  success: false,
+                  error: 'Content must not exceed 100,000 characters'
+                })
+                .code(400)
+            }
+
+            const reviewId = `review_${Date.now()}_${randomUUID()}`
+
+            // Upload text content to S3 (following reference architecture)
+            const s3Result = await s3Uploader.uploadTextContent(
+              content,
+              reviewId,
+              title || 'Text Content'
+            )
+
+            request.logger.info(
+              {
+                reviewId,
+                s3Key: s3Result.key,
+                contentLength: content.length
+              },
+              'Text content uploaded to S3'
+            )
+
+            // Create review record in MongoDB (store S3 reference, not full content)
+            await reviewRepository.createReview({
+              id: reviewId,
+              sourceType: 'text',
+              fileName: title || 'Text Content',
+              fileSize: content.length,
+              mimeType: 'text/plain',
+              s3Key: s3Result.key
+            })
+
+            // Queue review job in SQS (send only reference, not content)
+            await sqsClient.sendMessage({
+              uploadId: reviewId,
+              filename: title || 'Text Content',
+              messageType: 'text_review',
+              s3Bucket: s3Result.bucket,
+              s3Key: s3Result.key,
+              s3Location: s3Result.location,
+              contentType: 'text/plain',
+              fileSize: content.length,
+              userId: request.headers['x-user-id'] || 'anonymous',
+              sessionId: request.headers['x-session-id'] || null
+            })
+
+            request.logger.info(
+              {
+                reviewId,
+                contentLength: content.length,
+                title
+              },
+              'Text review queued successfully'
+            )
+
+            return h
+              .response({
+                success: true,
+                reviewId,
+                status: 'pending',
+                message: 'Review queued for processing'
+              })
+              .code(202)
+          } catch (error) {
+            request.logger.error(
+              {
+                error: error.message,
+                stack: error.stack
+              },
+              'Failed to queue text review'
+            )
+
+            return h
+              .response({
+                success: false,
+                error: error.message || 'Failed to queue text review'
+              })
+              .code(500)
           }
-        },
-        handler: textReviewHandler
+        }
       })
 
       /**
@@ -321,8 +308,8 @@ export const reviewRoutes = {
             return h
               .response({
                 success: true,
-                review: {
-                  id: review._id,
+                data: {
+                  id: review.id || review._id, // S3 uses 'id', MongoDB used '_id'
                   status: review.status,
                   sourceType: review.sourceType,
                   fileName: review.fileName,
@@ -331,9 +318,11 @@ export const reviewRoutes = {
                   updatedAt: review.updatedAt,
                   result: review.result,
                   error: review.error,
-                  processingTime: review.processingCompletedAt
-                    ? review.processingCompletedAt - review.processingStartedAt
-                    : null
+                  processingTime:
+                    review.processingCompletedAt && review.processingStartedAt
+                      ? new Date(review.processingCompletedAt).getTime() -
+                        new Date(review.processingStartedAt).getTime()
+                      : null
                 }
               })
               .code(200)
@@ -405,7 +394,6 @@ export const reviewRoutes = {
               .response({
                 success: true,
                 reviews: formattedReviews,
-                total: totalCount, // Add total at root level for compatibility
                 pagination: {
                   total: totalCount,
                   limit,
@@ -413,8 +401,6 @@ export const reviewRoutes = {
                   returned: formattedReviews.length
                 }
               })
-              .type('application/json')
-              .header('Content-Encoding', 'identity')
               .code(200)
           } catch (error) {
             request.logger.error(

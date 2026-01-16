@@ -93,6 +93,65 @@ class S3Uploader {
       throw new Error(`S3 upload failed: ${error.message}`)
     }
   }
+
+  /**
+   * Upload text content to S3
+   * @param {string} textContent - Text content to upload
+   * @param {string} uploadId - Unique upload ID
+   * @param {string} title - Optional title for the content
+   * @returns {Promise<Object>} Upload result
+   */
+  async uploadTextContent(textContent, uploadId, title = 'Text Content') {
+    const filename = `${title.replace(/[^a-zA-Z0-9-_]/g, '_')}.txt`
+    const key = `${this.pathPrefix}/${uploadId}/${filename}`
+
+    // Mock mode - simulate successful upload without actually uploading
+    if (this.mockMode) {
+      console.log(
+        `[S3Uploader MOCK] Simulating upload of text content (${textContent.length} characters)`
+      )
+      return {
+        success: true,
+        bucket: this.bucket,
+        key,
+        location: `s3://${this.bucket}/${key}`,
+        fileId: uploadId,
+        filename,
+        size: textContent.length,
+        contentType: 'text/plain'
+      }
+    }
+
+    const command = new PutObjectCommand({
+      Bucket: this.bucket,
+      Key: key,
+      Body: Buffer.from(textContent, 'utf-8'),
+      ContentType: 'text/plain',
+      Metadata: {
+        originalName: filename,
+        uploadId,
+        uploadedAt: new Date().toISOString(),
+        contentLength: textContent.length.toString()
+      }
+    })
+
+    try {
+      await this.s3Client.send(command)
+
+      return {
+        success: true,
+        bucket: this.bucket,
+        key,
+        location: `s3://${this.bucket}/${key}`,
+        fileId: uploadId,
+        filename,
+        size: textContent.length,
+        contentType: 'text/plain'
+      }
+    } catch (error) {
+      throw new Error(`S3 text upload failed: ${error.message}`)
+    }
+  }
 }
 
 export const s3Uploader = new S3Uploader()
