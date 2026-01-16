@@ -71,8 +71,7 @@ class ReviewRepositoryS3 {
       fileName: reviewData.fileName || null,
       fileSize: reviewData.fileSize || null,
       mimeType: reviewData.mimeType || null,
-      s3Key: reviewData.s3Key || null,
-      textContent: reviewData.textContent || null,
+      s3Key: reviewData.s3Key || null, // S3 reference for both files AND text content
       result: null,
       error: null,
       processingStartedAt: null,

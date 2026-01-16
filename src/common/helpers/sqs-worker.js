@@ -263,11 +263,30 @@ class SQSWorker {
           'Text extracted successfully'
         )
       } else if (messageBody.messageType === 'text_review') {
-        // Use text content directly
-        textContent = messageBody.textContent
+        // Download text content from S3 (following reference architecture)
+        logger.info(
+          { reviewId, s3Key: messageBody.s3Key },
+          'Downloading text content from S3'
+        )
+
+        const s3Response = await this.s3Client.send(
+          new GetObjectCommand({
+            Bucket: messageBody.s3Bucket,
+            Key: messageBody.s3Key
+          })
+        )
+
+        // Convert stream to string
+        const chunks = []
+        for await (const chunk of s3Response.Body) {
+          chunks.push(chunk)
+        }
+        const buffer = Buffer.concat(chunks)
+        textContent = buffer.toString('utf-8')
+
         logger.info(
           { reviewId, contentLength: textContent.length },
-          'Using direct text content'
+          'Text content retrieved from S3'
         )
       } else {
         throw new Error(`Unknown message type: ${messageBody.messageType}`)
