@@ -446,19 +446,38 @@ class SQSWorker {
 
       logger.info({ reviewId }, 'Review saved to database')
 
+      const processingEndTime = performance.now()
+      const totalProcessingDuration = Math.round(
+        processingEndTime - processingStartTime
+      )
+
+      logger.info(
+        {
+          reviewId,
+          totalDurationMs: totalProcessingDuration
+        },
+        `Content review processing completed in ${totalProcessingDuration}ms`
+      )
+
       return {
         reviewId,
         status: 'completed',
         message: 'Review completed successfully'
       }
     } catch (error) {
+      const processingEndTime = performance.now()
+      const totalProcessingDuration = Math.round(
+        processingEndTime - processingStartTime
+      )
+
       logger.error(
         {
           reviewId,
           error: error.message,
-          stack: error.stack
+          stack: error.stack,
+          totalDurationMs: totalProcessingDuration
         },
-        'Review processing failed'
+        `Review processing failed after ${totalProcessingDuration}ms`
       )
 
       // Save error to database
