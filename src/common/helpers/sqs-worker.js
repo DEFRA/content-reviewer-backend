@@ -9,13 +9,9 @@ import { createLogger } from './logging/logger.js'
 import { bedrockClient } from './bedrock-client.js'
 import { reviewRepository } from './review-repository.js'
 import { textExtractor } from './text-extractor.js'
-import { readFileSync } from 'fs'
-import { join, dirname } from 'path'
-import { fileURLToPath } from 'url'
+import { promptManager } from './prompt-manager.js'
 
 const logger = createLogger()
-const __filename = fileURLToPath(import.meta.url)
-const __dirname = dirname(__filename)
 
 /**
  * SQS Worker to process messages from content review queue
@@ -50,15 +46,9 @@ class SQSWorker {
     }
     this.s3Client = new S3Client(s3Config)
 
-    // Load system prompt
-    try {
-      const promptPath = join(__dirname, '../../..', 'docs', 'system-prompt.md')
-      this.systemPrompt = readFileSync(promptPath, 'utf-8')
-      logger.info('System prompt loaded successfully')
-    } catch (error) {
-      logger.error({ error: error.message }, 'Failed to load system prompt')
-      this.systemPrompt = 'You are a helpful content reviewer assistant.'
-    }
+    logger.info(
+      'SQS Worker initialized - system prompt will be loaded from S3 on demand'
+    )
   }
 
   /**
@@ -291,11 +281,19 @@ class SQSWorker {
         'Sending to Bedrock for review'
       )
 
+      // Load system prompt from S3
+      const systemPrompt = await promptManager.getSystemPrompt()
+
+      logger.info(
+        { reviewId, systemPromptLength: systemPrompt.length },
+        'System prompt loaded from S3'
+      )
+
       // Send to Bedrock with system prompt
       const bedrockResponse = await bedrockClient.sendMessage(userPrompt, [
         {
           role: 'user',
-          content: [{ text: this.systemPrompt }]
+          content: [{ text: systemPrompt }]
         },
         {
           role: 'assistant',
