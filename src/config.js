@@ -240,6 +240,12 @@ const config = convict({
       format: String,
       default: 'eu-west-2',
       env: 'AWS_REGION'
+    },
+    promptKey: {
+      doc: 'S3 key for system prompt file',
+      format: String,
+      default: 'prompts/system-prompt.md',
+      env: 'S3_PROMPT_KEY'
     }
   },
   aws: {
@@ -305,6 +311,32 @@ const config = convict({
       format: Number,
       default: 0.7,
       env: 'BEDROCK_TEMPERATURE'
+    }
+  },
+  prompt: {
+    s3Bucket: {
+      doc: 'S3 bucket for system prompt storage',
+      format: String,
+      default: 'dev-service-optimisation-c63f2',
+      env: 'PROMPT_S3_BUCKET'
+    },
+    s3Key: {
+      doc: 'S3 key for system prompt file',
+      format: String,
+      default: 'prompts/system-prompt.md',
+      env: 'PROMPT_S3_KEY'
+    },
+    region: {
+      doc: 'AWS region for prompt S3 bucket',
+      format: String,
+      default: 'eu-west-2',
+      env: 'PROMPT_S3_REGION'
+    },
+    cacheTTL: {
+      doc: 'Cache TTL for prompt in milliseconds (default 1 hour)',
+      format: Number,
+      default: 3600000,
+      env: 'PROMPT_CACHE_TTL'
     }
   }
 })
