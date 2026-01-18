@@ -24,7 +24,7 @@ class S3Uploader {
       this.s3Client = null
     } else {
       const s3Config = {
-        region: config.get('upload.region')
+        region: config.get('aws.region')
       }
 
       // Add endpoint for LocalStack if configured
@@ -37,8 +37,8 @@ class S3Uploader {
       this.s3Client = new S3Client(s3Config)
     }
 
-    this.bucket = config.get('upload.s3Bucket')
-    this.pathPrefix = config.get('upload.s3Path')
+    this.bucket = config.get('s3.bucket')
+    this.pathPrefix = 'content-uploads' // previously config.get('upload.s3Path')
   }
 
   /**

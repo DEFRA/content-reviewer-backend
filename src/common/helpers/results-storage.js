@@ -27,7 +27,7 @@ export class ResultsStorage {
       this.mockResults = new Map() // In-memory storage for mock mode
     } else {
       const s3Config = {
-        region: config.get('upload.region')
+        region: config.get('aws.region')
       }
 
       if (awsEndpoint) {
@@ -38,7 +38,7 @@ export class ResultsStorage {
       this.s3Client = new S3Client(s3Config)
     }
 
-    this.bucket = config.get('upload.s3Bucket')
+    this.bucket = config.get('s3.bucket')
     this.resultsPrefix = config.get('results.s3Path') || 'content-results'
   }
 
