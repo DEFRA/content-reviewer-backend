@@ -363,10 +363,8 @@ Remember: You are a QA assistant, not a gatekeeper. Your goal is to help content
  */
 class PromptManager {
   constructor() {
-    const promptConfig = config.get('prompt')
-
     const s3Config = {
-      region: promptConfig.region
+      region: config.get('aws.region')
     }
 
     // Add endpoint for LocalStack if configured
@@ -378,9 +376,9 @@ class PromptManager {
     }
 
     this.s3Client = new S3Client(s3Config)
-    this.bucket = promptConfig.s3Bucket
-    this.promptKey = promptConfig.s3Key
-    this.cacheTTL = promptConfig.cacheTTL
+    this.bucket = config.get('s3.bucket')
+    this.promptKey = config.get('s3.promptKey')
+    this.cacheTTL = 3600000 // 1 hour default
 
     this.cache = null
     this.cacheTimestamp = null

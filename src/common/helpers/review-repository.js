@@ -15,18 +15,37 @@ const logger = createLogger()
  */
 class ReviewRepositoryS3 {
   constructor() {
-    this.s3Client = new S3Client({
+    const s3Config = {
       region: config.get('aws.region')
-    })
+    }
+
+    // Add endpoint for LocalStack if configured
+    const awsEndpoint = process.env.AWS_ENDPOINT
+    if (awsEndpoint) {
+      s3Config.endpoint = awsEndpoint
+      s3Config.forcePathStyle = true // Required for LocalStack
+      logger.info(
+        { endpoint: awsEndpoint },
+        'Using custom AWS endpoint (LocalStack)'
+      )
+    }
+
+    this.s3Client = new S3Client(s3Config)
+
     // Use the provided S3 bucket, with fallback to config
     this.bucket =
       process.env.S3_BUCKET ||
+      process.env.UPLOAD_S3_BUCKET ||
       config.get('s3.bucket') ||
       'dev-service-optimisation-c63f2'
     this.prefix = 'reviews/' // Store reviews in a subfolder
 
     logger.info(
-      { bucket: this.bucket, prefix: this.prefix },
+      {
+        bucket: this.bucket,
+        prefix: this.prefix,
+        endpoint: awsEndpoint || 'AWS'
+      },
       'Review repository initialized with S3'
     )
   }

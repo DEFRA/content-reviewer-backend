@@ -154,26 +154,8 @@ const config = convict({
     }
   },
   upload: {
-    s3Bucket: {
-      doc: 'S3 bucket for uploaded files',
-      format: String,
-      default: 'dev-service-optimisation-c63f2',
-      env: 'UPLOAD_S3_BUCKET'
-    },
-    s3Path: {
-      doc: 'S3 path prefix for uploaded files',
-      format: String,
-      default: 'content-uploads',
-      env: 'UPLOAD_S3_PATH'
-    },
-    maxFileSize: {
-      doc: 'Maximum file size in bytes (10MB default)',
-      format: Number,
-      default: 10 * 1024 * 1024,
-      env: 'UPLOAD_MAX_FILE_SIZE'
-    },
     allowedMimeTypes: {
-      doc: 'Allowed MIME types for uploads',
+      doc: 'Allowed MIME types for file uploads',
       format: Array,
       default: [
         'application/pdf',
@@ -182,8 +164,36 @@ const config = convict({
       ],
       env: 'UPLOAD_ALLOWED_MIME_TYPES'
     },
+    maxFileSize: {
+      doc: 'Maximum file size in bytes (10MB default)',
+      format: Number,
+      default: 10 * 1024 * 1024,
+      env: 'UPLOAD_MAX_FILE_SIZE'
+    }
+  },
+  s3: {
+    bucket: {
+      doc: 'S3 bucket for uploads, results, and prompts',
+      format: String,
+      default: 'dev-service-optimisation-c63f2',
+      env: 'S3_BUCKET'
+    },
+    promptKey: {
+      doc: 'S3 key for system prompt file',
+      format: String,
+      default: 'prompts/system-prompt.md',
+      env: 'S3_PROMPT_KEY'
+    }
+  },
+  aws: {
+    accountId: {
+      doc: 'AWS Account ID',
+      format: String,
+      default: '332499610595',
+      env: 'AWS_ACCOUNT_ID'
+    },
     region: {
-      doc: 'AWS region for S3',
+      doc: 'AWS region (global)',
       format: String,
       default: 'eu-west-2',
       env: 'AWS_REGION'
@@ -226,40 +236,6 @@ const config = convict({
       format: Number,
       default: 300,
       env: 'SQS_VISIBILITY_TIMEOUT'
-    }
-  },
-  s3: {
-    bucket: {
-      doc: 'S3 bucket for uploads and review results',
-      format: String,
-      default: 'dev-service-optimisation-c63f2',
-      env: 'S3_BUCKET'
-    },
-    region: {
-      doc: 'AWS region for S3',
-      format: String,
-      default: 'eu-west-2',
-      env: 'AWS_REGION'
-    },
-    promptKey: {
-      doc: 'S3 key for system prompt file',
-      format: String,
-      default: 'prompts/system-prompt.md',
-      env: 'S3_PROMPT_KEY'
-    }
-  },
-  aws: {
-    accountId: {
-      doc: 'AWS Account ID',
-      format: String,
-      default: '332499610595',
-      env: 'AWS_ACCOUNT_ID'
-    },
-    region: {
-      doc: 'AWS region (global)',
-      format: String,
-      default: 'eu-west-2',
-      env: 'AWS_REGION'
     }
   },
   bedrock: {
@@ -311,32 +287,6 @@ const config = convict({
       format: Number,
       default: 0.7,
       env: 'BEDROCK_TEMPERATURE'
-    }
-  },
-  prompt: {
-    s3Bucket: {
-      doc: 'S3 bucket for system prompt storage',
-      format: String,
-      default: 'dev-service-optimisation-c63f2',
-      env: 'PROMPT_S3_BUCKET'
-    },
-    s3Key: {
-      doc: 'S3 key for system prompt file',
-      format: String,
-      default: 'prompts/system-prompt.md',
-      env: 'PROMPT_S3_KEY'
-    },
-    region: {
-      doc: 'AWS region for prompt S3 bucket',
-      format: String,
-      default: 'eu-west-2',
-      env: 'PROMPT_S3_REGION'
-    },
-    cacheTTL: {
-      doc: 'Cache TTL for prompt in milliseconds (default 1 hour)',
-      format: Number,
-      default: 3600000,
-      env: 'PROMPT_CACHE_TTL'
     }
   }
 })
