@@ -19,7 +19,7 @@ const logger = createLogger()
 class SQSWorker {
   constructor() {
     const sqsConfig = {
-      region: config.get('sqs.region')
+      region: config.get('aws.region')
     }
 
     // Add endpoint for LocalStack if configured
@@ -38,7 +38,7 @@ class SQSWorker {
 
     // Initialize S3 client for downloading files
     const s3Config = {
-      region: config.get('upload.region')
+      region: config.get('aws.region')
     }
     if (awsEndpoint) {
       s3Config.endpoint = awsEndpoint

@@ -22,7 +22,7 @@ export const reviewRoutes = {
         path: '/api/review/file',
         options: {
           payload: {
-            maxBytes: config.get('upload.maxFileSize'),
+            maxBytes: 10485760, // 10MB
             output: 'stream',
             parse: true,
             multipart: true,
@@ -118,13 +118,13 @@ export const reviewRoutes = {
             )
 
             // Validate file size
-            if (buffer.length > config.get('upload.maxFileSize')) {
+            if (buffer.length > 10485760) {
               request.logger.warn(
                 {
                   reviewId,
                   filename: file.hapi.filename,
                   fileSize: buffer.length,
-                  maxFileSize: config.get('upload.maxFileSize')
+                  maxFileSize: 10485760
                 },
                 'File size exceeds limit'
               )
@@ -132,7 +132,7 @@ export const reviewRoutes = {
               return h
                 .response({
                   success: false,
-                  error: `File too large. Maximum size: ${config.get('upload.maxFileSize') / 1024 / 1024}MB`
+                  error: `File too large. Maximum size: ${10485760 / 1024 / 1024}MB`
                 })
                 .code(400)
             }
@@ -548,12 +548,30 @@ export const reviewRoutes = {
           }
         },
         handler: async (request, h) => {
+          const timestamp = new Date().toISOString()
+          console.log(`[${timestamp}] [BACKEND] /api/reviews request received`)
+          console.log(`[${timestamp}] [BACKEND] Query params:`, request.query)
+
           try {
             const limit = parseInt(request.query.limit) || 50
             const skip = parseInt(request.query.skip) || 0
 
+            console.log(
+              `[${timestamp}] [BACKEND] Fetching reviews from S3 repository...`
+            )
+            console.log(
+              `[${timestamp}] [BACKEND] Limit: ${limit}, Skip: ${skip}`
+            )
+
             const reviews = await reviewRepository.getAllReviews(limit, skip)
+            console.log(
+              `[${timestamp}] [BACKEND] Retrieved ${reviews.length} reviews from S3`
+            )
+
             const totalCount = await reviewRepository.getReviewCount()
+            console.log(
+              `[${timestamp}] [BACKEND] Total review count in S3: ${totalCount}`
+            )
 
             // Format reviews for response
             const formattedReviews = reviews.map((review) => ({

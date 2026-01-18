@@ -27,7 +27,7 @@ multer({
   storage,
   fileFilter,
   limits: {
-    fileSize: config.get('upload.maxFileSize')
+    fileSize: 10485760 // 10MB
   }
 })
 
@@ -47,7 +47,7 @@ export const uploadRoutes = {
         path: '/api/upload',
         options: {
           payload: {
-            maxBytes: config.get('upload.maxFileSize'),
+            maxBytes: 10485760, // 10MB
             output: 'stream',
             parse: true,
             multipart: true,
@@ -107,11 +107,11 @@ export const uploadRoutes = {
             const buffer = Buffer.concat(chunks)
 
             // Validate file size
-            if (buffer.length > config.get('upload.maxFileSize')) {
+            if (buffer.length > 10485760) {
               return h
                 .response({
                   success: false,
-                  error: `File too large. Maximum size: ${config.get('upload.maxFileSize') / 1024 / 1024}MB`
+                  error: `File too large. Maximum size: ${10485760 / 1024 / 1024}MB`
                 })
                 .code(400)
             }
