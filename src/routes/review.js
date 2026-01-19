@@ -573,6 +573,10 @@ export const reviewRoutes = {
               { totalCount },
               'Retrieved total review count from S3'
             )
+            request.logger.info(
+              { totalCount },
+              'Retrieved total review count from S3'
+            )
 
             // Format reviews for response
             const formattedReviews = reviews.map((review) => ({
