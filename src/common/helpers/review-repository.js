@@ -343,6 +343,13 @@ class ReviewRepositoryS3 {
         (r) => r !== null
       )
 
+      // Sort reviews by createdAt or updatedAt (most recent first)
+      reviews.sort((a, b) => {
+        const aTime = new Date(a.updatedAt || a.createdAt).getTime()
+        const bTime = new Date(b.updatedAt || b.createdAt).getTime()
+        return bTime - aTime // Most recent first
+      })
+
       return {
         reviews,
         hasMore: response.IsTruncated || false,
