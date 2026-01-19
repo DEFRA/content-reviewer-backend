@@ -442,7 +442,7 @@ class SQSWorker {
         },
         bedrockResponse.usage
       )
-
+      logger.info(`Bedrock AI response: ${bedrockResponse.content}`)
       logger.info({ reviewId }, 'Review saved to database')
 
       const processingEndTime = performance.now()
