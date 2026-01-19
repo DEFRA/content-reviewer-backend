@@ -380,6 +380,9 @@ class SQSWorker {
         `System prompt loaded from S3 in ${promptLoadDuration}ms`
       )
 
+      logger.info({ systemPrompt }, 'System prompt loaded from S3')  
+
+      
       // Send to Bedrock with system prompt
       const bedrockStartTime = performance.now()
 
