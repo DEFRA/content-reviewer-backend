@@ -31,7 +31,7 @@ class BedrockClient {
     this.region = config.get('bedrock.region')
     this.maxTokens = config.get('bedrock.maxTokens')
     this.temperature = config.get('bedrock.temperature')
-    this.timeout = 30000 // 30 seconds timeout - reduced to work with CDP's 5s nginx timeout on review endpoint
+    this.timeout = 180000 // 30 seconds timeout - reduced to work with CDP's 5s nginx timeout on review endpoint
 
     this.client = new BedrockRuntimeClient({
       region: this.region,

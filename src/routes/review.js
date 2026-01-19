@@ -569,8 +569,13 @@ export const reviewRoutes = {
             )
 
             const totalCount = await reviewRepository.getReviewCount()
-            console.log(
-              `[${timestamp}] [BACKEND] Total review count in S3: ${totalCount}`
+            request.logger.info(
+              { totalCount },
+              'Retrieved total review count from S3'
+            )
+            request.logger.info(
+              { totalCount },
+              'Retrieved total review count from S3'
             )
             request.logger.info(
               { totalCount },
