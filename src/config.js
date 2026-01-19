@@ -286,7 +286,7 @@ const config = convict({
     maxTokens: {
       doc: 'Maximum tokens in AI response',
       format: Number,
-      default: 4096,
+      default: 65536,
       env: 'BEDROCK_MAX_TOKENS'
     },
     temperature: {
