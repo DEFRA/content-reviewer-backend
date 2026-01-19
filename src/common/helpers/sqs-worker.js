@@ -334,10 +334,9 @@ class SQSWorker {
         //  chunks.push(chunk)
         //}
         //const buffer = Buffer.concat(chunks)
-        const buffer = await streamToString(s3Response.Body);
-        const textContent = JSON.parse(bodyString);
-        console.log(textContent);
-    
+        const buffer = await streamToString(s3Response.Body)
+        const textContent = JSON.parse(bodyString)
+        console.log(textContent)
 
         //textContent = buffer.toString('utf-8')
 
