@@ -14,8 +14,7 @@ class SQSClientHelper {
     }
 
     // Add endpoint for LocalStack if configured
-    const awsEndpoint =
-      process.env.AWS_ENDPOINT || process.env.LOCALSTACK_ENDPOINT
+    const awsEndpoint = config.get('aws.endpoint')
     if (awsEndpoint) {
       sqsConfig.endpoint = awsEndpoint
     }
