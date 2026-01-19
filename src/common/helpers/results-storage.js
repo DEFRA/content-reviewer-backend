@@ -15,8 +15,7 @@ const logger = createLogger()
 export class ResultsStorage {
   constructor() {
     // Check if we should use mock mode
-    const awsEndpoint =
-      process.env.AWS_ENDPOINT || process.env.LOCALSTACK_ENDPOINT
+    const awsEndpoint = config.get('aws.endpoint')
     this.mockMode =
       process.env.MOCK_S3_UPLOAD === 'true' ||
       (!awsEndpoint && process.env.NODE_ENV === 'development')

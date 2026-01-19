@@ -20,7 +20,7 @@ class ReviewRepositoryS3 {
     }
 
     // Add endpoint for LocalStack if configured
-    const awsEndpoint = process.env.AWS_ENDPOINT
+    const awsEndpoint = config.get('aws.endpoint')
     if (awsEndpoint) {
       s3Config.endpoint = awsEndpoint
       s3Config.forcePathStyle = true // Required for LocalStack

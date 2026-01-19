@@ -197,6 +197,13 @@ const config = convict({
       format: String,
       default: 'eu-west-2',
       env: 'AWS_REGION'
+    },
+    endpoint: {
+      doc: 'AWS endpoint URL (for LocalStack or local development). Leave unset for production AWS.',
+      format: String,
+      nullable: true,
+      default: null,
+      env: 'AWS_ENDPOINT'
     }
   },
   sqs: {
