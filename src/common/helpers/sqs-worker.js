@@ -339,6 +339,8 @@ class SQSWorker {
         const s3EndTime = performance.now()
         const s3Duration = Math.round(s3EndTime - s3StartTime)
 
+        logger.info({ textContent }, 'Print text content retrieved from S3')
+
         logger.info(
           {
             reviewId,
@@ -363,6 +365,8 @@ class SQSWorker {
         'Bedrock AI review started'
       )
 
+      logger.info({ userPrompt }, 'Print User prompt for Bedrock AI review')
+
       // Load system prompt from S3
       const promptLoadStartTime = performance.now()
       const systemPrompt = await promptManager.getSystemPrompt()
@@ -380,9 +384,8 @@ class SQSWorker {
         `System prompt loaded from S3 in ${promptLoadDuration}ms`
       )
 
-      logger.info({ systemPrompt }, 'System prompt loaded from S3')  
+      logger.info({ systemPrompt }, 'Print System prompt loaded from S3')
 
-      
       // Send to Bedrock with system prompt
       const bedrockStartTime = performance.now()
 
@@ -445,8 +448,10 @@ class SQSWorker {
         },
         bedrockResponse.usage
       )
-      logger.info(`Bedrock AI response: ${bedrockResponse.content}`)
+
       logger.info({ reviewId }, 'Review saved to database')
+      console.log('System Prompt:', systemPrompt)
+      console.log('Bedrock AI response:', bedrockResponse.content)
 
       const processingEndTime = performance.now()
       const totalProcessingDuration = Math.round(
