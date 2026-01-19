@@ -360,16 +360,25 @@ class SQSWorker {
       // Prepare prompt for Bedrock
       const userPrompt = `Please review the following content:\n\n---\n${textContent}\n---\n\nProvide a comprehensive content review following the guidelines in your system prompt.`
 
+      //logger.info(
+      //  {
+      //    reviewId,
+      //    promptLength: userPrompt.length,
+      //    textContentLength: textContent
+      //  },
+      //  'Bedrock AI review started'
+      //)
+
+      logger.info({ userPrompt }, 'Print User prompt for Bedrock AI review')
+
       logger.info(
         {
           reviewId,
           promptLength: userPrompt.length,
-          textContentLength: textContent.length
+          textContentLength: textContent
         },
         'Bedrock AI review started'
       )
-
-      logger.info({ userPrompt }, 'Print User prompt for Bedrock AI review')
 
       // Load system prompt from S3
       const promptLoadStartTime = performance.now()
