@@ -329,12 +329,16 @@ class SQSWorker {
         )
 
         // Convert stream to string
-        const chunks = []
-        for await (const chunk of s3Response.Body) {
-          chunks.push(chunk)
-        }
-        const buffer = Buffer.concat(chunks)
-        textContent = buffer.toString('utf-8')
+        //const chunks = []
+        //for await (const chunk of s3Response.Body) {
+        //  chunks.push(chunk)
+        //}
+        //const buffer = Buffer.concat(chunks)
+        const buffer = await streamToString(s3Response.Body)
+        const textContent = JSON.parse(bodyString)
+        console.log(textContent)
+
+        //textContent = buffer.toString('utf-8')
 
         const s3EndTime = performance.now()
         const s3Duration = Math.round(s3EndTime - s3StartTime)
