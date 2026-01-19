@@ -1,4 +1,5 @@
 import { sqsWorker } from '../common/helpers/sqs-worker.js'
+import { config } from '../config.js'
 
 /**
  * GET /api/sqs-worker/status
@@ -24,10 +25,7 @@ const sqsWorkerStatus = {
           environment: {
             mockMode: process.env.MOCK_S3_UPLOAD === 'true',
             skipWorker: process.env.SKIP_SQS_WORKER === 'true',
-            awsEndpoint:
-              process.env.AWS_ENDPOINT ||
-              process.env.LOCALSTACK_ENDPOINT ||
-              'default'
+            awsEndpoint: config.get('aws.endpoint') || 'default'
           }
         }
       })

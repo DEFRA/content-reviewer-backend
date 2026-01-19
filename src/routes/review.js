@@ -548,29 +548,30 @@ export const reviewRoutes = {
           }
         },
         handler: async (request, h) => {
-          const timestamp = new Date().toISOString()
-          console.log(`[${timestamp}] [BACKEND] /api/reviews request received`)
-          console.log(`[${timestamp}] [BACKEND] Query params:`, request.query)
+          request.logger.info(
+            { query: request.query },
+            '/api/reviews request received'
+          )
 
           try {
             const limit = parseInt(request.query.limit) || 50
             const skip = parseInt(request.query.skip) || 0
 
-            console.log(
-              `[${timestamp}] [BACKEND] Fetching reviews from S3 repository...`
-            )
-            console.log(
-              `[${timestamp}] [BACKEND] Limit: ${limit}, Skip: ${skip}`
+            request.logger.info(
+              { limit, skip },
+              'Fetching reviews from S3 repository'
             )
 
             const reviews = await reviewRepository.getAllReviews(limit, skip)
-            console.log(
-              `[${timestamp}] [BACKEND] Retrieved ${reviews.length} reviews from S3`
+            request.logger.info(
+              { count: reviews.length },
+              'Retrieved reviews from S3'
             )
 
             const totalCount = await reviewRepository.getReviewCount()
-            console.log(
-              `[${timestamp}] [BACKEND] Total review count in S3: ${totalCount}`
+            request.logger.info(
+              { totalCount },
+              'Retrieved total review count from S3'
             )
 
             // Format reviews for response
