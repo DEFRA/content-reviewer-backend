@@ -35,6 +35,19 @@ class SQSWorker {
     this.waitTimeSeconds = config.get('sqs.waitTimeSeconds')
     this.visibilityTimeout = config.get('sqs.visibilityTimeout')
 
+    /**
+     * Convert a readable stream to a string
+     * @param {ReadableStream} stream - The stream to convert
+     * @returns {Promise<string>} The stream content as a string
+     */
+    async function streamToString(stream) {
+      const chunks = []
+      for await (const chunk of stream) {
+        chunks.push(chunk)
+      }
+      return Buffer.concat(chunks).toString('utf-8')
+    }
+
     // Initialize S3 client for downloading files
     const s3Config = {
       region: config.get('aws.region')
@@ -335,7 +348,7 @@ class SQSWorker {
         //}
         //const buffer = Buffer.concat(chunks)
         const buffer = await streamToString(s3Response.Body)
-        const textContent = JSON.parse(bodyString)
+        const textContent = JSON.parse(buffer)
         console.log(textContent)
 
         //textContent = buffer.toString('utf-8')
