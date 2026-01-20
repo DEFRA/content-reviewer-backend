@@ -35,18 +35,18 @@ class SQSWorker {
     this.waitTimeSeconds = config.get('sqs.waitTimeSeconds')
     this.visibilityTimeout = config.get('sqs.visibilityTimeout')
 
-    /**
+    /*
      * Convert a readable stream to a string
      * @param {ReadableStream} stream - The stream to convert
      * @returns {Promise<string>} The stream content as a string
      */
-    async function streamToString(stream) {
+    /*async function streamToString(stream) {
       const chunks = []
       for await (const chunk of stream) {
         chunks.push(chunk)
       }
       return Buffer.concat(chunks).toString('utf-8')
-    }
+    }*/
 
     // Initialize S3 client for downloading files
     const s3Config = {
@@ -342,16 +342,17 @@ class SQSWorker {
         )
 
         // Convert stream to string
-        //const chunks = []
-        //for await (const chunk of s3Response.Body) {
-        //  chunks.push(chunk)
-        //}
-        //const buffer = Buffer.concat(chunks)
-        const buffer = await streamToString(s3Response.Body)
-        const textContent = JSON.parse(buffer)
-        console.log(textContent)
+        const chunks = []
+        for await (const chunk of s3Response.Body) {
+          chunks.push(chunk)
+        }
+        const buffer = Buffer.concat(chunks)
 
-        //textContent = buffer.toString('utf-8')
+        /*const buffer = await streamToString(s3Response.Body)
+        const textContent = JSON.parse(buffer)
+        console.log(textContent)*/
+
+        textContent = buffer.toString('utf-8')
 
         const s3EndTime = performance.now()
         const s3Duration = Math.round(s3EndTime - s3StartTime)
@@ -373,25 +374,16 @@ class SQSWorker {
       // Prepare prompt for Bedrock
       const userPrompt = `Please review the following content:\n\n---\n${textContent}\n---\n\nProvide a comprehensive content review following the guidelines in your system prompt.`
 
-      //logger.info(
-      //  {
-      //    reviewId,
-      //    promptLength: userPrompt.length,
-      //    textContentLength: textContent
-      //  },
-      //  'Bedrock AI review started'
-      //)
-
-      logger.info({ userPrompt }, 'Print User prompt for Bedrock AI review')
-
       logger.info(
         {
           reviewId,
           promptLength: userPrompt.length,
-          textContentLength: textContent
+          textContentLength: textContent.length
         },
         'Bedrock AI review started'
       )
+
+      logger.info({ userPrompt }, 'Print User prompt for Bedrock AI review')
 
       // Load system prompt from S3
       const promptLoadStartTime = performance.now()
