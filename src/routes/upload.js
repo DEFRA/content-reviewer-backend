@@ -138,7 +138,7 @@ export const uploadRoutes = {
             )
 
             // Create review record with pending status
-            const reviewId = `review_${Date.now()}_${randomUUID()}`
+            const reviewId = `review_${randomUUID()}`
 
             await reviewRepository.createReview({
               id: reviewId,
