@@ -66,7 +66,7 @@ export const reviewRoutes = {
             }
 
             const file = data.file
-            const reviewId = `review_${Date.now()}_${randomUUID()}`
+            const reviewId = `review_${randomUUID()}`
 
             request.logger.info(
               {
@@ -315,7 +315,7 @@ export const reviewRoutes = {
                 .code(400)
             }
 
-            const reviewId = `review_${Date.now()}_${randomUUID()}`
+            const reviewId = `review_${randomUUID()}`
 
             request.logger.info(
               {

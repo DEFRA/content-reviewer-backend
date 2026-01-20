@@ -57,11 +57,7 @@ class ReviewRepositoryS3 {
    */
   getReviewKey(reviewId) {
     // Organize by date for easier browsing: reviews/2026/01/13/review_123.json
-    const date = new Date()
-    const year = date.getFullYear()
-    const month = String(date.getMonth() + 1).padStart(2, '0')
-    const day = String(date.getDate()).padStart(2, '0')
-    return `${this.prefix}${year}/${month}/${day}/${reviewId}.json`
+    return `${this.prefix}/${reviewId}.json`
   }
 
   /**
