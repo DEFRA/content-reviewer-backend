@@ -57,7 +57,7 @@ class ReviewRepositoryS3 {
    */
   getReviewKey(reviewId) {
     // Organize by date for easier browsing: reviews/2026/01/13/review_123.json
-    return `${this.prefix}/${reviewId}.json`
+    return `${this.prefix}${reviewId}.json`
   }
 
   /**
