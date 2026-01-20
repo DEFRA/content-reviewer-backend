@@ -468,8 +468,8 @@ class SQSWorker {
       )
       logger.info(`Bedrock AI response: ${bedrockResponse.content}`)
       logger.info({ reviewId }, 'Review saved to database')
-      console.log('System Prompt:', systemPrompt)
-      console.log('Bedrock AI response:', bedrockResponse.content)
+      //console.log('System Prompt:', systemPrompt)
+      //console.log('Bedrock AI response:', bedrockResponse.content)
 
       const processingEndTime = performance.now()
       const totalProcessingDuration = Math.round(
