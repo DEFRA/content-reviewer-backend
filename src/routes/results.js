@@ -1,4 +1,5 @@
 import { resultsStorage } from '../common/helpers/results-storage.js'
+import { reviewRepository } from '../common/helpers/review-repository.js'
 import { createLogger } from '../common/helpers/logging/logger.js'
 import { config } from '../config.js'
 
@@ -48,11 +49,33 @@ export const results = {
               })
             }
 
+            // Attempt to enrich with original review metadata (filename, createdAt)
+            let filename
+            let createdAt
+            let s3ResultLocation
+            try {
+              const review = await reviewRepository.getReview(jobId)
+              if (review) {
+                filename = review.fileName
+                createdAt = review.createdAt
+                if (review.s3Key) {
+                  s3ResultLocation = `${config.get('s3.bucket')}/${review.s3Key}`
+                }
+              }
+            } catch (e) {
+              logger.debug(
+                { jobId, error: e.message },
+                'Could not enrich result with review metadata'
+              )
+            }
+
             logger.info(
               {
                 jobId,
                 status: result.status,
-                result: result.result
+                hasResult: !!result.result,
+                filename,
+                createdAt
               },
               'Result retrieved successfully from S3 storage - backend code'
             )
@@ -63,7 +86,10 @@ export const results = {
               jobId,
               result: result.result || result,
               completedAt: result.completedAt,
-              failedAt: result.failedAt
+              failedAt: result.failedAt,
+              filename,
+              createdAt,
+              s3ResultLocation
             })
           } catch (error) {
             logger.error(
