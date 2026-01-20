@@ -6,6 +6,7 @@ import {
 } from '@aws-sdk/client-s3'
 import { config } from '../../config.js'
 import { createLogger } from './logging/logger.js'
+import { resultStorage } from './result-storage.js'
 
 const logger = createLogger()
 
@@ -269,6 +270,8 @@ class ReviewRepositoryS3 {
       result,
       bedrockUsage: usage
     })
+
+    await resultStorage.storeResult(reviewId, result)
   }
 
   /**
