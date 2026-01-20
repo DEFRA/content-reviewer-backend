@@ -51,9 +51,10 @@ export const results = {
             logger.info(
               {
                 jobId,
-                status: result.status
+                status: result.status,
+                result: result.result
               },
-              'Result retrieved successfully'
+              'Result retrieved successfully from S3 storage - backend code'
             )
 
             return h.response({

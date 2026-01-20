@@ -183,6 +183,12 @@ const config = convict({
       format: String,
       default: 'prompts/system-prompt.md',
       env: 'S3_PROMPT_KEY'
+    },
+    s3Path: {
+      doc: 'S3 path for the storage',
+      format: String,
+      default: 'reviews',
+      env: 'S3_PATH'
     }
   },
   aws: {

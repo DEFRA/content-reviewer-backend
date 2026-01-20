@@ -38,7 +38,7 @@ export class ResultsStorage {
     }
 
     this.bucket = config.get('s3.bucket')
-    this.resultsPrefix = config.get('results.s3Path') || 'content-results'
+    this.resultsPrefix = config.get('s3.s3Path') || 'reviews'
   }
 
   /**
