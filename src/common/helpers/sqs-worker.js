@@ -466,7 +466,7 @@ class SQSWorker {
         },
         bedrockResponse.usage
       )
-
+      logger.info(`Bedrock AI response: ${bedrockResponse.content}`)
       logger.info({ reviewId }, 'Review saved to database')
       //console.log('System Prompt:', systemPrompt)
       //console.log('Bedrock AI response:', bedrockResponse.content)
