@@ -2,6 +2,7 @@ import { health } from '../routes/health.js'
 import { example } from '../routes/example.js'
 import { uploadRoutes } from '../routes/upload.js'
 import { reviewRoutes } from '../routes/review.js'
+import { results } from '../routes/results.js'
 import { sqsWorkerStatus } from '../routes/sqs-worker-status.js'
 import { chatController, reviewController } from '../routes/chat.js'
 
@@ -25,7 +26,7 @@ const router = {
 
       // Other routes
       server.route([health, sqsWorkerStatus].concat(example))
-      await server.register([uploadRoutes, reviewRoutes])
+      await server.register([uploadRoutes, reviewRoutes, results])
     }
   }
 }
