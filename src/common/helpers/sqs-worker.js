@@ -192,7 +192,7 @@ class SQSWorker {
       await this.processContentReview(body)
 
       // Delete message from queue after successful processing
-      await this.deleteMessage(message.ReceiptHandle)
+      // await this.deleteMessage(message.ReceiptHandle)
 
       const endTime = performance.now()
       const duration = Math.round(endTime - startTime)
