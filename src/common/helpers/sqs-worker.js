@@ -230,12 +230,20 @@ class SQSWorker {
    * @param {Object} messageBody - Message body from SQS
    */
   async processContentReview(messageBody) {
-    const reviewId = messageBody.uploadId
+    // Use the reviewId as the canonical identifier; fall back to uploadId for older messages
+    const reviewId = messageBody.reviewId || messageBody.uploadId
+    const uploadId = messageBody.uploadId || messageBody.reviewId
+
+    if (!reviewId) {
+      throw new Error('Missing reviewId in message body')
+    }
+    
     const processingStartTime = performance.now()
 
     logger.info(
       {
         reviewId,
+        uploadId,  
         messageType: messageBody.messageType,
         filename: messageBody.filename,
         s3Key: messageBody.s3Key,
