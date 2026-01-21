@@ -579,7 +579,7 @@ export const reviewRoutes = {
             )
 
             // Helper to derive reviewId from S3 key if missing (e.g. content-uploads/<reviewId>/TextContent.txt)
-          /*  const extractReviewIdFromKey = (s3Key) => {
+            /*  const extractReviewIdFromKey = (s3Key) => {
               if (!s3Key) return null
               const parts = s3Key.split('/').filter(Boolean)
               if (parts.length >= 2) {
@@ -591,8 +591,7 @@ export const reviewRoutes = {
 
             // Format reviews for response
             const formattedReviews = reviews.map((review) => {
-              const derivedId =
-                review.id || review._id || review.jobId //extractReviewIdFromKey(review.s3Key)
+              const derivedId = review.id || review._id || review.jobId //extractReviewIdFromKey(review.s3Key)
 
               if (!derivedId) {
                 request.logger.warn(
