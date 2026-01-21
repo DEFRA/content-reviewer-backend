@@ -43,8 +43,12 @@ export const results = {
               logger.info({ jobId }, 'Result not found - job may be processing')
               return h.response({
                 success: true,
-                status: 'processing',
-                jobId,
+                data: {
+                  id: jobId,
+                  jobId,
+                  status: 'processing',
+                  progress: 0
+                },
                 message: 'Job is still being processed'
               })
             }
@@ -53,6 +57,7 @@ export const results = {
             let filename
             let createdAt
             let s3ResultLocation
+            let metadata
             try {
               const review = await reviewRepository.getReview(jobId)
               if (review) {
@@ -60,6 +65,10 @@ export const results = {
                 createdAt = review.createdAt
                 if (review.s3Key) {
                   s3ResultLocation = `${config.get('s3.bucket')}/${review.s3Key}`
+                  metadata = {
+                    bucket: config.get('s3.bucket'),
+                    s3Key: review.s3Key
+                  }
                 }
               }
             } catch (e) {
@@ -82,14 +91,18 @@ export const results = {
 
             return h.response({
               success: true,
-              status: result.status,
-              jobId,
-              result: result.result || result,
-              completedAt: result.completedAt,
-              failedAt: result.failedAt,
-              filename,
-              createdAt,
-              s3ResultLocation
+              data: {
+                id: jobId,
+                jobId,
+                status: result.status,
+                result: result.result || result,
+                completedAt: result.completedAt,
+                failedAt: result.failedAt,
+                filename,
+                createdAt,
+                s3ResultLocation,
+                metadata
+              }
             })
           } catch (error) {
             logger.error(
