@@ -387,7 +387,7 @@ export const reviewRoutes = {
                 s3Key: s3Result.key,
                 durationMs: requestDuration
               },
-              `Text review queued successfully in ${requestDuration}ms`
+              `Text review queued successfully in ${requestDuration}ms from ${s3.Result.key}`
             )
 
             return h
@@ -583,6 +583,7 @@ export const reviewRoutes = {
               if (!s3Key) return null
               const parts = s3Key.split('/').filter(Boolean)
               if (parts.length >= 2) {
+                console.log("S3 key derived" , parts[parts.length - 2])
                 return parts[parts.length - 2]
               }
               return null
