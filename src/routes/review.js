@@ -578,29 +578,51 @@ export const reviewRoutes = {
               'Retrieved total review count from S3'
             )
 
+            // Helper to derive reviewId from S3 key if missing (e.g. content-uploads/<reviewId>/TextContent.txt)
+            const extractReviewIdFromKey = (s3Key) => {
+              if (!s3Key) return null
+              const parts = s3Key.split('/').filter(Boolean)
+              if (parts.length >= 2) {
+                return parts[parts.length - 2]
+              }
+              return null
+            }
+
             // Format reviews for response
-            const formattedReviews = reviews.map((review) => ({
-              id: review.id || review._id, // S3 uses 'id', MongoDB used '_id'
-              reviewId: review.id || review._id, // For frontend compatibility
-              status: review.status,
-              sourceType: review.sourceType,
-              fileName: review.fileName,
-              filename: review.fileName, // For frontend compatibility (lowercase)
-              fileSize: review.fileSize,
-              createdAt: review.createdAt,
-              uploadedAt: review.createdAt, // For frontend compatibility
-              updatedAt: review.updatedAt,
-              hasResult: !!review.result,
-              hasError: !!review.error,
-              processingTime:
-                review.processingCompletedAt && review.processingStartedAt
-                  ? Math.round(
-                      (new Date(review.processingCompletedAt).getTime() -
-                        new Date(review.processingStartedAt).getTime()) /
-                        1000
-                    )
-                  : null
-            }))
+            const formattedReviews = reviews.map((review) => {
+              const derivedId =
+                review.id || review._id || extractReviewIdFromKey(review.s3Key)
+
+              if (!derivedId) {
+                request.logger.warn(
+                  { s3Key: review.s3Key },
+                  'Review missing id/reviewId; could not derive from s3Key'
+                )
+              }
+
+              return {
+                id: derivedId,
+                reviewId: derivedId,
+                status: review.status,
+                sourceType: review.sourceType,
+                fileName: review.fileName,
+                filename: review.fileName, // For frontend compatibility (lowercase)
+                fileSize: review.fileSize,
+                createdAt: review.createdAt,
+                uploadedAt: review.createdAt, // For frontend compatibility
+                updatedAt: review.updatedAt,
+                hasResult: !!review.result,
+                hasError: !!review.error,
+                processingTime:
+                  review.processingCompletedAt && review.processingStartedAt
+                    ? Math.round(
+                        (new Date(review.processingCompletedAt).getTime() -
+                          new Date(review.processingStartedAt).getTime()) /
+                          1000
+                      )
+                    : null
+              }
+            })
 
             return h
               .response({
