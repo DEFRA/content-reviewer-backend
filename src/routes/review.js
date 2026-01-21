@@ -387,7 +387,7 @@ export const reviewRoutes = {
                 s3Key: s3Result.key,
                 durationMs: requestDuration
               },
-              `Text review queued successfully in ${requestDuration}ms from ${s3.Result.key}`
+              `Text review queued successfully in ${requestDuration}ms from ${s3Result.key}`
             )
 
             return h
