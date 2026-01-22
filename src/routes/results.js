@@ -82,6 +82,7 @@ export const results = {
               {
                 jobId,
                 status: result.status,
+                result: result.result,
                 hasResult: !!result.result,
                 filename,
                 createdAt
