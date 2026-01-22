@@ -3,7 +3,7 @@ import { config } from '../config.js'
 import { reviewRepository } from '../common/helpers/review-repository.js'
 import { sqsClient } from '../common/helpers/sqs-client.js'
 import { s3Uploader } from '../common/helpers/s3-uploader.js'
-import mime from 'mime-types'
+//import mime from 'mime-types'
 
 /**
  * Review routes - Async review processing
@@ -16,8 +16,9 @@ export const reviewRoutes = {
       /**
        * POST /api/review/file
        * Submit a file for review (async)
+       * COMMENTED OUT - File upload functionality disabled for demo
        */
-      server.route({
+      /* server.route({
         method: 'POST',
         path: '/api/review/file',
         options: {
@@ -229,7 +230,7 @@ export const reviewRoutes = {
               .code(500)
           }
         }
-      })
+      }) */
 
       /**
        * POST /api/review/text
