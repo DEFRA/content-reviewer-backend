@@ -46,7 +46,7 @@ class S3Uploader {
    * @param {string} uploadId - Unique upload ID
    * @returns {Promise<Object>} Upload result
    */
-  async uploadFile(file, uploadId) {
+  /*async uploadFile(file, uploadId) {
     const key = `${this.pathPrefix}/${uploadId}/${file.originalname}`
 
     logger.info(
@@ -147,7 +147,7 @@ class S3Uploader {
 
       throw new Error(`S3 upload failed: ${error.message}`)
     }
-  }
+  }*/
 
   /**
    * Upload text content to S3

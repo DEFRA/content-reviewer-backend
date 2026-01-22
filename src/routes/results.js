@@ -1,4 +1,5 @@
 import { resultsStorage } from '../common/helpers/results-storage.js'
+import { reviewRepository } from '../common/helpers/review-repository.js'
 import { createLogger } from '../common/helpers/logging/logger.js'
 import { config } from '../config.js'
 
@@ -42,28 +43,67 @@ export const results = {
               logger.info({ jobId }, 'Result not found - job may be processing')
               return h.response({
                 success: true,
-                status: 'processing',
-                jobId,
+                data: {
+                  id: jobId,
+                  jobId,
+                  status: 'processing',
+                  progress: 0
+                },
                 message: 'Job is still being processed'
               })
+            }
+
+            // Attempt to enrich with original review metadata (filename, createdAt)
+            let filename
+            let createdAt
+            let s3ResultLocation
+            let metadata
+            try {
+              const review = await reviewRepository.getReview(jobId)
+              if (review) {
+                filename = review.fileName
+                createdAt = review.createdAt
+                if (review.s3Key) {
+                  s3ResultLocation = `${config.get('s3.bucket')}/${review.s3Key}`
+                  metadata = {
+                    bucket: config.get('s3.bucket'),
+                    s3Key: review.s3Key
+                  }
+                }
+              }
+            } catch (e) {
+              logger.debug(
+                { jobId, error: e.message },
+                'Could not enrich result with review metadata'
+              )
             }
 
             logger.info(
               {
                 jobId,
                 status: result.status,
-                result: result.result
+                result: result.result,
+                hasResult: !!result.result,
+                filename,
+                createdAt
               },
               'Result retrieved successfully from S3 storage - backend code'
             )
 
             return h.response({
               success: true,
-              status: result.status,
-              jobId,
-              result: result.result || result,
-              completedAt: result.completedAt,
-              failedAt: result.failedAt
+              data: {
+                id: jobId,
+                jobId,
+                status: result.status,
+                result: result.result || result,
+                completedAt: result.completedAt,
+                failedAt: result.failedAt,
+                filename,
+                createdAt,
+                s3ResultLocation,
+                metadata
+              }
             })
           } catch (error) {
             logger.error(

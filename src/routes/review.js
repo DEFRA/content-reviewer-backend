@@ -3,7 +3,7 @@ import { config } from '../config.js'
 import { reviewRepository } from '../common/helpers/review-repository.js'
 import { sqsClient } from '../common/helpers/sqs-client.js'
 import { s3Uploader } from '../common/helpers/s3-uploader.js'
-import mime from 'mime-types'
+//import mime from 'mime-types'
 
 /**
  * Review routes - Async review processing
@@ -16,8 +16,9 @@ export const reviewRoutes = {
       /**
        * POST /api/review/file
        * Submit a file for review (async)
+       * COMMENTED OUT - File upload functionality disabled for demo
        */
-      server.route({
+      /* server.route({
         method: 'POST',
         path: '/api/review/file',
         options: {
@@ -229,7 +230,7 @@ export const reviewRoutes = {
               .code(500)
           }
         }
-      })
+      }) */
 
       /**
        * POST /api/review/text
@@ -387,7 +388,7 @@ export const reviewRoutes = {
                 s3Key: s3Result.key,
                 durationMs: requestDuration
               },
-              `Text review queued successfully in ${requestDuration}ms`
+              `Text review queued successfully in ${requestDuration}ms from ${s3Result.key}`
             )
 
             return h
@@ -578,29 +579,51 @@ export const reviewRoutes = {
               'Retrieved total review count from S3'
             )
 
+            // Helper to derive reviewId from S3 key if missing (e.g. content-uploads/<reviewId>/TextContent.txt)
+            /*  const extractReviewIdFromKey = (s3Key) => {
+              if (!s3Key) return null
+              const parts = s3Key.split('/').filter(Boolean)
+              if (parts.length >= 2) {
+                console.log('S3 key derived', parts[parts.length - 2])
+                return parts[parts.length - 2]
+              }
+              return null
+            } */
+
             // Format reviews for response
-            const formattedReviews = reviews.map((review) => ({
-              id: review.id || review._id, // S3 uses 'id', MongoDB used '_id'
-              reviewId: review.id || review._id, // For frontend compatibility
-              status: review.status,
-              sourceType: review.sourceType,
-              fileName: review.fileName,
-              filename: review.fileName, // For frontend compatibility (lowercase)
-              fileSize: review.fileSize,
-              createdAt: review.createdAt,
-              uploadedAt: review.createdAt, // For frontend compatibility
-              updatedAt: review.updatedAt,
-              hasResult: !!review.result,
-              hasError: !!review.error,
-              processingTime:
-                review.processingCompletedAt && review.processingStartedAt
-                  ? Math.round(
-                      (new Date(review.processingCompletedAt).getTime() -
-                        new Date(review.processingStartedAt).getTime()) /
-                        1000
-                    )
-                  : null
-            }))
+            const formattedReviews = reviews.map((review) => {
+              const derivedId = review.id || review._id || review.jobId //extractReviewIdFromKey(review.s3Key)
+
+              if (!derivedId) {
+                request.logger.warn(
+                  { s3Key: review.s3Key },
+                  'Review missing id/reviewId; could not derive from s3Key'
+                )
+              }
+
+              return {
+                id: derivedId,
+                reviewId: derivedId,
+                status: review.status,
+                sourceType: review.sourceType,
+                fileName: review.fileName,
+                filename: review.fileName, // For frontend compatibility (lowercase)
+                fileSize: review.fileSize,
+                createdAt: review.createdAt,
+                uploadedAt: review.createdAt, // For frontend compatibility
+                updatedAt: review.updatedAt,
+                hasResult: !!review.result,
+                hasError: !!review.error,
+                processingTime:
+                  review.processingCompletedAt && review.processingStartedAt
+                    ? Math.round(
+                        (new Date(review.processingCompletedAt).getTime() -
+                          new Date(review.processingStartedAt).getTime()) /
+                          1000
+                      )
+                    : null
+              }
+            })
 
             return h
               .response({
