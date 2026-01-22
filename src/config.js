@@ -143,7 +143,7 @@ const config = convict({
     origin: {
       doc: 'CORS allowed origins',
       format: Array,
-      default: ['http://localhost:3000'],
+      default: ['https://content-reviewer-frontend.dev.cdp-int.defra.cloud'],
       env: 'CORS_ORIGIN'
     },
     credentials: {
