@@ -463,11 +463,43 @@ class SQSWorker {
         `Bedrock AI review completed successfully in ${bedrockDuration}ms`
       )
 
+      // Parse JSON response (with fallback for non-JSON responses)
+      let structuredReview = null
+      const reviewContent = bedrockResponse.content
+
+      try {
+        // Try to parse as JSON
+        structuredReview = JSON.parse(bedrockResponse.content)
+        logger.info(
+          {
+            reviewId,
+            issueCount: structuredReview.issues?.length || 0,
+            hasOriginalText: !!structuredReview.originalText
+          },
+          'Successfully parsed structured JSON review'
+        )
+      } catch (parseError) {
+        // If parsing fails, treat as plain text (backwards compatibility)
+        logger.warn(
+          {
+            reviewId,
+            error: parseError.message,
+            contentPreview: bedrockResponse.content.substring(0, 200)
+          },
+          'Failed to parse response as JSON, treating as plain text'
+        )
+      }
+
       // Save review result
       await reviewRepository.saveReviewResult(
         reviewId,
         {
-          reviewContent: bedrockResponse.content,
+          reviewContent,
+          structuredReview,
+          originalText: structuredReview?.originalText || null,
+          issues: structuredReview?.issues || [],
+          summary: structuredReview?.summary || null,
+          metrics: structuredReview?.metrics || null,
           guardrailAssessment: bedrockResponse.guardrailAssessment,
           stopReason: bedrockResponse.stopReason,
           completedAt: new Date()
