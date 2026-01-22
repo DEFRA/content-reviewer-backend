@@ -192,7 +192,7 @@ class SQSWorker {
       await this.processContentReview(body)
 
       // Delete message from queue after successful processing
-      // await this.deleteMessage(message.ReceiptHandle)
+      await this.deleteMessage(message.ReceiptHandle)
 
       const endTime = performance.now()
       const duration = Math.round(endTime - startTime)
@@ -391,7 +391,7 @@ class SQSWorker {
         'Bedrock AI review started'
       )
 
-      logger.info({ userPrompt }, 'Print User prompt for Bedrock AI review')
+      logger.info({ userPrompt }, `Print User prompt for Bedrock AI review: ${userPrompt}`)
 
       // Load system prompt from S3
       const promptLoadStartTime = performance.now()
@@ -410,7 +410,7 @@ class SQSWorker {
         `System prompt loaded from S3 in ${promptLoadDuration}ms`
       )
 
-      logger.info({ systemPrompt }, 'Print System prompt loaded from S3')
+      logger.info({ systemPrompt }, `Print System prompt loaded from S3: ${systemPrompt}`)
 
       // Send to Bedrock with system prompt
       const bedrockStartTime = performance.now()
