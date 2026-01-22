@@ -3,7 +3,7 @@ import { config } from '../config.js'
 import { reviewRepository } from '../common/helpers/review-repository.js'
 import { sqsClient } from '../common/helpers/sqs-client.js'
 import { s3Uploader } from '../common/helpers/s3-uploader.js'
-import mime from 'mime-types'
+//import mime from 'mime-types'
 
 /**
  * Review routes - Async review processing

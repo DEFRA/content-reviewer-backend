@@ -1,3 +1,9 @@
+/**
+ * COMMENTED OUT - File upload functionality disabled for demo
+ * All code in this file is commented out to disable file upload functionality
+ */
+
+/*
 import multer from 'multer'
 import { randomUUID } from 'crypto'
 import mime from 'mime-types'
@@ -30,21 +36,26 @@ multer({
     fileSize: 10485760 // 10MB
   }
 })
+*/
 
 /**
  * Upload route plugin
  * COMMENTED OUT - File upload functionality disabled for demo
+ * Minimal export to prevent errors, but all routes are disabled
  */
 export const uploadRoutes = {
   plugin: {
     name: 'upload-routes',
     register: async (server) => {
-      /**
-       * POST /api/upload
-       * Upload a file
-       * COMMENTED OUT - File upload functionality disabled for demo
-       */
-      /* server.route({
+      // No routes registered - file upload functionality disabled
+    }
+  }
+}
+
+/*
+// ============= ALL FILE UPLOAD CODE COMMENTED OUT =============
+      POST /api/upload - Upload a file (COMMENTED OUT)
+      server.route({
         method: 'POST',
         path: '/api/upload',
         options: {
@@ -232,12 +243,9 @@ export const uploadRoutes = {
               .code(500)
           }
         }
-      }) */
+      })
 
-      /**
-       * GET /api/upload/health
-       * Health check for upload service
-       */
+      GET /api/upload/health - Health check (COMMENTED OUT)
       server.route({
         method: 'GET',
         path: '/api/upload/health',
@@ -259,6 +267,5 @@ export const uploadRoutes = {
             .code(200)
         }
       })
-    }
-  }
-}
+*/
+// ============= END OF COMMENTED OUT CODE =============
