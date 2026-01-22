@@ -237,13 +237,13 @@ class SQSWorker {
     if (!reviewId) {
       throw new Error('Missing reviewId in message body')
     }
-    
+
     const processingStartTime = performance.now()
 
     logger.info(
       {
         reviewId,
-        uploadId,  
+        uploadId,
         messageType: messageBody.messageType,
         filename: messageBody.filename,
         s3Key: messageBody.s3Key,
