@@ -16,8 +16,9 @@ export const reviewRoutes = {
       /**
        * POST /api/review/file
        * Submit a file for review (async)
+       * COMMENTED OUT - File upload functionality disabled for demo
        */
-      server.route({
+      /* server.route({
         method: 'POST',
         path: '/api/review/file',
         options: {
@@ -229,7 +230,7 @@ export const reviewRoutes = {
               .code(500)
           }
         }
-      })
+      }) */
 
       /**
        * POST /api/review/text

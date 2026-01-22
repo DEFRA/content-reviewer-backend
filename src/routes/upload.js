@@ -33,6 +33,7 @@ multer({
 
 /**
  * Upload route plugin
+ * COMMENTED OUT - File upload functionality disabled for demo
  */
 export const uploadRoutes = {
   plugin: {
@@ -41,8 +42,9 @@ export const uploadRoutes = {
       /**
        * POST /api/upload
        * Upload a file
+       * COMMENTED OUT - File upload functionality disabled for demo
        */
-      server.route({
+      /* server.route({
         method: 'POST',
         path: '/api/upload',
         options: {
@@ -230,7 +232,7 @@ export const uploadRoutes = {
               .code(500)
           }
         }
-      })
+      }) */
 
       /**
        * GET /api/upload/health
