@@ -246,6 +246,17 @@ class ReviewRepositoryS3 {
       throw new Error(`Review not found: ${reviewId}`)
     }
 
+    logger.info(
+      {
+        reviewId,
+        statusBefore: review.status,
+        statusAfter: status,
+        fileNameBefore: review.fileName,
+        createdAtBefore: review.createdAt
+      },
+      'Updating review status - BEFORE update'
+    )
+
     const now = new Date().toISOString()
     review.status = status
     review.updatedAt = now
@@ -262,6 +273,17 @@ class ReviewRepositoryS3 {
     ) {
       review.processingCompletedAt = now
     }
+
+    logger.info(
+      {
+        reviewId,
+        status: review.status,
+        fileNameAfter: review.fileName,
+        createdAtAfter: review.createdAt,
+        updatedAt: review.updatedAt
+      },
+      'Updating review status - AFTER update, BEFORE save'
+    )
 
     await this.saveReview(review)
     logger.info({ reviewId, status }, 'Review status updated in S3')
@@ -286,14 +308,17 @@ class ReviewRepositoryS3 {
   /**
    * Save review error
    * @param {string} reviewId - Review ID
-   * @param {Error} error - Error object
+   * @param {string|Error} error - Error message or Error object
    * @returns {Promise<void>}
    */
   async saveReviewError(reviewId, error) {
+    const errorMessage = typeof error === 'string' ? error : error.message
+    const errorStack = typeof error === 'string' ? null : error.stack
+
     await this.updateReviewStatus(reviewId, 'failed', {
       error: {
-        message: error.message,
-        stack: error.stack
+        message: errorMessage,
+        stack: errorStack
       }
     })
   }
