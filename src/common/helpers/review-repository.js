@@ -2,7 +2,8 @@ import {
   S3Client,
   PutObjectCommand,
   GetObjectCommand,
-  ListObjectsV2Command
+  ListObjectsV2Command,
+  DeleteObjectCommand
 } from '@aws-sdk/client-s3'
 import { config } from '../../config.js'
 import { createLogger } from './logging/logger.js'
@@ -100,6 +101,14 @@ class ReviewRepositoryS3 {
       { reviewId: review.id, s3Key: this.getReviewKey(review.id) },
       'Review created in S3'
     )
+
+    // Trigger async cleanup to keep only recent 100 reviews (don't wait for it)
+    this.deleteOldReviews(100).catch((error) => {
+      logger.error(
+        { error: error.message },
+        'Background cleanup failed (non-critical)'
+      )
+    })
 
     return review
   }
@@ -301,7 +310,7 @@ class ReviewRepositoryS3 {
       const listCommand = new ListObjectsV2Command({
         Bucket: this.bucket,
         Prefix: this.prefix,
-        MaxKeys: limit,
+        MaxKeys: Math.max(limit, 20), // Ensure we fetch at least the requested limit
         ContinuationToken: continuationToken || undefined
       })
 
@@ -423,14 +432,98 @@ class ReviewRepositoryS3 {
   }
 
   /**
-   * Delete old reviews (cleanup)
-   * @param {number} daysOld - Delete reviews older than this many days
+   * Delete old reviews to keep only the most recent reviews
+   * @param {number} maxReviews - Maximum number of reviews to keep (default: 100)
    * @returns {Promise<number>} Number of reviews deleted
    */
-  async deleteOldReviews(daysOld = 30) {
-    // Implementation for cleanup - can be added later if needed
-    logger.info({ daysOld }, 'Delete old reviews not yet implemented')
-    return 0
+  async deleteOldReviews(maxReviews = 100) {
+    try {
+      logger.info({ maxReviews }, 'Checking if review cleanup is needed')
+
+      // Get all reviews sorted by most recent first
+      const { reviews } = await this.getRecentReviews({ limit: 1000 })
+
+      if (reviews.length <= maxReviews) {
+        logger.info(
+          { currentCount: reviews.length, maxReviews },
+          'No cleanup needed - review count within limit'
+        )
+        return 0
+      }
+
+      // Get reviews to delete (everything after the first maxReviews)
+      const reviewsToDelete = reviews.slice(maxReviews)
+
+      logger.info(
+        {
+          totalReviews: reviews.length,
+          keepCount: maxReviews,
+          deleteCount: reviewsToDelete.length
+        },
+        'Starting cleanup of old reviews'
+      )
+
+      let deletedCount = 0
+
+      // Delete old reviews
+      for (const review of reviewsToDelete) {
+        try {
+          const reviewId = review.id || review.reviewId
+
+          if (!reviewId) {
+            logger.warn({ review }, 'Skipping review without ID')
+            continue
+          }
+
+          // List all objects for this review
+          const listCommand = new ListObjectsV2Command({
+            Bucket: this.bucket,
+            Prefix: `${this.prefix}${reviewId}/`
+          })
+
+          const listResponse = await this.s3Client.send(listCommand)
+
+          if (listResponse.Contents && listResponse.Contents.length > 0) {
+            // Delete all objects for this review
+            const deletePromises = listResponse.Contents.map((obj) => {
+              const deleteCommand = new DeleteObjectCommand({
+                Bucket: this.bucket,
+                Key: obj.Key
+              })
+              return this.s3Client.send(deleteCommand)
+            })
+
+            await Promise.all(deletePromises)
+            deletedCount++
+
+            logger.info(
+              {
+                reviewId,
+                filesDeleted: listResponse.Contents.length,
+                createdAt: review.createdAt
+              },
+              'Deleted old review'
+            )
+          }
+        } catch (deleteError) {
+          logger.error(
+            { error: deleteError.message, reviewId: review.id },
+            'Failed to delete individual review'
+          )
+          // Continue with next review even if one fails
+        }
+      }
+
+      logger.info(
+        { deletedCount, requestedDelete: reviewsToDelete.length },
+        'Review cleanup completed'
+      )
+
+      return deletedCount
+    } catch (error) {
+      logger.error({ error: error.message }, 'Failed to delete old reviews')
+      throw error
+    }
   }
 
   /**
