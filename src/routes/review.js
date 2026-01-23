@@ -260,9 +260,11 @@ export const reviewRoutes = {
                 endpoint: '/api/review/text',
                 hasContent: !!content,
                 contentLength: content?.length,
-                title: title || 'untitled'
+                hasTitle: !!title,
+                title: title || 'untitled',
+                titleLength: title?.length
               },
-              'Text review request received'
+              `Text review request received with title: "${title || 'NO TITLE PROVIDED'}"`
             )
 
             if (!content || typeof content !== 'string') {
@@ -356,9 +358,12 @@ export const reviewRoutes = {
             request.logger.info(
               {
                 reviewId,
-                s3Key: s3Result.key
+                s3Key: s3Result.key,
+                fileName: title || 'Text Content',
+                title,
+                filename: title || 'Text Content'
               },
-              'Review record created in database'
+              `Review record created in database with fileName: ${title}`
             )
 
             // Queue review job in SQS (send only reference, not content)
@@ -598,6 +603,32 @@ export const reviewRoutes = {
                 request.logger.warn(
                   { s3Key: review.s3Key },
                   'Review missing id/reviewId; could not derive from s3Key'
+                )
+              }
+
+              // Log fileName to debug the "Text Content" issue
+              if (!review.fileName || review.fileName === 'Text Content') {
+                request.logger.warn(
+                  { 
+                    reviewId: derivedId,
+                    fileName: review.fileName,
+                    status: review.status,
+                    sourceType: review.sourceType
+                  },
+                  'Review has default or missing fileName'
+                )
+              }
+
+              // Log timestamp fields to debug N/A issue
+              if (!review.createdAt) {
+                request.logger.warn(
+                  { 
+                    reviewId: derivedId,
+                    createdAt: review.createdAt,
+                    updatedAt: review.updatedAt,
+                    status: review.status
+                  },
+                  'Review missing createdAt timestamp'
                 )
               }
 
