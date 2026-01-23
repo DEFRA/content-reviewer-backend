@@ -521,10 +521,7 @@ class ReviewRepositoryS3 {
 
       return deletedCount
     } catch (error) {
-      logger.error(
-        { error: error.message },
-        'Failed to delete old reviews'
-      )
+      logger.error({ error: error.message }, 'Failed to delete old reviews')
       throw error
     }
   }
