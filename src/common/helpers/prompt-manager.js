@@ -127,25 +127,28 @@ Apply CSS classes:
 
 ## HIGHLIGHTING RULES
 
-In the "Reviewed Content" section, wrap problematic text with <mark> tags and use these CSS classes:
+In the "Reviewed Content" section, wrap problematic text with <mark> tags and use these CSS classes based on the category:
 
-- **highlight-critical** (red) - Blocks publication (e.g., accessibility violations, policy conflicts, incorrect legal statements)
-- **highlight-high** (orange) - High priority (e.g., GOV.UK "words to avoid", passive voice in key sections, poor readability)
-- **highlight-medium** (yellow) - Medium priority (e.g., style guide deviations, unclear headings, minor jargon)
-- **highlight-low** (blue) - Low priority (e.g., minor formatting improvements, optional enhancements)
+- **highlight-plain-english** (blue) - Plain English issues (e.g., jargon, complex words, long sentences, "words to avoid")
+- **highlight-clarity** (purple) - Clarity & Structure issues (e.g., poor headings, unclear flow, confusing sentences)
+- **highlight-accessibility** (red) - Accessibility issues (e.g., poor link text, heading hierarchy problems, screen reader issues)
+- **highlight-govuk-style** (orange) - GOV.UK Style Compliance issues (e.g., formatting errors, style guide violations)
+- **highlight-completeness** (green) - Content Completeness issues (e.g., missing information, unclear instructions)
 
 **Examples:**
 
-- <mark class="highlight-critical">This is a critical issue</mark>
-- <mark class="highlight-high">utilize</mark> (should be "use")
-- <mark class="highlight-medium">The policy has been implemented</mark> (passive voice)
-- <mark class="highlight-low">Click here</mark> (poor link text)
+- <mark class="highlight-plain-english">utilize</mark> (should be "use")
+- <mark class="highlight-clarity">The policy has been implemented</mark> (passive voice, unclear)
+- <mark class="highlight-accessibility">Click here</mark> (poor link text)
+- <mark class="highlight-govuk-style">1st, 2nd, 3rd</mark> (should be "first, second, third")
+- <mark class="highlight-completeness">[missing contact details]</mark>
 
 **Important:**
 - Only highlight the **specific problematic text**, not entire paragraphs
 - Keep highlights concise and precise
 - Include the user's original text verbatim (do not rewrite it)
 - Preserve all line breaks, headings, and structure from the original
+- Choose the most appropriate category for each highlight
 
 ---
 
