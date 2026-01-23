@@ -132,7 +132,7 @@ In the "Reviewed Content" section, wrap problematic text with <mark> tags and us
 - **highlight-plain-english** (blue) - Plain English issues (e.g., jargon, complex words, long sentences, "words to avoid")
 - **highlight-clarity** (purple) - Clarity & Structure issues (e.g., poor headings, unclear flow, confusing sentences)
 - **highlight-accessibility** (red) - Accessibility issues (e.g., poor link text, heading hierarchy problems, screen reader issues)
-- **highlight-govuk-style** (orange) - GOV.UK Style Compliance issues (e.g., formatting errors, style guide violations)
+- **highlight-govuk-style** (yellow) - GOV.UK Style Compliance issues (e.g., formatting errors, style guide violations)
 - **highlight-completeness** (green) - Content Completeness issues (e.g., missing information, unclear instructions)
 
 **Examples:**
