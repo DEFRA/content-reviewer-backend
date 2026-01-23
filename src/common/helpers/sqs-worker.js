@@ -519,8 +519,19 @@ class SQSWorker {
         `Review processing failed after ${totalProcessingDuration}ms`
       )
 
-      // Save error to database
-      await reviewRepository.saveReviewError(reviewId, error.message)
+      // Detect timeout errors and provide user-friendly message
+      let errorMessage = error.message
+      if (
+        error.message.includes('timed out') ||
+        error.message.includes('timeout') ||
+        error.message.includes('ETIMEDOUT') ||
+        error.name === 'TimeoutError'
+      ) {
+        errorMessage = 'TIMEOUT'
+      }
+
+      // Save error to database with user-friendly message
+      await reviewRepository.saveReviewError(reviewId, errorMessage)
 
       // Re-throw to mark message as failed (will retry)
       throw error

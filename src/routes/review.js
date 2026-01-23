@@ -632,19 +632,56 @@ export const reviewRoutes = {
                 )
               }
 
+              // Extract filename from s3Key if fileName is not set
+              let displayFileName = review.fileName
+              if (!displayFileName && review.s3Key) {
+                // Extract filename from s3Key path
+                // Example: "content-uploads/review_xxx/Activities___.txt" -> "Activities___.txt"
+                const s3KeyParts = review.s3Key.split('/')
+                displayFileName = s3KeyParts[s3KeyParts.length - 1]
+                request.logger.info(
+                  {
+                    reviewId: derivedId,
+                    s3Key: review.s3Key,
+                    extractedFileName: displayFileName
+                  },
+                  'Extracted filename from s3Key'
+                )
+              }
+
+              // Use createdAt with fallback to updatedAt or processingStartedAt
+              const timestamp =
+                review.createdAt ||
+                review.updatedAt ||
+                review.processingStartedAt ||
+                review.uploadedAt
+              if (!timestamp) {
+                request.logger.warn(
+                  {
+                    reviewId: derivedId,
+                    createdAt: review.createdAt,
+                    updatedAt: review.updatedAt,
+                    processingStartedAt: review.processingStartedAt,
+                    uploadedAt: review.uploadedAt
+                  },
+                  'Review missing all timestamp fields'
+                )
+              }
+
               return {
                 id: derivedId,
                 reviewId: derivedId,
                 status: review.status,
                 sourceType: review.sourceType,
-                fileName: review.fileName,
-                filename: review.fileName, // For frontend compatibility (lowercase)
+                fileName: displayFileName,
+                filename: displayFileName, // For frontend compatibility (lowercase)
                 fileSize: review.fileSize,
-                createdAt: review.createdAt,
-                uploadedAt: review.createdAt, // For frontend compatibility
+                createdAt: timestamp,
+                uploadedAt: timestamp, // For frontend compatibility
                 updatedAt: review.updatedAt,
                 hasResult: !!review.result,
                 hasError: !!review.error,
+                errorMessage: review.error?.message || null,
                 processingTime:
                   review.processingCompletedAt && review.processingStartedAt
                     ? Math.round(
