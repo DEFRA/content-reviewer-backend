@@ -527,7 +527,7 @@ class SQSWorker {
         error.message.includes('ETIMEDOUT') ||
         error.name === 'TimeoutError'
       ) {
-        errorMessage = 'Timeout issue - please try again later'
+        errorMessage = 'TIMEOUT'
       }
 
       // Save error to database with user-friendly message
