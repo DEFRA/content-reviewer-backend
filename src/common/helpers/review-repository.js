@@ -85,10 +85,10 @@ class ReviewRepositoryS3 {
       createdAt: now,
       updatedAt: now,
       sourceType: reviewData.sourceType, // 'file' or 'text'
-      fileName: reviewData.fileName || null,
-      fileSize: reviewData.fileSize || null,
-      mimeType: reviewData.mimeType || null,
-      s3Key: reviewData.s3Key || null, // S3 reference for both files AND text content
+      fileName: reviewData.fileName ?? null,
+      fileSize: reviewData.fileSize ?? null,
+      mimeType: reviewData.mimeType ?? null,
+      s3Key: reviewData.s3Key ?? null, // S3 reference for both files AND text content
       result: null,
       error: null,
       processingStartedAt: null,
@@ -261,8 +261,19 @@ class ReviewRepositoryS3 {
     review.status = status
     review.updatedAt = now
 
+    // Filter out undefined values to prevent overwriting existing fields
+    const cleanAdditionalData = Object.keys(additionalData).reduce(
+      (acc, key) => {
+        if (additionalData[key] !== undefined) {
+          acc[key] = additionalData[key]
+        }
+        return acc
+      },
+      {}
+    )
+
     // Merge additional data
-    Object.assign(review, additionalData)
+    Object.assign(review, cleanAdditionalData)
 
     // Set processing timestamps based on status
     if (status === 'processing' && !review.processingStartedAt) {
