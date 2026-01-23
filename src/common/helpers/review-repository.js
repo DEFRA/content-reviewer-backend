@@ -96,6 +96,17 @@ class ReviewRepositoryS3 {
       bedrockUsage: null
     }
 
+    logger.info(
+      {
+        reviewId: review.id,
+        fileName: review.fileName,
+        createdAt: review.createdAt,
+        s3Key: review.s3Key,
+        sourceType: review.sourceType
+      },
+      'Creating review with fileName and createdAt - BEFORE saveReview'
+    )
+
     await this.saveReview(review)
     logger.info(
       { reviewId: review.id, s3Key: this.getReviewKey(review.id) },
@@ -121,6 +132,19 @@ class ReviewRepositoryS3 {
   async saveReview(review) {
     const key = this.getReviewKey(review.id)
 
+    // Log the review object being saved to verify fileName and createdAt are present
+    logger.info(
+      {
+        reviewId: review.id,
+        fileName: review.fileName,
+        createdAt: review.createdAt,
+        status: review.status,
+        hasResult: !!review.result,
+        s3Key: review.s3Key
+      },
+      'Saving review to S3 with fileName and createdAt'
+    )
+
     const command = new PutObjectCommand({
       Bucket: this.bucket,
       Key: key,
@@ -135,7 +159,15 @@ class ReviewRepositoryS3 {
 
     try {
       await this.s3Client.send(command)
-      logger.debug({ reviewId: review.id, key }, 'Review saved to S3')
+      logger.info(
+        {
+          reviewId: review.id,
+          key,
+          fileName: review.fileName,
+          createdAt: review.createdAt
+        },
+        'Review saved to S3 successfully'
+      )
     } catch (error) {
       logger.error(
         { error: error.message, reviewId: review.id },
@@ -258,11 +290,42 @@ class ReviewRepositoryS3 {
     )
 
     const now = new Date().toISOString()
+
+    // Preserve critical fields before merging
+    const preservedFileName = review.fileName
+    const preservedCreatedAt = review.createdAt
+    const preservedS3Key = review.s3Key
+
     review.status = status
     review.updatedAt = now
 
     // Merge additional data
     Object.assign(review, additionalData)
+
+    // CRITICAL: Ensure fileName and createdAt are never overwritten with null/undefined
+    if (!review.fileName && preservedFileName) {
+      review.fileName = preservedFileName
+      logger.warn(
+        { reviewId, preservedFileName },
+        'Restored fileName after merge - was overwritten'
+      )
+    }
+
+    if (!review.createdAt && preservedCreatedAt) {
+      review.createdAt = preservedCreatedAt
+      logger.warn(
+        { reviewId, preservedCreatedAt },
+        'Restored createdAt after merge - was overwritten'
+      )
+    }
+
+    if (!review.s3Key && preservedS3Key) {
+      review.s3Key = preservedS3Key
+      logger.warn(
+        { reviewId, preservedS3Key },
+        'Restored s3Key after merge - was overwritten'
+      )
+    }
 
     // Set processing timestamps based on status
     if (status === 'processing' && !review.processingStartedAt) {
