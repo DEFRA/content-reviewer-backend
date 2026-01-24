@@ -79,6 +79,10 @@ class ReviewRepositoryS3 {
   async createReview(reviewData) {
     const now = new Date().toISOString()
 
+    logger.info(
+      `creating review with data review repository: ${JSON.stringify(reviewData)}`
+    )
+
     const review = {
       id: reviewData.id,
       status: 'pending', // pending, processing, completed, failed
@@ -291,41 +295,56 @@ class ReviewRepositoryS3 {
 
     const now = new Date().toISOString()
 
-    // Preserve critical fields before merging
+    // CRITICAL: Preserve immutable fields that should NEVER change
     const preservedFileName = review.fileName
     const preservedCreatedAt = review.createdAt
     const preservedS3Key = review.s3Key
+    const preservedId = review.id
+    const preservedSourceType = review.sourceType
 
+    // Update mutable fields
     review.status = status
     review.updatedAt = now
 
-    // Merge additional data
-    Object.assign(review, additionalData)
+    // Remove immutable fields from additionalData to prevent overwriting
+    const safeAdditionalData = { ...additionalData }
+    delete safeAdditionalData.fileName
+    delete safeAdditionalData.createdAt
+    delete safeAdditionalData.s3Key
+    delete safeAdditionalData.id
+    delete safeAdditionalData.sourceType
 
-    // CRITICAL: Ensure fileName and createdAt are never overwritten with null/undefined
-    if (!review.fileName && preservedFileName) {
-      review.fileName = preservedFileName
+    // Log if someone tried to overwrite immutable fields
+    if (additionalData.fileName !== undefined) {
       logger.warn(
-        { reviewId, preservedFileName },
-        'Restored fileName after merge - was overwritten'
+        {
+          reviewId,
+          attemptedFileName: additionalData.fileName,
+          preservedFileName
+        },
+        'Blocked attempt to overwrite fileName in additionalData'
+      )
+    }
+    if (additionalData.createdAt !== undefined) {
+      logger.warn(
+        {
+          reviewId,
+          attemptedCreatedAt: additionalData.createdAt,
+          preservedCreatedAt
+        },
+        'Blocked attempt to overwrite createdAt in additionalData'
       )
     }
 
-    if (!review.createdAt && preservedCreatedAt) {
-      review.createdAt = preservedCreatedAt
-      logger.warn(
-        { reviewId, preservedCreatedAt },
-        'Restored createdAt after merge - was overwritten'
-      )
-    }
+    // Merge only safe additional data (result, bedrockUsage, error, etc.)
+    Object.assign(review, safeAdditionalData)
 
-    if (!review.s3Key && preservedS3Key) {
-      review.s3Key = preservedS3Key
-      logger.warn(
-        { reviewId, preservedS3Key },
-        'Restored s3Key after merge - was overwritten'
-      )
-    }
+    // FORCE restore immutable fields (double protection)
+    review.fileName = preservedFileName
+    review.createdAt = preservedCreatedAt
+    review.s3Key = preservedS3Key
+    review.id = preservedId
+    review.sourceType = preservedSourceType
 
     // Set processing timestamps based on status
     if (status === 'processing' && !review.processingStartedAt) {
@@ -360,12 +379,21 @@ class ReviewRepositoryS3 {
    * @returns {Promise<void>}
    */
   async saveReviewResult(reviewId, result, usage) {
+    // Update review status to 'completed' and add result + usage
+    // This saves the COMPLETE review object with fileName, createdAt, etc.
     await this.updateReviewStatus(reviewId, 'completed', {
       result,
       bedrockUsage: usage
     })
 
-    await resultsStorage.storeResult(reviewId, result)
+    // ❌ REMOVED: resultsStorage.storeResult() was overwriting the review file
+    // with only {jobId, status, result, completedAt}, losing fileName and createdAt
+    // The updateReviewStatus() already saves the complete review via saveReview()
+
+    logger.info(
+      { reviewId, hasResult: !!result, hasUsage: !!usage },
+      'Review result saved successfully with complete review data'
+    )
   }
 
   /**
@@ -482,7 +510,10 @@ class ReviewRepositoryS3 {
       // Get more than needed to handle skip
       const fetchLimit = limit + skip
       const { reviews } = await this.getRecentReviews({ limit: fetchLimit })
-
+      request.logger.info(
+        { count: reviews.length },
+        `Retrieved reviews from S3 getallreviews: ${JSON.stringify(reviews)}`
+      )
       // Apply skip and limit
       return reviews.slice(skip, skip + limit)
     } catch (error) {
