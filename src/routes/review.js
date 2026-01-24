@@ -642,7 +642,7 @@ export const reviewRoutes = {
                 const s3KeyParts = review.s3Key.split('/').filter(Boolean)
                 if (s3KeyParts.length >= 3) {
                   // Get the last part (filename with extension)
-                  let rawFileName = s3KeyParts[s3KeyParts.length - 1]
+                  const rawFileName = s3KeyParts[s3KeyParts.length - 1]
                   // Remove .txt extension if present
                   displayFileName = rawFileName.replace(/\.txt$/, '')
 
@@ -650,7 +650,7 @@ export const reviewRoutes = {
                     {
                       reviewId: derivedId,
                       s3Key: review.s3Key,
-                      rawFileName: rawFileName,
+                      rawFileName,
                       extractedFileName: displayFileName
                     },
                     'Extracted filename from s3Key (removed .txt extension)'

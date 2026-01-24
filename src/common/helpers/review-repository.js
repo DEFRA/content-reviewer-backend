@@ -7,7 +7,6 @@ import {
 } from '@aws-sdk/client-s3'
 import { config } from '../../config.js'
 import { createLogger } from './logging/logger.js'
-import { resultsStorage } from './results-storage.js'
 
 const logger = createLogger()
 
@@ -535,7 +534,7 @@ class ReviewRepositoryS3 {
       // Get more than needed to handle skip
       const fetchLimit = limit + skip
       const { reviews } = await this.getRecentReviews({ limit: fetchLimit })
-      request.logger.info(
+      logger.info(
         { count: reviews.length },
         `Retrieved reviews from S3 getallreviews: ${JSON.stringify(reviews)}`
       )
