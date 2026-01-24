@@ -346,6 +346,31 @@ class ReviewRepositoryS3 {
     review.id = preservedId
     review.sourceType = preservedSourceType
 
+    // CRITICAL: Ensure fileName and createdAt are never overwritten with null/undefined
+    if (!review.fileName && preservedFileName) {
+      review.fileName = preservedFileName
+      logger.warn(
+        { reviewId, preservedFileName },
+        'Restored fileName after merge - was overwritten'
+      )
+    }
+
+    if (!review.createdAt && preservedCreatedAt) {
+      review.createdAt = preservedCreatedAt
+      logger.warn(
+        { reviewId, preservedCreatedAt },
+        'Restored createdAt after merge - was overwritten'
+      )
+    }
+
+    if (!review.s3Key && preservedS3Key) {
+      review.s3Key = preservedS3Key
+      logger.warn(
+        { reviewId, preservedS3Key },
+        'Restored s3Key after merge - was overwritten'
+      )
+    }
+
     // Set processing timestamps based on status
     if (status === 'processing' && !review.processingStartedAt) {
       review.processingStartedAt = now
