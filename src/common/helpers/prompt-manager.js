@@ -191,11 +191,13 @@ List **all identified improvements** in order of priority (most critical first).
 4. **Current text** (the problematic excerpt)
 5. **Suggested improvement** (a specific, actionable fix)
 
-Apply severity CSS classes:
-- severity-critical (red)
-- severity-high (orange)
-- severity-medium (yellow)
-- severity-low (blue)
+Apply severity CSS classes based on priority:
+- severity-critical
+- severity-high
+- severity-medium
+- severity-low
+
+**Note:** All severity levels use the same visual styling to ensure accessibility for all users.
 
 **Important:**
 - Include ALL issues found, not just the top 5
