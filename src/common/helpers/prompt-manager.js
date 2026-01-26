@@ -191,11 +191,19 @@ List **all identified improvements** in order of priority (most critical first).
 4. **Current text** (the problematic excerpt)
 5. **Suggested improvement** (a specific, actionable fix)
 
-Apply severity CSS classes:
-- severity-critical (red)
-- severity-high (orange)
-- severity-medium (yellow)
-- severity-low (blue)
+Apply severity CSS classes based on priority:
+- severity-critical
+- severity-high
+- severity-medium
+- severity-low
+
+**Note:** All severity levels use the same visual styling to ensure accessibility for all users.
+
+**Important:**
+- Include ALL issues found, not just the top 5
+- Start with the most critical issues first
+- Each improvement should clearly state which category it belongs to
+- The category badge should be one of: "Plain English", "Clarity & Structure", "Accessibility", "GOV.UK Style Compliance", or "Content Completeness"
 
 **Important:**
 - Include ALL issues found, not just the top 5
