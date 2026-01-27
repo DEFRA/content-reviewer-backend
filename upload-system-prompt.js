@@ -1,10 +1,12 @@
 /**
- * Upload System Prompt to S3
- *
- * This script uploads the default GOV.UK system prompt to S3
- * The SQS worker will fetch it from S3 when processing reviews
+ * UNUSED FILE - COMMENTED OUT FOR TESTING
+ * Duplicate of upload-prompt.js - not referenced anywhere in codebase
+ * The active upload script is upload-prompt.js (referenced in upload-prompt.ps1)
+ * Safe to delete after testing period.
+ * Commented out on: 2024
  */
 
+/*
 import 'dotenv/config'
 import { promptManager } from './src/common/helpers/prompt-manager.js'
 import { createLogger } from './src/common/helpers/logging/logger.js'
@@ -35,3 +37,4 @@ async function uploadSystemPrompt() {
 }
 
 uploadSystemPrompt()
+*/

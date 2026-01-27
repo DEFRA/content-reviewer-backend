@@ -1,22 +1,29 @@
 import { health } from '../routes/health.js'
-import { example } from '../routes/example.js'
+// import { example } from '../routes/example.js' // UNUSED - MongoDB routes commented out
 import { uploadRoutes } from '../routes/upload.js'
 import { reviewRoutes } from '../routes/review.js'
 import { results } from '../routes/results.js'
 import { sqsWorkerStatus } from '../routes/sqs-worker-status.js'
-import { chatController, reviewController } from '../routes/chat.js'
+import { reviewController } from '../routes/chat.js'
+// import { chatController } from '../routes/chat.js' // UNUSED - legacy chat endpoint commented out
 
 const router = {
   plugin: {
     name: 'router',
     register: async (server, _options) => {
-      // Chat and review routes (legacy - kept for backward compatibility)
+      // Chat endpoint (COMMENTED OUT - NOT USED)
+      // This was a legacy endpoint that is no longer used by the frontend
+      // The frontend uses /api/review/text instead
+      // server.route([
+      //   {
+      //     method: 'POST',
+      //     path: '/api/chat',
+      //     ...chatController
+      //   }
+      // ])
+
+      // Review endpoint (ACTIVE - used by frontend)
       server.route([
-        {
-          method: 'POST',
-          path: '/api/chat',
-          ...chatController
-        },
         {
           method: 'POST',
           path: '/api/review',
@@ -25,7 +32,9 @@ const router = {
       ])
 
       // Other routes
-      server.route([health, sqsWorkerStatus].concat(example))
+      // Example routes COMMENTED OUT - require MongoDB which is disabled
+      // server.route([health, sqsWorkerStatus].concat(example))
+      server.route([health, sqsWorkerStatus])
       await server.register([uploadRoutes, reviewRoutes, results])
     }
   }
