@@ -1,8 +1,12 @@
 /**
- * Mock processor - simulates SQS worker when in MOCK mode
- * Processes files from temp-uploads and generates mock reviews
+ * UNUSED FILE - COMMENTED OUT FOR TESTING
+ * Mock processor intended to simulate SQS worker in MOCK mode
+ * No references found in codebase - not imported or used anywhere
+ * Safe to delete after testing period.
+ * Commented out on: 2024
  */
 
+/*
 import { promises as fs } from 'fs'
 import path from 'path'
 import { createLogger } from './logging/logger.js'
@@ -184,3 +188,4 @@ class MockProcessor {
 
 // Export singleton instance
 export const mockProcessor = new MockProcessor()
+*/

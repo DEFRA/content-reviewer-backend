@@ -1,3 +1,12 @@
+/**
+ * UNUSED FILE - COMMENTED OUT FOR TESTING
+ * Test file for mongo-lock.js (which is also unused)
+ * MongoDB is currently disabled (mongo.enabled = false in config)
+ * Safe to delete after testing period.
+ * Commented out on: 2024
+ */
+
+/*
 import { acquireLock, requireLock } from './mongo-lock.js'
 
 describe('Lock Functions', () => {
@@ -67,3 +76,4 @@ describe('Lock Functions', () => {
     })
   })
 })
+*/

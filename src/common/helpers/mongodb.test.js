@@ -1,3 +1,12 @@
+/**
+ * UNUSED FILE - COMMENTED OUT FOR TESTING
+ * Test file for mongodb.js
+ * MongoDB is currently disabled (mongo.enabled = false in config)
+ * Safe to delete after testing period.
+ * Commented out on: 2024
+ */
+
+/*
 import { Db, MongoClient } from 'mongodb'
 import { LockManager } from 'mongo-locks'
 import { config } from '../../config.js'
@@ -50,3 +59,4 @@ describe('#mongoDb', () => {
     })
   })
 })
+*/
