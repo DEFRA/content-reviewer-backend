@@ -4,7 +4,7 @@ import { uploadRoutes } from '../routes/upload.js'
 import { reviewRoutes } from '../routes/review.js'
 import { results } from '../routes/results.js'
 import { sqsWorkerStatus } from '../routes/sqs-worker-status.js'
-import { reviewController } from '../routes/chat.js'
+// import { reviewController } from '../routes/chat.js' // UNUSED - legacy synchronous review endpoint
 // import { chatController } from '../routes/chat.js' // UNUSED - legacy chat endpoint commented out
 
 const router = {
@@ -22,14 +22,16 @@ const router = {
       //   }
       // ])
 
-      // Review endpoint (ACTIVE - used by frontend)
-      server.route([
-        {
-          method: 'POST',
-          path: '/api/review',
-          ...reviewController
-        }
-      ])
+      // Review endpoint (COMMENTED OUT - LEGACY SYNCHRONOUS ENDPOINT)
+      // This is the old synchronous review endpoint from chat.js
+      // The frontend now uses /api/review/text (async) from review.js instead
+      // server.route([
+      //   {
+      //     method: 'POST',
+      //     path: '/api/review',
+      //     ...reviewController
+      //   }
+      // ])
 
       // Other routes
       // Example routes COMMENTED OUT - require MongoDB which is disabled
