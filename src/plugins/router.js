@@ -1,10 +1,11 @@
 import { health } from '../routes/health.js'
-import { example } from '../routes/example.js'
+// import { example } from '../routes/example.js' // UNUSED - MongoDB routes commented out
 import { uploadRoutes } from '../routes/upload.js'
 import { reviewRoutes } from '../routes/review.js'
 import { results } from '../routes/results.js'
 import { sqsWorkerStatus } from '../routes/sqs-worker-status.js'
-import { chatController, reviewController } from '../routes/chat.js'
+import { reviewController } from '../routes/chat.js'
+// import { chatController } from '../routes/chat.js' // UNUSED - legacy chat endpoint commented out
 
 const router = {
   plugin: {
