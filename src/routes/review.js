@@ -3,7 +3,6 @@ import { config } from '../config.js'
 import { reviewRepository } from '../common/helpers/review-repository.js'
 import { sqsClient } from '../common/helpers/sqs-client.js'
 import { s3Uploader } from '../common/helpers/s3-uploader.js'
-//import mime from 'mime-types'
 
 /**
  * Review routes - Async review processing
@@ -554,8 +553,6 @@ export const reviewRoutes = {
           }
         },
         handler: async (request, h) => {
-          const now = new Date().toISOString()
-
           request.logger.info(
             { query: request.query },
             '/api/reviews request received'
@@ -586,20 +583,9 @@ export const reviewRoutes = {
               'Retrieved total review count from S3'
             )
 
-            // Helper to derive reviewId from S3 key if missing (e.g. content-uploads/<reviewId>/TextContent.txt)
-            /*  const extractReviewIdFromKey = (s3Key) => {
-              if (!s3Key) return null
-              const parts = s3Key.split('/').filter(Boolean)
-              if (parts.length >= 2) {
-                console.log('S3 key derived', parts[parts.length - 2])
-                return parts[parts.length - 2]
-              }
-              return null
-            } */
-
             // Format reviews for response
             const formattedReviews = reviews.map((review) => {
-              const derivedId = review.id || review._id || review.jobId //extractReviewIdFromKey(review.s3Key)
+              const derivedId = review.id || review._id || review.jobId
 
               if (!derivedId) {
                 request.logger.warn(
@@ -634,75 +620,19 @@ export const reviewRoutes = {
                 )
               }
 
-              // Extract filename from s3Key if fileName is not set
-              let displayFileName = review.fileName
-              if (!displayFileName && review.s3Key) {
-                // Extract filename from s3Key path
-                // Example: "content-uploads/review_xxx/This_techn___.txt" -> "This_techn___"
-                const s3KeyParts = review.s3Key.split('/').filter(Boolean)
-                if (s3KeyParts.length >= 3) {
-                  // Get the last part (filename with extension)
-                  const rawFileName = s3KeyParts[s3KeyParts.length - 1]
-                  // Remove .txt extension if present
-                  displayFileName = rawFileName.replace(/\.txt$/, '')
-
-                  request.logger.info(
-                    {
-                      reviewId: derivedId,
-                      s3Key: review.s3Key,
-                      rawFileName,
-                      extractedFileName: displayFileName
-                    },
-                    'Extracted filename from s3Key (removed .txt extension)'
-                  )
-                } else {
-                  request.logger.warn(
-                    {
-                      reviewId: derivedId,
-                      s3Key: review.s3Key,
-                      s3KeyParts
-                    },
-                    'S3 key does not have expected structure (content-uploads/reviewId/filename.txt)'
-                  )
-                }
-              }
-
-              // Use createdAt with fallback to updatedAt or processingStartedAt
-              const timestamp =
-                review.createdAt ||
-                review.updatedAt ||
-                review.processingStartedAt ||
-                review.processingCompletedAt ||
-                review.uploadedAt ||
-                now
-              if (!timestamp) {
-                request.logger.warn(
-                  {
-                    reviewId: derivedId,
-                    createdAt: review.createdAt,
-                    updatedAt: review.updatedAt,
-                    processingStartedAt: review.processingStartedAt,
-                    processingCompletedAt: review.processingCompletedAt,
-                    uploadedAt: review.uploadedAt
-                  },
-                  `Review missing all timestamp fields: createdAt=${review.createdAt}, updatedAt=${review.updatedAt}, processingStartedAt=${review.processingStartedAt}, processingCompletedAt=${review.processingCompletedAt}, uploadedAt=${review.uploadedAt}`
-                )
-              }
-
               return {
                 id: derivedId,
                 reviewId: derivedId,
                 status: review.status,
                 sourceType: review.sourceType,
-                fileName: displayFileName,
-                filename: displayFileName, // For frontend compatibility (lowercase)
+                fileName: review.fileName,
+                filename: review.fileName, // For frontend compatibility (lowercase)
                 fileSize: review.fileSize,
-                createdAt: timestamp,
-                uploadedAt: timestamp, // For frontend compatibility
+                createdAt: review.createdAt,
+                uploadedAt: review.createdAt, // For frontend compatibility
                 updatedAt: review.updatedAt,
                 hasResult: !!review.result,
                 hasError: !!review.error,
-                errorMessage: review.error?.message || null,
                 processingTime:
                   review.processingCompletedAt && review.processingStartedAt
                     ? Math.round(
@@ -710,7 +640,7 @@ export const reviewRoutes = {
                           new Date(review.processingStartedAt).getTime()) /
                           1000
                       )
-                    : now
+                    : null
               }
             })
 
