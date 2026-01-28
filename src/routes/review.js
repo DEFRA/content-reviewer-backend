@@ -569,15 +569,15 @@ export const reviewRoutes = {
 
             const reviews = await reviewRepository.getAllReviews(limit, skip)
             request.logger.info(
-              { count: reviews.length },
-              `Retrieved reviews from S3: ${JSON.stringify(reviews)}`
+              {
+                count: reviews.length,
+                reviewIds: reviews.map((r) => r.id),
+                statuses: reviews.map((r) => r.status)
+              },
+              `Retrieved ${reviews.length} reviews from S3`
             )
 
             const totalCount = await reviewRepository.getReviewCount()
-            request.logger.info(
-              { totalCount },
-              'Retrieved total review count from S3'
-            )
             request.logger.info(
               { totalCount },
               'Retrieved total review count from S3'
