@@ -79,7 +79,14 @@ class ReviewRepositoryS3 {
     const now = new Date().toISOString()
 
     logger.info(
-      `creating review with data review repository: ${JSON.stringify(reviewData)}`
+      {
+        reviewId: reviewData.id,
+        sourceType: reviewData.sourceType,
+        fileName: reviewData.fileName,
+        fileSize: reviewData.fileSize,
+        hasS3Key: !!reviewData.s3Key
+      },
+      'Creating review in repository'
     )
 
     const review = {
@@ -535,8 +542,12 @@ class ReviewRepositoryS3 {
       const fetchLimit = limit + skip
       const { reviews } = await this.getRecentReviews({ limit: fetchLimit })
       logger.info(
-        { count: reviews.length },
-        `Retrieved reviews from S3 getallreviews: ${JSON.stringify(reviews)}`
+        {
+          count: reviews.length,
+          reviewIds: reviews.map((r) => r.id),
+          statuses: reviews.map((r) => r.status)
+        },
+        'Retrieved reviews from S3'
       )
       // Apply skip and limit
       return reviews.slice(skip, skip + limit)
@@ -614,7 +625,15 @@ class ReviewRepositoryS3 {
           const reviewId = review.id || review.reviewId
 
           if (!reviewId) {
-            logger.warn({ review }, 'Skipping review without ID')
+            logger.warn(
+              {
+                hasId: !!review.id,
+                hasReviewId: !!review.reviewId,
+                status: review.status,
+                createdAt: review.createdAt
+              },
+              'Skipping review without ID'
+            )
             continue
           }
 
