@@ -356,10 +356,6 @@ class SQSWorker {
         }
         const buffer = Buffer.concat(chunks)
 
-        /*const buffer = await streamToString(s3Response.Body)
-        const textContent = JSON.parse(buffer)
-        console.log(textContent)*/
-
         textContent = buffer.toString('utf-8')
 
         const s3EndTime = performance.now()
@@ -482,8 +478,6 @@ class SQSWorker {
       )
       logger.info(`Bedrock AI response: ${bedrockResponse.content}`)
       logger.info({ reviewId }, 'Review saved to database')
-      //console.log('System Prompt:', systemPrompt)
-      //console.log('Bedrock AI response:', bedrockResponse.content)
 
       const processingEndTime = performance.now()
       const totalProcessingDuration = Math.round(
