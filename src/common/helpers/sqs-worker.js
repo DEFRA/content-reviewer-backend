@@ -361,12 +361,12 @@ class SQSWorker {
         const s3EndTime = performance.now()
         const s3Duration = Math.round(s3EndTime - s3StartTime)
 
-        logger.info({ textContent }, 'Print text content retrieved from S3')
-
         logger.info(
           {
             reviewId,
-            contentLength: textContent.length,
+            textContent,
+            textLength: textContent.length,
+            wordCount: textExtractor.countWords(textContent),
             durationMs: s3Duration
           },
           `Text content retrieved from S3 in ${s3Duration}ms`
@@ -388,8 +388,13 @@ class SQSWorker {
       )
 
       logger.info(
-        { userPrompt },
-        `Print User prompt for Bedrock AI review: ${userPrompt}`
+        {
+          reviewId,
+          userPrompt,
+          promptLength: userPrompt.length,
+          textContentLength: textContent.length
+        },
+        'User prompt prepared for Bedrock AI review'
       )
 
       // Load system prompt from S3
@@ -410,8 +415,13 @@ class SQSWorker {
       )
 
       logger.info(
-        { systemPrompt },
-        `Print System prompt loaded from S3: ${systemPrompt}`
+        {
+          reviewId,
+          systemPrompt,
+          promptLength: systemPrompt.length,
+          durationMs: promptLoadDuration
+        },
+        'System prompt loaded from S3'
       )
 
       // Send to Bedrock with system prompt
@@ -476,7 +486,19 @@ class SQSWorker {
         },
         bedrockResponse.usage
       )
-      logger.info(`Bedrock AI response: ${bedrockResponse.content}`)
+
+      logger.info(
+        {
+          reviewId,
+          bedrockResponse: bedrockResponse.content,
+          responseLength: bedrockResponse.content.length,
+          inputTokens: bedrockResponse.usage?.inputTokens,
+          outputTokens: bedrockResponse.usage?.outputTokens,
+          stopReason: bedrockResponse.stopReason
+        },
+        'Bedrock AI response received'
+      )
+
       logger.info({ reviewId }, 'Review saved to database')
 
       const processingEndTime = performance.now()
