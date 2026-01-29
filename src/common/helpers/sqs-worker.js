@@ -477,8 +477,6 @@ class SQSWorker {
         bedrockResponse.usage
       )
 
-      // Log with preview in message for visibility in OpenSearch
-      const responsePreview = bedrockResponse.content.substring(0, 500)
       logger.info(
         {
           reviewId,
@@ -487,7 +485,7 @@ class SQSWorker {
           outputTokens: bedrockResponse.usage?.outputTokens,
           stopReason: bedrockResponse.stopReason
         },
-        `Bedrock AI response received | ReviewId: ${reviewId} | Length: ${bedrockResponse.content.length} chars | Tokens: ${bedrockResponse.usage?.inputTokens}→${bedrockResponse.usage?.outputTokens} | StopReason: ${bedrockResponse.stopReason} | Preview: ${responsePreview}...`
+        `Bedrock AI response received | ReviewId: ${reviewId} | Length: ${bedrockResponse.content.length} chars | Tokens: ${bedrockResponse.usage?.inputTokens}→${bedrockResponse.usage?.outputTokens} | StopReason: ${bedrockResponse.stopReason} | Full Response:\n\n${bedrockResponse.content}`
       )
 
       logger.info({ reviewId }, 'Review saved to database')
