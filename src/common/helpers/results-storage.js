@@ -14,21 +14,18 @@ const logger = createLogger()
  */
 export class ResultsStorage {
   constructor() {
-    // Check if we should use mock mode
-    const awsEndpoint = config.get('aws.endpoint')
-    this.mockMode =
-      process.env.MOCK_S3_UPLOAD === 'true' ||
-      (!awsEndpoint && process.env.NODE_ENV === 'development')
+    this.mockMode = config.get('mockMode.s3Upload')
 
     if (this.mockMode) {
       logger.info('ResultsStorage running in MOCK mode')
       this.s3Client = null
-      this.mockResults = new Map() // In-memory storage for mock mode
+      this.mockResults = new Map()
     } else {
       const s3Config = {
         region: config.get('aws.region')
       }
 
+      const awsEndpoint = config.get('aws.endpoint')
       if (awsEndpoint) {
         s3Config.endpoint = awsEndpoint
         s3Config.forcePathStyle = true

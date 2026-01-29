@@ -301,6 +301,20 @@ const config = convict({
       default: 0.7,
       env: 'BEDROCK_TEMPERATURE'
     }
+  },
+  mockMode: {
+    s3Upload: {
+      doc: 'Mock S3 uploads for local dev without AWS',
+      format: Boolean,
+      default: false,
+      env: 'MOCK_S3_UPLOAD'
+    },
+    skipSqsWorker: {
+      doc: 'Skip starting SQS worker',
+      format: Boolean,
+      default: false,
+      env: 'SKIP_SQS_WORKER'
+    }
   }
 })
 

@@ -33,13 +33,8 @@ class ReviewRepositoryS3 {
 
     this.s3Client = new S3Client(s3Config)
 
-    // Use the provided S3 bucket, with fallback to config
-    this.bucket =
-      process.env.S3_BUCKET ||
-      process.env.UPLOAD_S3_BUCKET ||
-      config.get('s3.bucket') ||
-      'dev-service-optimisation-c63f2'
-    this.prefix = 'reviews/' // Store reviews in a subfolder
+    this.bucket = config.get('s3.bucket')
+    this.prefix = 'reviews/'
 
     logger.info(
       {
