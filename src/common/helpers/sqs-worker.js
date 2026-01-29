@@ -477,6 +477,8 @@ class SQSWorker {
         bedrockResponse.usage
       )
 
+      // Log with preview in message for visibility in OpenSearch
+      const responsePreview = bedrockResponse.content.substring(0, 500)
       logger.info(
         {
           reviewId,
