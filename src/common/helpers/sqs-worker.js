@@ -414,16 +414,6 @@ class SQSWorker {
         `System prompt loaded from S3 in ${promptLoadDuration}ms`
       )
 
-      logger.info(
-        {
-          reviewId,
-          systemPrompt,
-          promptLength: systemPrompt.length,
-          durationMs: promptLoadDuration
-        },
-        'System prompt loaded from S3'
-      )
-
       // Send to Bedrock with system prompt
       const bedrockStartTime = performance.now()
 
@@ -487,16 +477,17 @@ class SQSWorker {
         bedrockResponse.usage
       )
 
+      // Log with preview in message for visibility in OpenSearch
+      const responsePreview = bedrockResponse.content.substring(0, 500)
       logger.info(
         {
           reviewId,
-          bedrockResponse: bedrockResponse.content,
           responseLength: bedrockResponse.content.length,
           inputTokens: bedrockResponse.usage?.inputTokens,
           outputTokens: bedrockResponse.usage?.outputTokens,
           stopReason: bedrockResponse.stopReason
         },
-        'Bedrock AI response received'
+        `Bedrock AI response received | ReviewId: ${reviewId} | Length: ${bedrockResponse.content.length} chars | Tokens: ${bedrockResponse.usage?.inputTokens}→${bedrockResponse.usage?.outputTokens} | StopReason: ${bedrockResponse.stopReason} | Preview: ${responsePreview}...`
       )
 
       logger.info({ reviewId }, 'Review saved to database')
