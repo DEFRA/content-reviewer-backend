@@ -75,7 +75,6 @@ export const uploadRoutes = {
           try {
             const data = request.payload
 
-            // Log payload for debugging
             request.logger.info(
               {
                 payloadKeys: data ? Object.keys(data) : 'null',
