@@ -594,7 +594,6 @@ export const reviewRoutes = {
                 )
               }
 
-              // Log fileName to debug the "Text Content" issue
               if (!review.fileName || review.fileName === 'Text Content') {
                 request.logger.warn(
                   {
@@ -607,7 +606,6 @@ export const reviewRoutes = {
                 )
               }
 
-              // Log timestamp fields to debug N/A issue
               if (!review.createdAt) {
                 request.logger.warn(
                   {

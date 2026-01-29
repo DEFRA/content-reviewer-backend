@@ -35,19 +35,6 @@ class SQSWorker {
     this.waitTimeSeconds = config.get('sqs.waitTimeSeconds')
     this.visibilityTimeout = config.get('sqs.visibilityTimeout')
 
-    /*
-     * Convert a readable stream to a string
-     * @param {ReadableStream} stream - The stream to convert
-     * @returns {Promise<string>} The stream content as a string
-     */
-    /*async function streamToString(stream) {
-      const chunks = []
-      for await (const chunk of stream) {
-        chunks.push(chunk)
-      }
-      return Buffer.concat(chunks).toString('utf-8')
-    }*/
-
     // Initialize S3 client for downloading files
     const s3Config = {
       region: config.get('aws.region')
@@ -187,8 +174,6 @@ class SQSWorker {
         'Processing SQS message started'
       )
 
-      // TODO: This is where your colleague will integrate the AI review logic
-      // For now, we'll just log the message and simulate processing
       await this.processContentReview(body)
 
       // Delete message from queue after successful processing
@@ -226,7 +211,7 @@ class SQSWorker {
   }
 
   /**
-   * Process content review (placeholder for AI integration)
+   * Process content review with Bedrock AI
    * @param {Object} messageBody - Message body from SQS
    */
   async processContentReview(messageBody) {

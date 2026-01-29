@@ -114,7 +114,7 @@ class ReviewRepositoryS3 {
         s3Key: review.s3Key,
         sourceType: review.sourceType
       },
-      'Creating review with fileName and createdAt - BEFORE saveReview'
+      'Creating review'
     )
 
     await this.saveReview(review)
@@ -142,7 +142,6 @@ class ReviewRepositoryS3 {
   async saveReview(review) {
     const key = this.getReviewKey(review.id)
 
-    // Log the review object being saved to verify fileName and createdAt are present
     logger.info(
       {
         reviewId: review.id,
@@ -152,7 +151,7 @@ class ReviewRepositoryS3 {
         hasResult: !!review.result,
         s3Key: review.s3Key
       },
-      'Saving review to S3 with fileName and createdAt'
+      'Saving review to S3'
     )
 
     const command = new PutObjectCommand({
@@ -296,7 +295,7 @@ class ReviewRepositoryS3 {
         fileNameBefore: review.fileName,
         createdAtBefore: review.createdAt
       },
-      'Updating review status - BEFORE update'
+      'Updating review status'
     )
 
     const now = new Date().toISOString()
@@ -352,12 +351,12 @@ class ReviewRepositoryS3 {
     review.id = preservedId
     review.sourceType = preservedSourceType
 
-    // CRITICAL: Ensure fileName and createdAt are never overwritten with null/undefined
+    // Ensure critical fields are never overwritten with null/undefined
     if (!review.fileName && preservedFileName) {
       review.fileName = preservedFileName
       logger.warn(
         { reviewId, preservedFileName },
-        'Restored fileName after merge - was overwritten'
+        'Restored fileName after merge'
       )
     }
 
@@ -365,16 +364,13 @@ class ReviewRepositoryS3 {
       review.createdAt = preservedCreatedAt
       logger.warn(
         { reviewId, preservedCreatedAt },
-        'Restored createdAt after merge - was overwritten'
+        'Restored createdAt after merge'
       )
     }
 
     if (!review.s3Key && preservedS3Key) {
       review.s3Key = preservedS3Key
-      logger.warn(
-        { reviewId, preservedS3Key },
-        'Restored s3Key after merge - was overwritten'
-      )
+      logger.warn({ reviewId, preservedS3Key }, 'Restored s3Key after merge')
     }
 
     // Set processing timestamps based on status
@@ -395,7 +391,7 @@ class ReviewRepositoryS3 {
         createdAtAfter: review.createdAt,
         updatedAt: review.updatedAt
       },
-      'Updating review status - AFTER update, BEFORE save'
+      'Updating review status'
     )
 
     await this.saveReview(review)
