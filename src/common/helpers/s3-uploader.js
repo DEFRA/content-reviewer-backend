@@ -9,12 +9,7 @@ const logger = createLogger()
  */
 class S3Uploader {
   constructor() {
-    // Check if we should use mock mode (when LocalStack/AWS is not available)
-    // Default to mock mode in development if no AWS endpoint is configured
-    const awsEndpoint = config.get('aws.endpoint')
-    this.mockMode =
-      process.env.MOCK_S3_UPLOAD === 'true' ||
-      (!awsEndpoint && process.env.NODE_ENV === 'development')
+    this.mockMode = config.get('mockMode.s3Upload')
 
     if (this.mockMode) {
       logger.info(
