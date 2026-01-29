@@ -390,11 +390,10 @@ class SQSWorker {
       logger.info(
         {
           reviewId,
-          userPrompt,
           promptLength: userPrompt.length,
           textContentLength: textContent.length
         },
-        'User prompt prepared for Bedrock AI review'
+        `User prompt prepared for Bedrock AI review | ReviewId: ${reviewId} | Length: ${userPrompt.length} chars | Full Prompt:\n\n${userPrompt}`
       )
 
       // Load system prompt from S3
@@ -411,7 +410,7 @@ class SQSWorker {
           systemPromptLength: systemPrompt.length,
           durationMs: promptLoadDuration
         },
-        `System prompt loaded from S3 in ${promptLoadDuration}ms`
+        `System prompt loaded from S3 in ${promptLoadDuration}ms | ReviewId: ${reviewId} | Length: ${systemPrompt.length} chars | Full Prompt:\n\n${systemPrompt}`
       )
 
       // Send to Bedrock with system prompt
