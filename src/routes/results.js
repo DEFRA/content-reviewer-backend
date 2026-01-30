@@ -1,4 +1,3 @@
-import { resultsStorage } from '../common/helpers/results-storage.js'
 import { reviewRepository } from '../common/helpers/review-repository.js'
 import { createLogger } from '../common/helpers/logging/logger.js'
 import { config } from '../config.js'
@@ -35,12 +34,10 @@ export const results = {
 
             logger.info({ jobId }, 'Fetching review result')
 
-            // Get result from storage
-            const result = await resultsStorage.getResult(jobId)
+            const review = await reviewRepository.getReview(jobId)
 
-            if (!result) {
-              // Result not found - job may still be processing
-              logger.info({ jobId }, 'Result not found - job may be processing')
+            if (!review) {
+              logger.info({ jobId }, 'Review not found - job may be processing')
               return h.response({
                 success: true,
                 data: {
@@ -53,41 +50,26 @@ export const results = {
               })
             }
 
-            // Attempt to enrich with original review metadata (filename, createdAt)
-            let filename
-            let createdAt
-            let s3ResultLocation
-            let metadata
-            try {
-              const review = await reviewRepository.getReview(jobId)
-              if (review) {
-                filename = review.fileName
-                createdAt = review.createdAt
-                if (review.s3Key) {
-                  s3ResultLocation = `${config.get('s3.bucket')}/${review.s3Key}`
-                  metadata = {
-                    bucket: config.get('s3.bucket'),
-                    s3Key: review.s3Key
-                  }
+            const s3ResultLocation = review.s3Key
+              ? `${config.get('s3.bucket')}/${review.s3Key}`
+              : null
+
+            const metadata = review.s3Key
+              ? {
+                  bucket: config.get('s3.bucket'),
+                  s3Key: review.s3Key
                 }
-              }
-            } catch (e) {
-              logger.debug(
-                { jobId, error: e.message },
-                'Could not enrich result with review metadata'
-              )
-            }
+              : null
 
             logger.info(
               {
                 jobId,
-                status: result.status,
-                result: result.result,
-                hasResult: !!result.result,
-                filename,
-                createdAt
+                status: review.status,
+                hasResult: !!review.result,
+                filename: review.fileName,
+                createdAt: review.createdAt
               },
-              'Result retrieved successfully from S3 storage - backend code'
+              'Result retrieved successfully from review repository'
             )
 
             return h.response({
@@ -95,14 +77,19 @@ export const results = {
               data: {
                 id: jobId,
                 jobId,
-                status: result.status,
-                result: result.result || result,
-                completedAt: result.completedAt,
-                failedAt: result.failedAt,
-                filename,
-                createdAt,
+                status: review.status,
+                result: review.result,
+                originalText: review.result?.originalText || null,
+                issues: review.result?.issues || [],
+                summary: review.result?.summary || null,
+                metrics: review.result?.metrics || null,
+                completedAt: review.processingCompletedAt,
+                failedAt: review.status === 'failed' ? review.updatedAt : null,
+                filename: review.fileName,
+                createdAt: review.createdAt,
                 s3ResultLocation,
-                metadata
+                metadata,
+                error: review.error
               }
             })
           } catch (error) {
@@ -148,13 +135,14 @@ export const results = {
 
             logger.debug({ jobId }, 'Checking result status')
 
-            const hasResult = await resultsStorage.hasResult(jobId)
+            const review = await reviewRepository.getReview(jobId)
+            const hasResult = review && review.status === 'completed'
 
             return h.response({
               success: true,
               jobId,
               ready: hasResult,
-              status: hasResult ? 'completed' : 'processing'
+              status: review ? review.status : 'processing'
             })
           } catch (error) {
             logger.error(
