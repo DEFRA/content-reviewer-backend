@@ -298,8 +298,14 @@ const config = convict({
     temperature: {
       doc: 'AI temperature (0.0-1.0, lower is more focused)',
       format: Number,
-      default: 0.7,
+      default: 0.2,
       env: 'BEDROCK_TEMPERATURE'
+    },
+    topP: {
+      doc: 'Top-P nucleus sampling (0.0-1.0, lower is more deterministic)',
+      format: Number,
+      default: 0.9,
+      env: 'BEDROCK_TOP_P'
     }
   },
   mockMode: {

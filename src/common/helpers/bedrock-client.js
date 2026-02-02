@@ -31,6 +31,7 @@ class BedrockClient {
     this.region = config.get('bedrock.region')
     this.maxTokens = config.get('bedrock.maxTokens')
     this.temperature = config.get('bedrock.temperature')
+    this.topP = config.get('bedrock.topP')
     this.timeout = 180000 // 180 seconds timeout for Bedrock API calls
 
     this.client = new BedrockRuntimeClient({
@@ -84,7 +85,8 @@ class BedrockClient {
       // Build inference configuration
       const inferenceConfig = {
         maxTokens: this.maxTokens,
-        temperature: this.temperature
+        temperature: this.temperature,
+        topP: this.topP
       }
 
       // Create the Converse command
