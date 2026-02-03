@@ -475,7 +475,10 @@ class ReviewRepositoryS3 {
             })
             const reviewResponse = await this.s3Client.send(getCommand)
             const body = await reviewResponse.Body.transformToString()
-            return JSON.parse(body)
+            const review = JSON.parse(body)
+            // Add S3 LastModified to the review object for accurate sorting/display
+            review.lastModified = obj.LastModified?.toISOString()
+            return review
           } catch (error) {
             logger.warn(
               { key: obj.Key, error: error.message },
@@ -489,10 +492,15 @@ class ReviewRepositoryS3 {
         (r) => r !== null
       )
 
-      // Sort reviews by createdAt or updatedAt (most recent first)
+      // Sort reviews by lastModified (S3 LastModified) for most accurate ordering
+      // This ensures reviews are sorted by their actual modification time in S3
       reviews.sort((a, b) => {
-        const aTime = new Date(a.updatedAt || a.createdAt).getTime()
-        const bTime = new Date(b.updatedAt || b.createdAt).getTime()
+        const aTime = new Date(
+          a.lastModified || a.updatedAt || a.createdAt
+        ).getTime()
+        const bTime = new Date(
+          b.lastModified || b.updatedAt || b.createdAt
+        ).getTime()
         return bTime - aTime // Most recent first
       })
 
