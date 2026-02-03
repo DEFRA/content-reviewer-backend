@@ -428,12 +428,42 @@ class ReviewRepositoryS3 {
     const errorMessage = typeof error === 'string' ? error : error.message
     const errorStack = typeof error === 'string' ? null : error.stack
 
-    await this.updateReviewStatus(reviewId, 'failed', {
-      error: {
-        message: errorMessage,
-        stack: errorStack
-      }
-    })
+    logger.info(
+      {
+        reviewId,
+        errorMessage,
+        hasStack: !!errorStack
+      },
+      'Saving review error to S3'
+    )
+
+    try {
+      await this.updateReviewStatus(reviewId, 'failed', {
+        error: {
+          message: errorMessage,
+          stack: errorStack
+        }
+      })
+
+      logger.info(
+        {
+          reviewId,
+          errorMessage
+        },
+        'Review error saved successfully to S3'
+      )
+    } catch (updateError) {
+      logger.error(
+        {
+          reviewId,
+          errorMessage,
+          updateError: updateError.message,
+          updateErrorStack: updateError.stack
+        },
+        'Failed to update review status to failed in S3'
+      )
+      throw updateError
+    }
   }
 
   /**

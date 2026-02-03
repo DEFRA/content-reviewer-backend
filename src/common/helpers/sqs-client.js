@@ -10,7 +10,7 @@ const logger = createLogger()
 class SQSClientHelper {
   constructor() {
     const sqsConfig = {
-      region: config.get('sqs.region')
+      region: config.get('aws.region')
     }
 
     // Add endpoint for LocalStack if configured
