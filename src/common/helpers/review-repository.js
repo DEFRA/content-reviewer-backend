@@ -475,10 +475,14 @@ class ReviewRepositoryS3 {
    */
   async getRecentReviews({ limit = 20, continuationToken = null } = {}) {
     try {
+      // Fetch enough objects to ensure we can properly sort and limit
+      // System maintains max 100 reviews, so always fetch all 100 to ensure accurate sorting
+      const fetchLimit = 100
+
       const listCommand = new ListObjectsV2Command({
         Bucket: this.bucket,
         Prefix: this.prefix,
-        MaxKeys: Math.max(limit, 20), // Ensure we fetch at least the requested limit
+        MaxKeys: fetchLimit,
         ContinuationToken: continuationToken || undefined
       })
 
@@ -492,31 +496,34 @@ class ReviewRepositoryS3 {
         }
       }
 
-      // Fetch the actual review data for each object
-      const reviewPromises = response.Contents.sort(
+      // First, sort ALL S3 objects by LastModified (most recent first)
+      // This ensures we process the most recent files
+      const sortedContents = response.Contents.sort(
         (a, b) => b.LastModified - a.LastModified
-      ) // Most recent first
-        .slice(0, limit)
-        .map(async (obj) => {
-          try {
-            const getCommand = new GetObjectCommand({
-              Bucket: this.bucket,
-              Key: obj.Key
-            })
-            const reviewResponse = await this.s3Client.send(getCommand)
-            const body = await reviewResponse.Body.transformToString()
-            const review = JSON.parse(body)
-            // Add S3 LastModified to the review object for accurate sorting/display
-            review.lastModified = obj.LastModified?.toISOString()
-            return review
-          } catch (error) {
-            logger.warn(
-              { key: obj.Key, error: error.message },
-              'Failed to load review'
-            )
-            return null
-          }
-        })
+      )
+
+      // Fetch the actual review data for the most recent objects
+      // Now we take the limit AFTER sorting, ensuring we get the truly most recent
+      const reviewPromises = sortedContents.slice(0, limit).map(async (obj) => {
+        try {
+          const getCommand = new GetObjectCommand({
+            Bucket: this.bucket,
+            Key: obj.Key
+          })
+          const reviewResponse = await this.s3Client.send(getCommand)
+          const body = await reviewResponse.Body.transformToString()
+          const review = JSON.parse(body)
+          // Add S3 LastModified to the review object for accurate sorting/display
+          review.lastModified = obj.LastModified?.toISOString()
+          return review
+        } catch (error) {
+          logger.warn(
+            { key: obj.Key, error: error.message },
+            'Failed to load review'
+          )
+          return null
+        }
+      })
 
       const reviews = (await Promise.all(reviewPromises)).filter(
         (r) => r !== null
@@ -533,6 +540,15 @@ class ReviewRepositoryS3 {
         ).getTime()
         return bTime - aTime // Most recent first
       })
+
+      logger.info(
+        {
+          fetchedCount: response.Contents.length,
+          requestedLimit: limit,
+          returnedCount: reviews.length
+        },
+        'Retrieved and sorted reviews from S3'
+      )
 
       return {
         reviews,
@@ -623,8 +639,8 @@ class ReviewRepositoryS3 {
     try {
       logger.info({ maxReviews }, 'Checking if review cleanup is needed')
 
-      // Get all reviews sorted by most recent first
-      const { reviews } = await this.getRecentReviews({ limit: 1000 })
+      // Get all reviews sorted by most recent first (max 100 reviews in system)
+      const { reviews } = await this.getRecentReviews({ limit: 100 })
 
       if (reviews.length <= maxReviews) {
         logger.info(
