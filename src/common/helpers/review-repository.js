@@ -269,6 +269,44 @@ class ReviewRepositoryS3 {
   }
 
   /**
+   * Update review metadata (PII report, tags, etc.)
+   * @param {string} reviewId - Review ID
+   * @param {Object} metadata - Metadata to add/update
+   * @returns {Promise<void>}
+   */
+  async updateReviewMetadata(reviewId, metadata) {
+    const review = await this.getReview(reviewId)
+
+    if (!review) {
+      throw new Error(`Review not found: ${reviewId}`)
+    }
+
+    logger.info(
+      {
+        reviewId,
+        metadataKeys: Object.keys(metadata)
+      },
+      'Updating review metadata'
+    )
+
+    // Initialize metadata object if it doesn't exist
+    if (!review.metadata) {
+      review.metadata = {}
+    }
+
+    // Merge metadata
+    review.metadata = {
+      ...review.metadata,
+      ...metadata
+    }
+
+    review.updatedAt = new Date().toISOString()
+
+    await this.saveReview(review)
+    logger.info({ reviewId }, 'Review metadata updated in S3')
+  }
+
+  /**
    * Update review status
    * @param {string} reviewId - Review ID
    * @param {string} status - New status
