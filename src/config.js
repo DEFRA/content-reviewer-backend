@@ -229,7 +229,7 @@ const config = convict({
     maxMessages: {
       doc: 'Maximum number of messages to receive at once',
       format: Number,
-      default: 10,
+      default: 20,
       env: 'SQS_MAX_MESSAGES'
     },
     waitTimeSeconds: {
@@ -247,7 +247,7 @@ const config = convict({
     maxConcurrentRequests: {
       doc: 'Maximum concurrent Bedrock API requests (to prevent rate limiting). Set to 2-3 for dev, 5-10 for prod.',
       format: Number,
-      default: 3,
+      default: 10,
       env: 'SQS_MAX_CONCURRENT_REQUESTS'
     }
   },
