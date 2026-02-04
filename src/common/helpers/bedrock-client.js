@@ -28,7 +28,7 @@ class BedrockClient {
     this.inferenceProfileArn = config.get('bedrock.inferenceProfileArn')
     this.guardrailArn = config.get('bedrock.guardrailArn')
     this.guardrailVersion = config.get('bedrock.guardrailVersion')
-    this.region = config.get('bedrock.region')
+    this.region = config.get('aws.region')
     this.maxTokens = config.get('bedrock.maxTokens')
     this.temperature = config.get('bedrock.temperature')
     this.topP = config.get('bedrock.topP')
@@ -205,7 +205,7 @@ class BedrockClient {
 
       if (error.name === 'ThrottlingException') {
         throw new Error(
-          'Bedrock API rate limit exceeded. Please try again later.'
+          'Bedrock API token quota exceeded (too many tokens per minute). Please try again later.'
         )
       }
 

@@ -35,6 +35,11 @@ class SQSWorker {
     this.waitTimeSeconds = config.get('sqs.waitTimeSeconds')
     this.visibilityTimeout = config.get('sqs.visibilityTimeout')
 
+    // Concurrency control to prevent rate limiting
+    this.maxConcurrentRequests = config.get('sqs.maxConcurrentRequests')
+    this.currentConcurrentRequests = 0
+    this.processingQueue = []
+
     // Initialize S3 client for downloading files
     const s3Config = {
       region: config.get('aws.region')
@@ -46,7 +51,11 @@ class SQSWorker {
     this.s3Client = new S3Client(s3Config)
 
     logger.info(
-      'SQS Worker initialized - system prompt will be loaded from S3 on demand'
+      {
+        maxConcurrentRequests: this.maxConcurrentRequests,
+        maxMessages: this.maxMessages
+      },
+      'SQS Worker initialized with concurrency control - system prompt will be loaded from S3 on demand'
     )
   }
 
@@ -89,10 +98,13 @@ class SQSWorker {
     return {
       running: this.isRunning,
       queueUrl: this.queueUrl,
-      region: config.get('sqs.region'),
+      region: config.get('aws.region'),
       maxMessages: this.maxMessages,
       waitTimeSeconds: this.waitTimeSeconds,
-      visibilityTimeout: this.visibilityTimeout
+      visibilityTimeout: this.visibilityTimeout,
+      maxConcurrentRequests: this.maxConcurrentRequests,
+      currentConcurrentRequests: this.currentConcurrentRequests,
+      queuedMessages: this.processingQueue.length
     }
   }
 
@@ -102,19 +114,36 @@ class SQSWorker {
   async poll() {
     while (this.isRunning) {
       try {
-        const messages = await this.receiveMessages()
+        // Only fetch new messages if we have capacity
+        const availableSlots =
+          this.maxConcurrentRequests - this.currentConcurrentRequests
 
-        if (messages && messages.length > 0) {
-          logger.info(
-            { messageCount: messages.length },
-            'Received messages from SQS'
-          )
+        if (availableSlots > 0) {
+          const messages = await this.receiveMessages()
 
-          // Process messages in parallel
-          await Promise.all(
-            messages.map((message) => this.processMessage(message))
-          )
+          if (messages && messages.length > 0) {
+            logger.info(
+              {
+                messageCount: messages.length,
+                currentConcurrent: this.currentConcurrentRequests,
+                maxConcurrent: this.maxConcurrentRequests,
+                availableSlots
+              },
+              'Received messages from SQS'
+            )
+
+            // Add messages to processing queue and start processing
+            for (const message of messages) {
+              this.enqueueMessage(message)
+            }
+          }
         }
+
+        // Process messages from queue with concurrency control
+        await this.processQueuedMessages()
+
+        // Short sleep between poll cycles
+        await this.sleep(100)
       } catch (error) {
         logger.error(
           { error: error.message, stack: error.stack },
@@ -123,6 +152,70 @@ class SQSWorker {
         // Wait before retrying
         await this.sleep(5000)
       }
+    }
+  }
+
+  /**
+   * Add a message to the processing queue
+   * @param {Object} message - SQS message
+   */
+  enqueueMessage(message) {
+    this.processingQueue.push(message)
+    logger.debug(
+      {
+        messageId: message.MessageId,
+        queueLength: this.processingQueue.length
+      },
+      'Message added to processing queue'
+    )
+  }
+
+  /**
+   * Process messages from the queue with concurrency control
+   */
+  async processQueuedMessages() {
+    while (
+      this.processingQueue.length > 0 &&
+      this.currentConcurrentRequests < this.maxConcurrentRequests
+    ) {
+      const message = this.processingQueue.shift()
+      this.currentConcurrentRequests++
+
+      logger.info(
+        {
+          messageId: message.MessageId,
+          currentConcurrent: this.currentConcurrentRequests,
+          maxConcurrent: this.maxConcurrentRequests,
+          queueLength: this.processingQueue.length
+        },
+        'Starting message processing'
+      )
+
+      // Process message asynchronously (don't await)
+      this.processMessage(message)
+        .then(() => {
+          this.currentConcurrentRequests--
+          logger.debug(
+            {
+              messageId: message.MessageId,
+              currentConcurrent: this.currentConcurrentRequests,
+              queueLength: this.processingQueue.length
+            },
+            'Message processing completed, slot freed'
+          )
+        })
+        .catch((error) => {
+          this.currentConcurrentRequests--
+          logger.error(
+            {
+              messageId: message.MessageId,
+              error: error.message,
+              currentConcurrent: this.currentConcurrentRequests,
+              queueLength: this.processingQueue.length
+            },
+            'Message processing failed, slot freed'
+          )
+        })
     }
   }
 
@@ -503,14 +596,17 @@ class SQSWorker {
         {
           reviewId,
           error: error.message,
+          errorName: error.name,
           stack: error.stack,
           totalDurationMs: totalProcessingDuration
         },
         `Review processing failed after ${totalProcessingDuration}ms`
       )
 
-      // Detect timeout errors and provide user-friendly message
+      // Convert errors to user-friendly messages for UI display
       let errorMessage = error.message
+
+      // Timeout errors
       if (
         error.message.includes('timed out') ||
         error.message.includes('timeout') ||
@@ -519,9 +615,58 @@ class SQSWorker {
       ) {
         errorMessage = 'TIMEOUT'
       }
+      // Bedrock throttling/rate limit errors - be specific about token quota
+      else if (
+        error.message.includes('token quota') ||
+        error.message.includes('tokens per minute')
+      ) {
+        errorMessage = 'Token Quota Exceeded'
+      } else if (error.message.includes('rate limit')) {
+        errorMessage = 'Rate Limit Exceeded'
+      }
+      // Other Bedrock service errors - make them concise for UI
+      else if (error.message.includes('temporarily unavailable')) {
+        errorMessage = 'Service Temporarily Unavailable'
+      } else if (error.message.includes('Access denied')) {
+        errorMessage = 'Access Denied'
+      } else if (error.message.includes('not found')) {
+        errorMessage = 'Resource Not Found'
+      } else if (error.message.includes('credentials')) {
+        errorMessage = 'Authentication Error'
+      } else if (error.message.includes('validation error')) {
+        errorMessage = 'Invalid Request'
+      } else if (error.message.includes('Bedrock')) {
+        // Generic Bedrock errors - extract just the meaningful part
+        errorMessage = error.message
+          .replace('Bedrock API error: ', '')
+          .substring(0, 100)
+      } else if (error.message.length > 100) {
+        // Truncate very long error messages for UI display
+        errorMessage = error.message.substring(0, 97) + '...'
+      }
 
       // Save error to database with user-friendly message
-      await reviewRepository.saveReviewError(reviewId, errorMessage)
+      try {
+        await reviewRepository.saveReviewError(reviewId, errorMessage)
+        logger.info(
+          {
+            reviewId,
+            errorMessage,
+            originalError: error.message
+          },
+          'Review error saved to database'
+        )
+      } catch (saveError) {
+        logger.error(
+          {
+            reviewId,
+            errorMessage,
+            saveError: saveError.message,
+            saveErrorStack: saveError.stack
+          },
+          'Failed to save review error to database - review may be stuck in processing state'
+        )
+      }
 
       // Re-throw to mark message as failed (will retry)
       throw error

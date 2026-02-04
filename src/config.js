@@ -226,12 +226,6 @@ const config = convict({
       default: 'content_review_status',
       env: 'SQS_QUEUE_NAME'
     },
-    region: {
-      doc: 'AWS region for SQS',
-      format: String,
-      default: 'eu-west-2',
-      env: 'SQS_REGION'
-    },
     maxMessages: {
       doc: 'Maximum number of messages to receive at once',
       format: Number,
@@ -249,6 +243,12 @@ const config = convict({
       format: Number,
       default: 300,
       env: 'SQS_VISIBILITY_TIMEOUT'
+    },
+    maxConcurrentRequests: {
+      doc: 'Maximum concurrent Bedrock API requests (to prevent rate limiting). Set to 2-3 for dev, 5-10 for prod.',
+      format: Number,
+      default: 3,
+      env: 'SQS_MAX_CONCURRENT_REQUESTS'
     }
   },
   bedrock: {
@@ -276,12 +276,6 @@ const config = convict({
       format: String,
       default: '1',
       env: 'BEDROCK_GUARDRAIL_VERSION'
-    },
-    region: {
-      doc: 'AWS region for Bedrock (must match inference profile)',
-      format: String,
-      default: 'eu-west-2',
-      env: 'BEDROCK_REGION'
     },
     modelName: {
       doc: 'Bedrock model name (for reference)',

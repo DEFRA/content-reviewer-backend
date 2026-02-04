@@ -631,6 +631,7 @@ export const reviewRoutes = {
                 updatedAt: review.updatedAt,
                 hasResult: !!review.result,
                 hasError: !!review.error,
+                errorMessage: review.error?.message || review.error || null, // Extract error message from error object
                 processingTime:
                   review.processingCompletedAt && review.processingStartedAt
                     ? Math.round(
