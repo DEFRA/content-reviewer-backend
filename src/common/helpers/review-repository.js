@@ -269,7 +269,7 @@ class ReviewRepositoryS3 {
   }
 
   /**
-   * Update review metadata (PII report, tags, etc.)
+   * Update review metadata (tags, custom fields, etc.)
    * @param {string} reviewId - Review ID
    * @param {Object} metadata - Metadata to add/update
    * @returns {Promise<void>}

@@ -10,7 +10,6 @@ import { bedrockClient } from './bedrock-client.js'
 import { reviewRepository } from './review-repository.js'
 import { textExtractor } from './text-extractor.js'
 import { promptManager } from './prompt-manager.js'
-import { piiRedactor } from './pii-redactor.js'
 import { parseBedrockResponse } from './review-parser.js'
 
 const logger = createLogger()
@@ -608,72 +607,17 @@ class SQSWorker {
       }
 
       // ============================================
-      // PII DETECTION AND REDACTION
+      // PREPARE PROMPT FOR BEDROCK
       // ============================================
-      logger.info(
-        {
-          reviewId,
-          textLength: textContent.length
-        },
-        'PII detection started on user content'
-      )
-
-      const piiDetectionStartTime = performance.now()
-
-      // Redact PII from user content before storing and sending to Bedrock
-      const piiResult = piiRedactor.redactUserContent(textContent)
-
-      const piiDetectionEndTime = performance.now()
-      const piiDetectionDuration = Math.round(
-        piiDetectionEndTime - piiDetectionStartTime
-      )
-
-      // Use redacted text for all subsequent processing
-      const redactedTextContent = piiResult.redactedText
-
-      // Create PII report for storage
-      const piiReport = piiRedactor.createPIIReport(
-        textContent,
-        redactedTextContent,
-        piiResult.detectedPII
-      )
-
-      logger.info(
-        {
-          reviewId,
-          hasPII: piiResult.hasPII,
-          redactionCount: piiResult.redactionCount,
-          piiTypes: piiResult.detectedPII.map((p) => p.type),
-          originalLength: piiResult.originalLength,
-          redactedLength: piiResult.redactedLength,
-          durationMs: piiDetectionDuration
-        },
-        `PII detection completed in ${piiDetectionDuration}ms - ${
-          piiResult.hasPII
-            ? `REDACTED ${piiResult.redactionCount} PII instances`
-            : 'No PII detected'
-        }`
-      )
-
-      // Store PII report in review metadata
-      await reviewRepository.updateReviewMetadata(reviewId, {
-        piiReport,
-        contentRedacted: piiResult.hasPII
-      })
-
-      // ============================================
-      // PREPARE PROMPT WITH REDACTED CONTENT
-      // ============================================
-      const userPrompt = `Please review the following content:\n\n---\n${redactedTextContent}\n---\n\nProvide a comprehensive content review following the guidelines in your system prompt.`
+      const userPrompt = `Please review the following content:\n\n---\n${textContent}\n---\n\nProvide a comprehensive content review following the guidelines in your system prompt.`
 
       logger.info(
         {
           reviewId,
           promptLength: userPrompt.length,
-          textContentLength: redactedTextContent.length,
-          piiRedacted: piiResult.hasPII
+          textContentLength: textContent.length
         },
-        'Bedrock AI review started with redacted content'
+        'Bedrock AI review started'
       )
 
       logger.info(
@@ -754,92 +698,38 @@ class SQSWorker {
       )
 
       // ============================================
-      // REDACT PII FROM BEDROCK RESPONSE
+      // PARSE BEDROCK RESPONSE
       // ============================================
-      logger.info(
-        {
-          reviewId,
-          responseLength: bedrockResponse.content.length
-        },
-        'PII redaction started on Bedrock response'
-      )
-
-      const responseRedactionStartTime = performance.now()
-
-      // Redact any PII in the Bedrock response (in case AI quoted user input)
-      const responseRedactionResult = piiRedactor.redactBedrockResponse(
-        bedrockResponse.content
-      )
-
-      // Extract PII entities detected by Bedrock guardrails
-      const guardrailPII = piiRedactor.extractGuardrailPII(
-        bedrockResponse.guardrailAssessment
-      )
-
-      const responseRedactionEndTime = performance.now()
-      const responseRedactionDuration = Math.round(
-        responseRedactionEndTime - responseRedactionStartTime
-      )
-
-      logger.info(
-        {
-          reviewId,
-          responseHasPII: responseRedactionResult.hasPII,
-          responseRedactionCount: responseRedactionResult.redactionCount,
-          guardrailPIICount: guardrailPII.length,
-          durationMs: responseRedactionDuration
-        },
-        `Response PII redaction completed in ${responseRedactionDuration}ms - ${
-          responseRedactionResult.hasPII
-            ? `REDACTED ${responseRedactionResult.redactionCount} PII instances`
-            : 'No PII in response'
-        }`
-      )
-
-      // Use redacted review content
-      const finalReviewContent = responseRedactionResult.redactedText
+      const finalReviewContent = bedrockResponse.content
 
       // Parse the structured text response from Bedrock into JSON
       const parsedReview = parseBedrockResponse(finalReviewContent)
 
       // ============================================
-      // SAVE REVIEW RESULT (WITH REDACTED CONTENT AND PARSED DATA)
+      // SAVE REVIEW RESULT (WITH PARSED DATA)
       // ============================================
       await reviewRepository.saveReviewResult(
         reviewId,
         {
           reviewData: parsedReview, // Structured JSON data for rendering
-          rawResponse: finalReviewContent, // Original plain text response (redacted)
+          rawResponse: finalReviewContent, // Original plain text response
           guardrailAssessment: bedrockResponse.guardrailAssessment,
-          guardrailPII,
-          piiRedacted: piiResult.hasPII || responseRedactionResult.hasPII,
-          piiReport: {
-            inputPII: piiReport,
-            outputPII: piiRedactor.createPIIReport(
-              bedrockResponse.content,
-              finalReviewContent,
-              responseRedactionResult.detectedPII
-            )
-          },
           stopReason: bedrockResponse.stopReason,
           completedAt: new Date()
         },
         bedrockResponse.usage
       )
 
-      // Log REDACTED response (SECURITY: Never log unredacted content with potential PII)
+      // Log response
       logger.info(
         {
           reviewId,
           responseLength: finalReviewContent.length,
           inputTokens: bedrockResponse.usage?.inputTokens,
           outputTokens: bedrockResponse.usage?.outputTokens,
-          stopReason: bedrockResponse.stopReason,
-          piiRedacted: piiResult.hasPII || responseRedactionResult.hasPII
+          stopReason: bedrockResponse.stopReason
         },
-        `Bedrock AI response received (REDACTED) | ReviewId: ${reviewId} | Length: ${finalReviewContent.length} chars | Tokens: ${bedrockResponse.usage?.inputTokens}→${bedrockResponse.usage?.outputTokens} | StopReason: ${bedrockResponse.stopReason} | PII Redacted: ${
-          piiResult.hasPII || responseRedactionResult.hasPII
-        } | Full Response:\n\n${finalReviewContent}`
+        `Bedrock AI response received | ReviewId: ${reviewId} | Length: ${finalReviewContent.length} chars | Tokens: ${bedrockResponse.usage?.inputTokens}→${bedrockResponse.usage?.outputTokens} | StopReason: ${bedrockResponse.stopReason} | Full Response:\n\n${finalReviewContent}`
       )
 
       logger.info({ reviewId }, 'Review saved to database')
