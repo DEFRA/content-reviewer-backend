@@ -798,7 +798,7 @@ class ReviewRepositoryS3 {
       logger.info(
         {
           totalReviews: reviews.length,
-          keepCount: keepCount,
+          keepCount,
           deleteCount: reviewsToDelete.length
         },
         'Starting cleanup of old reviews'
