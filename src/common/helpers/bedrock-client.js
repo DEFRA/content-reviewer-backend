@@ -41,16 +41,20 @@ class BedrockClient {
       }
     })
 
-    logger.info('Bedrock client initialized with CDP inference profile', {
-      inferenceProfileArn: this.inferenceProfileArn,
-      guardrailArn: this.guardrailArn,
-      region: this.region,
-      awsProfile: process.env.AWS_PROFILE || 'none',
-      hasAccessKeyId: !!process.env.AWS_ACCESS_KEY_ID,
-      hasSecretAccessKey: !!process.env.AWS_SECRET_ACCESS_KEY,
-      hasSessionToken: !!process.env.AWS_SESSION_TOKEN,
-      nodeEnv: process.env.NODE_ENV
-    })
+    // Log temperature to validate environment variable configuration
+    logger.info(
+      `Bedrock client initialized with CDP inference profile (temperature: ${this.temperature})`,
+      {
+        inferenceProfileArn: this.inferenceProfileArn,
+        guardrailArn: this.guardrailArn,
+        region: this.region,
+        awsProfile: process.env.AWS_PROFILE || 'none',
+        hasAccessKeyId: !!process.env.AWS_ACCESS_KEY_ID,
+        hasSecretAccessKey: !!process.env.AWS_SECRET_ACCESS_KEY,
+        hasSessionToken: !!process.env.AWS_SESSION_TOKEN,
+        nodeEnv: process.env.NODE_ENV
+      }
+    )
   }
 
   /**

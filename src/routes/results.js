@@ -69,17 +69,18 @@ export const results = {
                 filename: review.fileName,
                 createdAt: review.createdAt
               },
-              'Result retrieved successfully from review repository'
+              'Result retrieved successfully (PII-redacted content)'
             )
 
+            // Return simple result with redacted review content
+            // The review.result.reviewContent is already PII-redacted
             return h.response({
               success: true,
               data: {
                 id: jobId,
                 jobId,
                 status: review.status,
-                result: review.result,
-                originalText: review.result?.originalText || null,
+                result: review.result?.reviewContent || null, // Redacted review content
                 issues: review.result?.issues || [],
                 summary: review.result?.summary || null,
                 metrics: review.result?.metrics || null,
