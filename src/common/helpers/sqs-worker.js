@@ -333,7 +333,7 @@ class SQSWorker {
         {
           error: error.message,
           errorName: error.name,
-          errorCode: errorCode,
+          errorCode,
           queueUrl: this.queueUrl
         },
         'Failed to receive messages from SQS - will retry'
