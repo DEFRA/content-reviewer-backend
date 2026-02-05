@@ -366,19 +366,47 @@ export const reviewRoutes = {
             )
 
             // Queue review job in SQS (send only reference, not content)
-            await sqsClient.sendMessage({
-              uploadId: reviewId,
-              reviewId,
-              filename: title || 'Text Content',
-              messageType: 'text_review',
-              s3Bucket: s3Result.bucket,
-              s3Key: s3Result.key,
-              s3Location: s3Result.location,
-              contentType: 'text/plain',
-              fileSize: content.length,
-              userId: request.headers['x-user-id'] || 'anonymous',
-              sessionId: request.headers['x-session-id'] || null
-            })
+            try {
+              await sqsClient.sendMessage({
+                uploadId: reviewId,
+                reviewId,
+                filename: title || 'Text Content',
+                messageType: 'text_review',
+                s3Bucket: s3Result.bucket,
+                s3Key: s3Result.key,
+                s3Location: s3Result.location,
+                contentType: 'text/plain',
+                fileSize: content.length,
+                userId: request.headers['x-user-id'] || 'anonymous',
+                sessionId: request.headers['x-session-id'] || null
+              })
+
+              request.logger.info(
+                { reviewId, sqsQueue: 'content_review_queue' },
+                'SQS message sent successfully'
+              )
+            } catch (sqsError) {
+              request.logger.error(
+                {
+                  reviewId,
+                  error: sqsError.message,
+                  errorName: sqsError.name,
+                  stack: sqsError.stack
+                },
+                'Failed to send SQS message - marking review as failed'
+              )
+
+              // Mark review as failed if SQS send fails
+              await reviewRepository.updateReviewStatus(reviewId, 'failed', {
+                error: {
+                  message: `Failed to queue review: ${sqsError.message}`,
+                  code: 'SQS_SEND_FAILED',
+                  timestamp: new Date().toISOString()
+                }
+              })
+
+              throw sqsError
+            }
 
             const requestEndTime = performance.now()
             const requestDuration = Math.round(
@@ -669,6 +697,73 @@ export const reviewRoutes = {
                 error: 'Failed to retrieve reviews'
               })
               .code(500)
+          }
+        }
+      })
+
+      /**
+       * DELETE /api/reviews/:reviewId
+       * Delete a review and its associated S3 content
+       */
+      server.route({
+        method: 'DELETE',
+        path: '/api/reviews/{reviewId}',
+        options: {
+          cors: {
+            origin: config.get('cors.origin'),
+            credentials: config.get('cors.credentials')
+          }
+        },
+        handler: async (request, h) => {
+          const { reviewId } = request.params
+
+          request.logger.info(
+            { reviewId },
+            'DELETE /api/reviews/{reviewId} request received'
+          )
+
+          try {
+            // Delete the review and associated content
+            const result = await reviewRepository.deleteReview(reviewId)
+
+            request.logger.info(
+              {
+                reviewId,
+                deletedKeys: result.deletedKeys,
+                deletedCount: result.deletedCount
+              },
+              'Review deleted successfully'
+            )
+
+            return h
+              .response({
+                success: true,
+                message: `Review "${result.fileName || reviewId}" deleted successfully`,
+                reviewId: result.reviewId,
+                deletedCount: result.deletedCount,
+                deletedKeys: result.deletedKeys
+              })
+              .code(200)
+          } catch (error) {
+            request.logger.error(
+              {
+                reviewId,
+                error: error.message,
+                stack: error.stack
+              },
+              'Failed to delete review'
+            )
+
+            // Return appropriate error code
+            const statusCode = error.message.includes('not found') ? 404 : 500
+
+            return h
+              .response({
+                success: false,
+                error: error.message,
+                reviewId
+              })
+              .code(statusCode)
           }
         }
       })

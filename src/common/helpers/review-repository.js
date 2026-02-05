@@ -669,32 +669,136 @@ class ReviewRepositoryS3 {
   }
 
   /**
-   * Delete old reviews to keep only the most recent reviews
-   * @param {number} maxReviews - Maximum number of reviews to keep (default: 100)
+   * Delete a review and its associated content from S3
+   * @param {string} reviewId - Review ID to delete
+   * @returns {Promise<Object>} Deletion result with details
+   */
+  async deleteReview(reviewId) {
+    try {
+      logger.info({ reviewId }, 'Deleting review and associated content')
+
+      // First, get the review to find associated S3 keys
+      const review = await this.getReview(reviewId)
+
+      if (!review) {
+        logger.warn({ reviewId }, 'Review not found for deletion')
+        throw new Error(`Review not found: ${reviewId}`)
+      }
+
+      const deletedKeys = []
+
+      // Delete the uploaded content file if it exists
+      if (review.s3Key) {
+        try {
+          const deleteContentCommand = new DeleteObjectCommand({
+            Bucket: this.bucket,
+            Key: review.s3Key
+          })
+
+          await this.s3Client.send(deleteContentCommand)
+          deletedKeys.push(review.s3Key)
+
+          logger.info(
+            { reviewId, s3Key: review.s3Key },
+            'Deleted uploaded content from S3'
+          )
+        } catch (error) {
+          logger.error(
+            {
+              reviewId,
+              s3Key: review.s3Key,
+              error: error.message
+            },
+            'Failed to delete uploaded content (may not exist)'
+          )
+          // Continue even if content deletion fails
+        }
+      }
+
+      // Delete the review metadata file
+      const reviewKey = this.getReviewKey(reviewId)
+      try {
+        const deleteReviewCommand = new DeleteObjectCommand({
+          Bucket: this.bucket,
+          Key: reviewKey
+        })
+
+        await this.s3Client.send(deleteReviewCommand)
+        deletedKeys.push(reviewKey)
+
+        logger.info({ reviewId, reviewKey }, 'Deleted review metadata from S3')
+      } catch (error) {
+        logger.error(
+          {
+            reviewId,
+            reviewKey,
+            error: error.message
+          },
+          'Failed to delete review metadata'
+        )
+        throw error
+      }
+
+      logger.info(
+        {
+          reviewId,
+          deletedKeys,
+          deletedCount: deletedKeys.length
+        },
+        'Review and associated content deleted successfully'
+      )
+
+      return {
+        success: true,
+        reviewId,
+        deletedKeys,
+        deletedCount: deletedKeys.length,
+        fileName: review.fileName,
+        status: review.status
+      }
+    } catch (error) {
+      logger.error(
+        {
+          reviewId,
+          error: error.message,
+          stack: error.stack
+        },
+        'Failed to delete review'
+      )
+      throw error
+    }
+  }
+
+  /**
+   * Delete old reviews to maintain storage limits
+   * @param {number} keepCount - Number of most recent reviews to keep
    * @returns {Promise<number>} Number of reviews deleted
    */
-  async deleteOldReviews(maxReviews = 100) {
+  async deleteOldReviews(keepCount = 100) {
     try {
-      logger.info({ maxReviews }, 'Checking if review cleanup is needed')
+      logger.info(
+        { maxReviews: keepCount },
+        'Checking if review cleanup is needed'
+      )
 
       // Get all reviews sorted by most recent first (max 100 reviews in system)
       const { reviews } = await this.getRecentReviews({ limit: 100 })
 
-      if (reviews.length <= maxReviews) {
+      if (reviews.length <= keepCount) {
         logger.info(
-          { currentCount: reviews.length, maxReviews },
+          { currentCount: reviews.length, maxReviews: keepCount },
           'No cleanup needed - review count within limit'
         )
         return 0
       }
 
       // Get reviews to delete (everything after the first maxReviews)
-      const reviewsToDelete = reviews.slice(maxReviews)
+      const reviewsToDelete = reviews.slice(keepCount)
 
       logger.info(
         {
           totalReviews: reviews.length,
-          keepCount: maxReviews,
+          keepCount: keepCount,
           deleteCount: reviewsToDelete.length
         },
         'Starting cleanup of old reviews'

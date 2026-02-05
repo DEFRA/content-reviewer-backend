@@ -332,8 +332,22 @@ class SQSWorker {
     )
 
     try {
-      // Update review status to processing
-      await reviewRepository.updateReviewStatus(reviewId, 'processing')
+      // Update review status to processing - CRITICAL: Do this first!
+      try {
+        await reviewRepository.updateReviewStatus(reviewId, 'processing')
+        logger.info({ reviewId }, 'Review status updated to processing')
+      } catch (statusError) {
+        logger.error(
+          {
+            reviewId,
+            error: statusError.message,
+            stack: statusError.stack
+          },
+          'CRITICAL: Failed to update review status to processing - attempting to continue'
+        )
+        // Continue processing even if status update fails
+        // The review will stay in 'pending' but will be processed
+      }
 
       let textContent = ''
 
@@ -773,7 +787,7 @@ class SQSWorker {
             errorMessage,
             originalError: error.message
           },
-          'Review error saved to database'
+          'Review error saved to database - status updated to failed'
         )
       } catch (saveError) {
         logger.error(
@@ -783,8 +797,27 @@ class SQSWorker {
             saveError: saveError.message,
             saveErrorStack: saveError.stack
           },
-          'Failed to save review error to database - review may be stuck in processing state'
+          'CRITICAL: Failed to save review error - review will be stuck in processing state!'
         )
+
+        // Last resort: Try one more time with minimal data
+        try {
+          await reviewRepository.updateReviewStatus(reviewId, 'failed', {
+            error: {
+              message: 'Processing failed - error details unavailable',
+              code: 'SAVE_ERROR_FAILED'
+            }
+          })
+          logger.warn(
+            { reviewId },
+            'Successfully marked review as failed on retry'
+          )
+        } catch (retryError) {
+          logger.error(
+            { reviewId, retryError: retryError.message },
+            'CRITICAL: Review is permanently stuck - manual intervention required'
+          )
+        }
       }
 
       // Re-throw to mark message as failed (will retry)
