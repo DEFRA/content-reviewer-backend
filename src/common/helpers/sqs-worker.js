@@ -11,6 +11,7 @@ import { reviewRepository } from './review-repository.js'
 import { textExtractor } from './text-extractor.js'
 import { promptManager } from './prompt-manager.js'
 import { piiRedactor } from './pii-redactor.js'
+import { parseBedrockResponse } from './review-parser.js'
 
 const logger = createLogger()
 
@@ -332,7 +333,7 @@ class SQSWorker {
         {
           error: error.message,
           errorName: error.name,
-          errorCode: errorCode,
+          errorCode,
           queueUrl: this.queueUrl
         },
         'Failed to receive messages from SQS - will retry'
@@ -798,13 +799,17 @@ class SQSWorker {
       // Use redacted review content
       const finalReviewContent = responseRedactionResult.redactedText
 
+      // Parse the structured text response from Bedrock into JSON
+      const parsedReview = parseBedrockResponse(finalReviewContent)
+
       // ============================================
-      // SAVE REVIEW RESULT (WITH REDACTED CONTENT)
+      // SAVE REVIEW RESULT (WITH REDACTED CONTENT AND PARSED DATA)
       // ============================================
       await reviewRepository.saveReviewResult(
         reviewId,
         {
-          reviewContent: finalReviewContent,
+          reviewData: parsedReview, // Structured JSON data for rendering
+          rawResponse: finalReviewContent, // Original plain text response (redacted)
           guardrailAssessment: bedrockResponse.guardrailAssessment,
           guardrailPII,
           piiRedacted: piiResult.hasPII || responseRedactionResult.hasPII,
