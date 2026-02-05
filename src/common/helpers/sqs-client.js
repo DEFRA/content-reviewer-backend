@@ -32,6 +32,7 @@ class SQSClientHelper {
   async sendMessage(messageData) {
     const messageBody = {
       uploadId: messageData.uploadId,
+      reviewId: messageData.reviewId || messageData.uploadId,
       filename: messageData.filename,
       s3Bucket: messageData.s3Bucket,
       s3Key: messageData.s3Key,
