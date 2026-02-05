@@ -113,6 +113,9 @@ class SQSWorker {
    * Poll for messages from SQS queue
    */
   async poll() {
+    let consecutiveErrors = 0
+    const maxConsecutiveErrors = 10
+
     while (this.isRunning) {
       try {
         // Only fetch new messages if we have capacity
@@ -137,6 +140,9 @@ class SQSWorker {
             for (const message of messages) {
               this.enqueueMessage(message)
             }
+
+            // Reset error counter on successful poll
+            consecutiveErrors = 0
           }
         }
 
@@ -146,14 +152,43 @@ class SQSWorker {
         // Short sleep between poll cycles
         await this.sleep(100)
       } catch (error) {
+        consecutiveErrors++
+
         logger.error(
-          { error: error.message, stack: error.stack },
-          'Error polling SQS queue'
+          {
+            error: error.message,
+            errorName: error.name,
+            stack: error.stack,
+            consecutiveErrors,
+            maxConsecutiveErrors
+          },
+          `Error polling SQS queue (${consecutiveErrors}/${maxConsecutiveErrors})`
         )
-        // Wait before retrying
-        await this.sleep(5000)
+
+        // If too many consecutive errors, stop the worker to prevent infinite error loops
+        if (consecutiveErrors >= maxConsecutiveErrors) {
+          logger.error(
+            { consecutiveErrors, maxConsecutiveErrors },
+            'CRITICAL: Too many consecutive SQS polling errors - stopping worker to prevent resource exhaustion'
+          )
+          this.stop()
+          break
+        }
+
+        // Exponential backoff: wait longer after each error (max 30 seconds)
+        const backoffTime = Math.min(
+          5000 * Math.pow(2, consecutiveErrors - 1),
+          30000
+        )
+        logger.info(
+          { backoffTime, consecutiveErrors },
+          `Waiting ${backoffTime}ms before retry due to polling error`
+        )
+        await this.sleep(backoffTime)
       }
     }
+
+    logger.info('SQS polling loop ended')
   }
 
   /**
@@ -238,11 +273,72 @@ class SQSWorker {
       const result = await this.sqsClient.send(command)
       return result.Messages || []
     } catch (error) {
+      // Handle specific AWS SQS errors
+      const errorCode = error.Code || error.name
+
+      // Non-existent queue - critical error, stop worker
+      if (
+        errorCode === 'AWS.SimpleQueueService.NonExistentQueue' ||
+        errorCode === 'QueueDoesNotExist'
+      ) {
+        logger.error(
+          { error: error.message, queueUrl: this.queueUrl, errorCode },
+          'CRITICAL: SQS queue does not exist - stopping worker'
+        )
+        this.stop()
+        throw error
+      }
+
+      // Access denied - critical error, stop worker
+      if (
+        errorCode === 'AccessDenied' ||
+        errorCode === 'AccessDeniedException'
+      ) {
+        logger.error(
+          { error: error.message, queueUrl: this.queueUrl, errorCode },
+          'CRITICAL: Access denied to SQS queue - check IAM permissions - stopping worker'
+        )
+        this.stop()
+        throw error
+      }
+
+      // Throttling - log and retry (don't throw)
+      if (
+        errorCode === 'ThrottlingException' ||
+        errorCode === 'RequestThrottled'
+      ) {
+        logger.warn(
+          { error: error.message, errorCode },
+          'SQS request throttled - will retry after delay'
+        )
+        return [] // Return empty array, will retry on next poll
+      }
+
+      // Network/timeout errors - log and retry
+      if (
+        error.name === 'TimeoutError' ||
+        error.code === 'ETIMEDOUT' ||
+        error.code === 'ECONNRESET'
+      ) {
+        logger.warn(
+          { error: error.message, errorCode: error.code || error.name },
+          'SQS network error - will retry after delay'
+        )
+        return [] // Return empty array, will retry on next poll
+      }
+
+      // Generic error - log and retry
       logger.error(
-        { error: error.message },
-        'Failed to receive messages from SQS'
+        {
+          error: error.message,
+          errorName: error.name,
+          errorCode: errorCode,
+          queueUrl: this.queueUrl
+        },
+        'Failed to receive messages from SQS - will retry'
       )
-      throw error
+
+      return [] // Return empty array instead of throwing, will retry on next poll
     }
   }
 
@@ -254,7 +350,49 @@ class SQSWorker {
     const startTime = performance.now()
 
     try {
-      const body = JSON.parse(message.Body)
+      // Validate message structure
+      if (!message || !message.Body) {
+        logger.error(
+          { messageId: message?.MessageId },
+          'Invalid SQS message: missing Body'
+        )
+        // Delete invalid message to prevent reprocessing
+        if (message?.ReceiptHandle) {
+          await this.deleteMessage(message.ReceiptHandle)
+        }
+        return
+      }
+
+      // Parse message body
+      let body
+      try {
+        body = JSON.parse(message.Body)
+      } catch (parseError) {
+        logger.error(
+          {
+            messageId: message.MessageId,
+            parseError: parseError.message,
+            bodyPreview: message.Body?.substring(0, 200)
+          },
+          'Failed to parse SQS message body as JSON - deleting invalid message'
+        )
+        // Delete unparseable message to prevent infinite reprocessing
+        await this.deleteMessage(message.ReceiptHandle)
+        return
+      }
+
+      // Validate required fields
+      if (!body.uploadId && !body.reviewId) {
+        logger.error(
+          {
+            messageId: message.MessageId,
+            body
+          },
+          'SQS message missing both uploadId and reviewId - deleting invalid message'
+        )
+        await this.deleteMessage(message.ReceiptHandle)
+        return
+      }
 
       logger.info(
         {
@@ -300,7 +438,7 @@ class SQSWorker {
         `Failed to process SQS message after ${duration}ms: ${error.message}`
       )
       // Message will become visible again after visibility timeout
-      // and will be retried
+      // and will be retried (SQS handles retry logic automatically)
     }
   }
 
@@ -830,6 +968,11 @@ class SQSWorker {
    * @param {string} receiptHandle - Message receipt handle
    */
   async deleteMessage(receiptHandle) {
+    if (!receiptHandle) {
+      logger.warn('Cannot delete message: missing receipt handle')
+      return
+    }
+
     const command = new DeleteMessageCommand({
       QueueUrl: this.queueUrl,
       ReceiptHandle: receiptHandle
@@ -837,12 +980,40 @@ class SQSWorker {
 
     try {
       await this.sqsClient.send(command)
-    } catch (error) {
-      logger.error(
-        { error: error.message },
-        'Failed to delete message from SQS'
+      logger.debug(
+        { receiptHandle: receiptHandle.substring(0, 20) + '...' },
+        'Message deleted from SQS queue'
       )
-      throw error
+    } catch (error) {
+      // Handle specific delete errors
+      const errorCode = error.Code || error.name
+
+      // Message already deleted or doesn't exist - not a critical error
+      if (
+        errorCode === 'ReceiptHandleIsInvalid' ||
+        errorCode === 'InvalidParameterValue'
+      ) {
+        logger.warn(
+          {
+            error: error.message,
+            errorCode,
+            receiptHandle: receiptHandle.substring(0, 20) + '...'
+          },
+          'Message receipt handle is invalid (message may have already been deleted or expired)'
+        )
+        return // Don't throw, this is expected in some cases
+      }
+
+      logger.error(
+        {
+          error: error.message,
+          errorCode,
+          receiptHandle: receiptHandle.substring(0, 20) + '...'
+        },
+        'Failed to delete message from SQS - message will be reprocessed after visibility timeout'
+      )
+      // Don't throw - allow processing to continue even if delete fails
+      // The message will become visible again and be reprocessed
     }
   }
 
