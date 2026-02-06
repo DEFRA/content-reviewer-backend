@@ -229,7 +229,7 @@ const config = convict({
     maxMessages: {
       doc: 'Maximum number of messages to receive at once',
       format: Number,
-      default: 20,
+      default: 10,
       env: 'SQS_MAX_MESSAGES'
     },
     waitTimeSeconds: {
