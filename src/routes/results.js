@@ -72,14 +72,14 @@ export const results = {
               'Result retrieved successfully from review repository'
             )
 
-            // Return review result
             return h.response({
               success: true,
               data: {
                 id: jobId,
                 jobId,
                 status: review.status,
-                result: review.result?.reviewContent || null,
+                result: review.result?.reviewData || null,
+                originalText: review.result?.originalText || null,
                 issues: review.result?.issues || [],
                 summary: review.result?.summary || null,
                 metrics: review.result?.metrics || null,
