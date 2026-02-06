@@ -247,7 +247,7 @@ const config = convict({
     maxConcurrentRequests: {
       doc: 'Maximum concurrent Bedrock API requests (to prevent rate limiting). Set to 2-3 for dev, 5-10 for prod.',
       format: Number,
-      default: 10,
+      default: 5,
       env: 'SQS_MAX_CONCURRENT_REQUESTS'
     }
   },
