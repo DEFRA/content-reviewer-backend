@@ -66,6 +66,10 @@ export const results = {
                 jobId,
                 status: review.status,
                 hasResult: !!review.result,
+                hasReviewData: !!review.result?.reviewData,
+                reviewDataKeys: review.result?.reviewData
+                  ? Object.keys(review.result.reviewData)
+                  : [],
                 filename: review.fileName,
                 createdAt: review.createdAt
               },

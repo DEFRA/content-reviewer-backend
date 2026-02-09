@@ -702,8 +702,32 @@ class SQSWorker {
       // ============================================
       const finalReviewContent = bedrockResponse.content
 
+      // Log a sample of the response to debug format
+      logger.info(
+        {
+          reviewId,
+          responseLength: finalReviewContent.length,
+          responsePreview: finalReviewContent.substring(0, 500),
+          hasScoresMarker: finalReviewContent.includes('[SCORES]'),
+          hasContentMarker: finalReviewContent.includes('[REVIEWED_CONTENT]'),
+          hasImprovementsMarker: finalReviewContent.includes('[IMPROVEMENTS]')
+        },
+        'Raw Bedrock response before parsing'
+      )
+
       // Parse the structured text response from Bedrock into JSON
       const parsedReview = parseBedrockResponse(finalReviewContent)
+
+      logger.info(
+        {
+          reviewId,
+          parsedScoreCount: Object.keys(parsedReview.scores || {}).length,
+          parsedIssueCount: parsedReview.reviewedContent?.issues?.length || 0,
+          parsedImprovementCount: parsedReview.improvements?.length || 0,
+          hasParseError: !!parsedReview.parseError
+        },
+        'Parsed review data structure'
+      )
 
       // ============================================
       // SAVE REVIEW RESULT (WITH PARSED DATA)
