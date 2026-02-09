@@ -1,6 +1,7 @@
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3'
 import { config } from '../../config.js'
 import { createLogger } from './logging/logger.js'
+import { piiRedactor } from './pii-redactor.js'
 
 const logger = createLogger()
 
@@ -155,15 +156,24 @@ class S3Uploader {
     const filename = `${title.replace(/[^a-zA-Z0-9-_]/g, '_')}.txt`
     const key = `${this.pathPrefix}/${uploadId}/${filename}`
 
+    // Redact PII from content before uploading to S3
+    const redactionResult = piiRedactor.redactUserContent(textContent)
+    const contentToUpload = redactionResult.redactedText
+
     logger.info(
       {
         uploadId,
         filename,
-        contentLength: textContent.length,
+        originalLength: textContent.length,
+        redactedLength: contentToUpload.length,
+        hasPII: redactionResult.hasPII,
+        piiRedactionCount: redactionResult.redactionCount,
         bucket: this.bucket,
         key
       },
-      'S3 text content upload started'
+      redactionResult.hasPII
+        ? `S3 text upload started - PII REDACTED (${redactionResult.redactionCount} instances)`
+        : 'S3 text content upload started'
     )
 
     const startTime = performance.now()
@@ -174,7 +184,8 @@ class S3Uploader {
         {
           uploadId,
           filename,
-          contentLength: textContent.length
+          contentLength: contentToUpload.length,
+          hasPII: redactionResult.hasPII
         },
         '[MOCK MODE] Simulating S3 text upload - not actually uploading'
       )
@@ -186,21 +197,25 @@ class S3Uploader {
         location: `s3://${this.bucket}/${key}`,
         fileId: uploadId,
         filename,
-        size: textContent.length,
-        contentType: 'text/plain'
+        size: contentToUpload.length,
+        contentType: 'text/plain',
+        piiRedacted: redactionResult.hasPII,
+        piiRedactionCount: redactionResult.redactionCount
       }
     }
 
     const command = new PutObjectCommand({
       Bucket: this.bucket,
       Key: key,
-      Body: Buffer.from(textContent, 'utf-8'),
+      Body: Buffer.from(contentToUpload, 'utf-8'),
       ContentType: 'text/plain',
       Metadata: {
         originalName: filename,
         uploadId,
         uploadedAt: new Date().toISOString(),
-        contentLength: textContent.length.toString()
+        contentLength: contentToUpload.length.toString(),
+        piiRedacted: redactionResult.hasPII ? 'true' : 'false',
+        piiRedactionCount: redactionResult.redactionCount.toString()
       }
     })
 
@@ -214,13 +229,17 @@ class S3Uploader {
         {
           uploadId,
           filename,
-          contentLength: textContent.length,
+          contentLength: contentToUpload.length,
           bucket: this.bucket,
           key,
           s3Location: `s3://${this.bucket}/${key}`,
-          durationMs: duration
+          durationMs: duration,
+          piiRedacted: redactionResult.hasPII,
+          piiRedactionCount: redactionResult.redactionCount
         },
-        `S3 text upload completed in ${duration}ms`
+        redactionResult.hasPII
+          ? `S3 text upload completed in ${duration}ms - PII REDACTED (${redactionResult.redactionCount} instances)`
+          : `S3 text upload completed in ${duration}ms`
       )
 
       return {
@@ -230,8 +249,10 @@ class S3Uploader {
         location: `s3://${this.bucket}/${key}`,
         fileId: uploadId,
         filename,
-        size: textContent.length,
-        contentType: 'text/plain'
+        size: contentToUpload.length,
+        contentType: 'text/plain',
+        piiRedacted: redactionResult.hasPII,
+        piiRedactionCount: redactionResult.redactionCount
       }
     } catch (error) {
       const endTime = performance.now()
