@@ -78,7 +78,7 @@ export const results = {
                 id: jobId,
                 jobId,
                 status: review.status,
-                result: review.result?.reviewData || null,
+                result: review.result, // Contains { reviewData, rawResponse, guardrailAssessment, stopReason, completedAt }
                 originalText: review.result?.originalText || null,
                 issues: review.result?.issues || [],
                 summary: review.result?.summary || null,
