@@ -325,26 +325,32 @@ export const reviewRoutes = {
                 contentLength: content.length,
                 title: title || 'Text Content'
               },
-              'Processing text review request'
+              '⏱️ [STEP 1/6] Processing text review request - START'
             )
 
             // Upload text content to S3 (following reference architecture)
+            const s3UploadStart = performance.now()
             const s3Result = await s3Uploader.uploadTextContent(
               content,
               reviewId,
               title || 'Text Content'
+            )
+            const s3UploadDuration = Math.round(
+              performance.now() - s3UploadStart
             )
 
             request.logger.info(
               {
                 reviewId,
                 s3Key: s3Result.key,
-                contentLength: content.length
+                contentLength: content.length,
+                durationMs: s3UploadDuration
               },
-              'Text content uploaded to S3'
+              `⏱️ [STEP 2/6] Text content uploaded to S3 - COMPLETED in ${s3UploadDuration}ms`
             )
 
             // Create review record in MongoDB (store S3 reference, not full content)
+            const dbCreateStart = performance.now()
             await reviewRepository.createReview({
               id: reviewId,
               sourceType: 'text',
@@ -353,6 +359,9 @@ export const reviewRoutes = {
               mimeType: 'text/plain',
               s3Key: s3Result.key
             })
+            const dbCreateDuration = Math.round(
+              performance.now() - dbCreateStart
+            )
 
             request.logger.info(
               {
@@ -360,13 +369,16 @@ export const reviewRoutes = {
                 s3Key: s3Result.key,
                 fileName: title || 'Text Content',
                 title,
-                filename: title || 'Text Content'
+                filename: title || 'Text Content',
+                durationMs: dbCreateDuration
               },
-              `Review record created in database with fileName: ${title}`
+              `⏱️ [STEP 3/6] Review record created in S3 repository - COMPLETED in ${dbCreateDuration}ms`
             )
 
             // Queue review job in SQS (send only reference, not content)
+            let sqsSendDuration = 0
             try {
+              const sqsSendStart = performance.now()
               await sqsClient.sendMessage({
                 uploadId: reviewId,
                 reviewId,
@@ -380,10 +392,15 @@ export const reviewRoutes = {
                 userId: request.headers['x-user-id'] || 'anonymous',
                 sessionId: request.headers['x-session-id'] || null
               })
+              sqsSendDuration = Math.round(performance.now() - sqsSendStart)
 
               request.logger.info(
-                { reviewId, sqsQueue: 'content_review_queue' },
-                'SQS message sent successfully'
+                {
+                  reviewId,
+                  sqsQueue: 'content_review_queue',
+                  durationMs: sqsSendDuration
+                },
+                `⏱️ [STEP 4/6] SQS message sent successfully - COMPLETED in ${sqsSendDuration}ms`
               )
             } catch (sqsError) {
               request.logger.error(
@@ -418,9 +435,13 @@ export const reviewRoutes = {
                 reviewId,
                 contentLength: content.length,
                 s3Key: s3Result.key,
-                durationMs: requestDuration
+                totalDurationMs: requestDuration,
+                s3UploadMs: s3UploadDuration,
+                dbCreateMs: dbCreateDuration,
+                sqsSendMs: sqsSendDuration,
+                endpoint: '/api/review/text'
               },
-              `Text review queued successfully in ${requestDuration}ms from ${s3Result.key}`
+              `⏱️ [UPLOAD PHASE] Text review queued successfully - TOTAL: ${requestDuration}ms (S3: ${s3UploadDuration}ms, DB: ${dbCreateDuration}ms, SQS: ${sqsSendDuration}ms)`
             )
 
             return h

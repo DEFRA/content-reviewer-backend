@@ -466,14 +466,24 @@ class SQSWorker {
         s3Key: messageBody.s3Key,
         fileSize: messageBody.fileSize
       },
-      'Content review processing started'
+      '⏱️ [STEP 5/6] Content review processing started by SQS worker - START'
     )
 
     try {
       // Update review status to processing - CRITICAL: Do this first!
       try {
+        const statusUpdateStart = performance.now()
         await reviewRepository.updateReviewStatus(reviewId, 'processing')
-        logger.info({ reviewId }, 'Review status updated to processing')
+        const statusUpdateDuration = Math.round(
+          performance.now() - statusUpdateStart
+        )
+        logger.info(
+          {
+            reviewId,
+            durationMs: statusUpdateDuration
+          },
+          `Review status updated to processing in ${statusUpdateDuration}ms`
+        )
       } catch (statusError) {
         logger.error(
           {
@@ -568,7 +578,7 @@ class SQSWorker {
             s3Bucket: messageBody.s3Bucket,
             s3Key: messageBody.s3Key
           },
-          'S3 text content download started'
+          '⏱️ S3 text content download started'
         )
 
         const s3StartTime = performance.now()
@@ -595,12 +605,10 @@ class SQSWorker {
         logger.info(
           {
             reviewId,
-            textContent,
-            textLength: textContent.length,
-            wordCount: textExtractor.countWords(textContent),
+            contentLength: textContent.length,
             durationMs: s3Duration
           },
-          `Text content retrieved from S3 in ${s3Duration}ms`
+          `⏱️ S3 text content downloaded in ${s3Duration}ms`
         )
       } else {
         throw new Error(`Unknown message type: ${messageBody.messageType}`)
@@ -649,6 +657,15 @@ class SQSWorker {
       // Send to Bedrock with system prompt
       const bedrockStartTime = performance.now()
 
+      logger.info(
+        {
+          reviewId,
+          userPromptLength: userPrompt.length,
+          systemPromptLength: systemPrompt.length
+        },
+        '⏱️ [BEDROCK] Sending request to Bedrock AI - START'
+      )
+
       const bedrockResponse = await bedrockClient.sendMessage(userPrompt, [
         {
           role: 'user',
@@ -675,7 +692,7 @@ class SQSWorker {
             reason: bedrockResponse.reason,
             durationMs: bedrockDuration
           },
-          `Bedrock AI review failed after ${bedrockDuration}ms`
+          `⏱️ [BEDROCK] AI review FAILED after ${bedrockDuration}ms`
         )
 
         throw new Error(
@@ -694,29 +711,30 @@ class SQSWorker {
           totalTokens: bedrockResponse.usage?.totalTokens,
           durationMs: bedrockDuration
         },
+        `⏱️ [BEDROCK] AI review COMPLETED successfully in ${bedrockDuration}ms (Tokens: ${bedrockResponse.usage?.inputTokens}→${bedrockResponse.usage?.outputTokens})`
+      )
+
+      logger.info(
+        {
+          reviewId,
+          responseLength: bedrockResponse.content.length,
+          inputTokens: bedrockResponse.usage?.inputTokens,
+          outputTokens: bedrockResponse.usage?.outputTokens,
+          totalTokens: bedrockResponse.usage?.totalTokens,
+          durationMs: bedrockDuration
+        },
         `Bedrock AI review completed successfully in ${bedrockDuration}ms`
       )
 
       // ============================================
       // PARSE BEDROCK RESPONSE
       // ============================================
+      const parseStart = performance.now()
       const finalReviewContent = bedrockResponse.content
-
-      // Log a sample of the response to debug format
-      logger.info(
-        {
-          reviewId,
-          responseLength: finalReviewContent.length,
-          responsePreview: finalReviewContent.substring(0, 500),
-          hasScoresMarker: finalReviewContent.includes('[SCORES]'),
-          hasContentMarker: finalReviewContent.includes('[REVIEWED_CONTENT]'),
-          hasImprovementsMarker: finalReviewContent.includes('[IMPROVEMENTS]')
-        },
-        'Raw Bedrock response before parsing'
-      )
 
       // Parse the structured text response from Bedrock into JSON
       const parsedReview = parseBedrockResponse(finalReviewContent)
+      const parseDuration = Math.round(performance.now() - parseStart)
 
       logger.info(
         {
@@ -724,14 +742,28 @@ class SQSWorker {
           parsedScoreCount: Object.keys(parsedReview.scores || {}).length,
           parsedIssueCount: parsedReview.reviewedContent?.issues?.length || 0,
           parsedImprovementCount: parsedReview.improvements?.length || 0,
-          hasParseError: !!parsedReview.parseError
+          hasParseError: !!parsedReview.parseError,
+          durationMs: parseDuration
         },
-        'Parsed review data structure'
+        `⏱️ Bedrock response parsed in ${parseDuration}ms`
+      )
+
+      logger.info(
+        {
+          reviewId,
+          parsedScoreCount: Object.keys(parsedReview.scores || {}).length,
+          parsedIssueCount: parsedReview.reviewedContent?.issues?.length || 0,
+          parsedImprovementCount: parsedReview.improvements?.length || 0,
+          hasParseError: !!parsedReview.parseError,
+          durationMs: parseDuration
+        },
+        `⏱️ Bedrock response parsed in ${parseDuration}ms`
       )
 
       // ============================================
       // SAVE REVIEW RESULT (WITH PARSED DATA)
       // ============================================
+      const saveStart = performance.now()
       await reviewRepository.saveReviewResult(
         reviewId,
         {
@@ -743,20 +775,15 @@ class SQSWorker {
         },
         bedrockResponse.usage
       )
+      const saveDuration = Math.round(performance.now() - saveStart)
 
-      // Log response
       logger.info(
         {
           reviewId,
-          responseLength: finalReviewContent.length,
-          inputTokens: bedrockResponse.usage?.inputTokens,
-          outputTokens: bedrockResponse.usage?.outputTokens,
-          stopReason: bedrockResponse.stopReason
+          durationMs: saveDuration
         },
-        `Bedrock AI response received | ReviewId: ${reviewId} | Length: ${finalReviewContent.length} chars | Tokens: ${bedrockResponse.usage?.inputTokens}→${bedrockResponse.usage?.outputTokens} | StopReason: ${bedrockResponse.stopReason} | Full Response:\n\n${finalReviewContent}`
+        `⏱️ Review result saved to S3 in ${saveDuration}ms`
       )
-
-      logger.info({ reviewId }, 'Review saved to database')
 
       const processingEndTime = performance.now()
       const totalProcessingDuration = Math.round(
@@ -766,9 +793,12 @@ class SQSWorker {
       logger.info(
         {
           reviewId,
-          totalDurationMs: totalProcessingDuration
+          totalDurationMs: totalProcessingDuration,
+          bedrockDurationMs: bedrockDuration,
+          parseDurationMs: parseDuration,
+          saveDurationMs: saveDuration
         },
-        `Content review processing completed in ${totalProcessingDuration}ms`
+        `⏱️ [STEP 6/6] Content review processing COMPLETED - TOTAL: ${totalProcessingDuration}ms (Bedrock: ${bedrockDuration}ms, Parse: ${parseDuration}ms, Save: ${saveDuration}ms)`
       )
 
       return {
