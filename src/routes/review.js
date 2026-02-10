@@ -376,6 +376,7 @@ export const reviewRoutes = {
             )
 
             // Queue review job in SQS (send only reference, not content)
+            let sqsSendDuration = 0
             try {
               const sqsSendStart = performance.now()
               await sqsClient.sendMessage({
@@ -391,9 +392,7 @@ export const reviewRoutes = {
                 userId: request.headers['x-user-id'] || 'anonymous',
                 sessionId: request.headers['x-session-id'] || null
               })
-              const sqsSendDuration = Math.round(
-                performance.now() - sqsSendStart
-              )
+              sqsSendDuration = Math.round(performance.now() - sqsSendStart)
 
               request.logger.info(
                 {
