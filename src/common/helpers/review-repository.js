@@ -7,6 +7,7 @@ import {
 } from '@aws-sdk/client-s3'
 import { config } from '../../config.js'
 import { createLogger } from './logging/logger.js'
+import { piiRedactor } from './pii-redactor.js'
 
 const logger = createLogger()
 
@@ -137,6 +138,57 @@ class ReviewRepositoryS3 {
   async saveReview(review) {
     const key = this.getReviewKey(review.id)
 
+    // Redact PII from review results before saving to S3
+    let piiRedactionInfo = { hasPII: false, redactionCount: 0 }
+    if (review.result) {
+      // Redact PII from raw response (the full text from Bedrock)
+      if (review.result.rawResponse) {
+        const redactionResult = piiRedactor.redactBedrockResponse(
+          review.result.rawResponse
+        )
+        review.result.rawResponse = redactionResult.redactedText
+        piiRedactionInfo = {
+          hasPII: redactionResult.hasPII,
+          redactionCount: redactionResult.redactionCount,
+          detectedPII: redactionResult.detectedPII
+        }
+      }
+
+      // Redact PII from reviewData (structured content that may contain quoted text)
+      if (review.result.reviewData) {
+        // Redact from improvements array if present
+        if (Array.isArray(review.result.reviewData.improvements)) {
+          review.result.reviewData.improvements =
+            review.result.reviewData.improvements.map((improvement) => {
+              const redactedImprovement = { ...improvement }
+              if (improvement.current) {
+                const redacted = piiRedactor.redact(improvement.current, {
+                  preserveFormat: false
+                })
+                redactedImprovement.current = redacted.redactedText
+              }
+              if (improvement.suggested) {
+                const redacted = piiRedactor.redact(improvement.suggested, {
+                  preserveFormat: false
+                })
+                redactedImprovement.suggested = redacted.redactedText
+              }
+              return redactedImprovement
+            })
+        }
+
+        // Redact from reviewedContent if present
+        if (review.result.reviewData.reviewedContent?.plainText) {
+          const redacted = piiRedactor.redact(
+            review.result.reviewData.reviewedContent.plainText,
+            { preserveFormat: false }
+          )
+          review.result.reviewData.reviewedContent.plainText =
+            redacted.redactedText
+        }
+      }
+    }
+
     logger.info(
       {
         reviewId: review.id,
@@ -144,9 +196,13 @@ class ReviewRepositoryS3 {
         createdAt: review.createdAt,
         status: review.status,
         hasResult: !!review.result,
-        s3Key: review.s3Key
+        s3Key: review.s3Key,
+        piiRedacted: piiRedactionInfo.hasPII,
+        piiRedactionCount: piiRedactionInfo.redactionCount
       },
-      'Saving review to S3'
+      piiRedactionInfo.hasPII
+        ? `Saving review to S3 - PII REDACTED (${piiRedactionInfo.redactionCount} instances)`
+        : 'Saving review to S3'
     )
 
     const command = new PutObjectCommand({
@@ -157,7 +213,8 @@ class ReviewRepositoryS3 {
       Metadata: {
         reviewId: review.id,
         status: review.status,
-        sourceType: review.sourceType
+        sourceType: review.sourceType,
+        piiRedacted: piiRedactionInfo.hasPII ? 'true' : 'false'
       }
     })
 
