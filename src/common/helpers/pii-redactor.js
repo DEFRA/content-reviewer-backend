@@ -12,10 +12,7 @@ const logger = createLogger()
  * but provides an additional client-side layer of protection.
  *
  * PII Types Detected:
- * - Email addresses
- * - Phone numbers (UK, international)
  * - UK National Insurance numbers
- * - UK Postcodes
  * - Credit card numbers
  * - IP addresses
  * - Names (when possible)
@@ -27,38 +24,11 @@ class PIIRedactor {
   constructor() {
     // PII regex patterns
     this.patterns = {
-      // Email addresses
-      email: {
-        regex: /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/g,
-        replacement: '[EMAIL_REDACTED]'
-      },
-
-      // UK phone numbers (various formats)
-      ukPhone: {
-        regex:
-          /\b(?:(?:\+44\s?|0)(?:\d{2}\s?\d{4}\s?\d{4}|\d{3}\s?\d{3}\s?\d{4}|\d{4}\s?\d{6}|\d{5}\s?\d{5}))\b/g,
-        replacement: '[PHONE_REDACTED]'
-      },
-
-      // International phone numbers
-      intPhone: {
-        regex:
-          /\b\+?\d{1,3}[-.\s]?\(?\d{1,4}\)?[-.\s]?\d{1,4}[-.\s]?\d{1,9}\b/g,
-        replacement: '[PHONE_REDACTED]'
-      },
-
       // UK National Insurance number (e.g., QQ123456C)
       niNumber: {
         regex:
           /\b(?:[A-CEGHJ-PR-TW-Z][A-CEGHJ-NPR-TW-Z])\s?(?:\d{2}\s?\d{2}\s?\d{2}\s?[A-D]?)\b/gi,
         replacement: '[NI_NUMBER_REDACTED]'
-      },
-
-      // UK Postcode (e.g., SW1A 1AA, M1 1AE)
-      ukPostcode: {
-        regex:
-          /\b[A-Z]{1,2}\d{1,2}\s?\d[A-Z]{2}\b|\b[A-Z]{1,2}\d[A-Z]\s?\d[A-Z]{2}\b/gi,
-        replacement: '[POSTCODE_REDACTED]'
       },
 
       // Credit card numbers (basic pattern, 13-19 digits with optional spaces/dashes)
@@ -259,11 +229,7 @@ class PIIRedactor {
     // (in case the AI quoted user input containing PII)
     const result = this.redact(reviewContent, {
       enabledPatterns: [
-        'email',
-        'ukPhone',
-        'intPhone',
         'niNumber',
-        'ukPostcode',
         'creditCard',
         'ipv4',
         'ipv6',
