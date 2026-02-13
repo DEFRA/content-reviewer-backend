@@ -300,13 +300,11 @@ export const reviewRoutes = {
                 .code(400)
             }
 
-            const maxCharLength = config.get('contentReview.maxCharLength')
-            if (content.length > maxCharLength) {
+            if (content.length > 100000) {
               request.logger.warn(
                 {
                   endpoint: '/api/review/text',
-                  contentLength: content.length,
-                  maxCharLength
+                  contentLength: content.length
                 },
                 'Text review request rejected - content too long'
               )
@@ -314,7 +312,7 @@ export const reviewRoutes = {
               return h
                 .response({
                   success: false,
-                  error: `Content must not exceed ${maxCharLength.toLocaleString()} characters`
+                  error: 'Content must not exceed 100,000 characters'
                 })
                 .code(400)
             }
