@@ -101,11 +101,6 @@ class BedrockClient {
         guardrailConfig
       })
 
-      logger.info('Sending request to Bedrock via CDP inference profile', {
-        messageLength: userMessage.length,
-        historyLength: conversationHistory.length
-      })
-
       // Call Bedrock
       const response = await this.client.send(command)
 
