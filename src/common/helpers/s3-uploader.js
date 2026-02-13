@@ -225,22 +225,17 @@ class S3Uploader {
       const endTime = performance.now()
       const duration = Math.round(endTime - startTime)
 
-      logger.info(
-        {
-          uploadId,
-          filename,
-          contentLength: contentToUpload.length,
-          bucket: this.bucket,
-          key,
-          s3Location: `s3://${this.bucket}/${key}`,
-          durationMs: duration,
-          piiRedacted: redactionResult.hasPII,
-          piiRedactionCount: redactionResult.redactionCount
-        },
-        redactionResult.hasPII
-          ? `S3 text upload completed in ${duration}ms - PII REDACTED (${redactionResult.redactionCount} instances)`
-          : `S3 text upload completed in ${duration}ms`
-      )
+      logger.info({
+        uploadId,
+        filename,
+        contentLength: contentToUpload.length,
+        bucket: this.bucket,
+        key,
+        s3Location: `s3://${this.bucket}/${key}`,
+        durationMs: duration,
+        piiRedacted: redactionResult.hasPII,
+        piiRedactionCount: redactionResult.redactionCount
+      })
 
       return {
         success: true,

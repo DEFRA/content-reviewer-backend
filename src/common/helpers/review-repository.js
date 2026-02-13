@@ -114,10 +114,6 @@ class ReviewRepositoryS3 {
     )
 
     await this.saveReview(review)
-    logger.info(
-      { reviewId: review.id, s3Key: this.getReviewKey(review.id) },
-      'Review created in S3'
-    )
 
     // Trigger async cleanup to keep only recent 100 reviews (don't wait for it)
     this.deleteOldReviews(100).catch((error) => {
@@ -220,15 +216,12 @@ class ReviewRepositoryS3 {
 
     try {
       await this.s3Client.send(command)
-      logger.info(
-        {
-          reviewId: review.id,
-          key,
-          fileName: review.fileName,
-          createdAt: review.createdAt
-        },
-        'Review saved to S3 successfully'
-      )
+      logger.info({
+        reviewId: review.id,
+        key,
+        fileName: review.fileName,
+        createdAt: review.createdAt
+      })
     } catch (error) {
       logger.error(
         { error: error.message, reviewId: review.id },
@@ -507,10 +500,7 @@ class ReviewRepositoryS3 {
     // with only {jobId, status, result, completedAt}, losing fileName and createdAt
     // The updateReviewStatus() already saves the complete review via saveReview()
 
-    logger.info(
-      { reviewId, hasResult: !!result, hasUsage: !!usage },
-      'Review result saved successfully with complete review data'
-    )
+    logger.info({ reviewId, hasResult: !!result, hasUsage: !!usage })
   }
 
   /**

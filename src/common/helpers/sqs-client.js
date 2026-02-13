@@ -86,17 +86,14 @@ class SQSClientHelper {
       const endTime = performance.now()
       const duration = Math.round(endTime - startTime)
 
-      logger.info(
-        {
-          messageId: result.MessageId,
-          uploadId: messageData.uploadId,
-          reviewId: messageData.reviewId,
-          queueUrl: this.queueUrl,
-          queueName: this.queueName,
-          durationMs: duration
-        },
-        `SQS message sent successfully in ${duration}ms`
-      )
+      logger.info({
+        messageId: result.MessageId,
+        uploadId: messageData.uploadId,
+        reviewId: messageData.reviewId,
+        queueUrl: this.queueUrl,
+        queueName: this.queueName,
+        durationMs: duration
+      })
 
       return {
         success: true,
