@@ -315,6 +315,13 @@ const config = convict({
       default: false,
       env: 'SKIP_SQS_WORKER'
     }
+  },
+  contentReview: {
+    maxCharLength: {
+      doc: 'Maximum character length for content review (set in cdp-app-config)',
+      format: Number,
+      env: 'CONTENT_REVIEW_MAX_CHAR_LEN'
+    }
   }
 })
 
