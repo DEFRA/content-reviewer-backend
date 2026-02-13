@@ -320,6 +320,7 @@ const config = convict({
     maxCharLength: {
       doc: 'Maximum character length for content review (set in cdp-app-config)',
       format: Number,
+      default: 50000,
       env: 'CONTENT_REVIEW_MAX_CHAR_LEN'
     }
   }
