@@ -80,6 +80,9 @@ class BedrockClient {
         2
       )
     } catch (serializeError) {
+      logger.warn('Could not serialize full error', {
+        serializationError: serializeError.message
+      })
       errorDetails.serializationError = 'Could not serialize full error'
     }
 
@@ -221,7 +224,7 @@ class BedrockClient {
     } catch (error) {
       const errorDetails = this.extractErrorDetails(error)
       logger.error('Error calling Bedrock API', errorDetails)
-      this.handleAwsError(error)
+      return this.handleAwsError(error)
     }
   }
 

@@ -45,7 +45,7 @@ function parseReviewedContent(contentText) {
   }
 
   // Remove markers to get plain text
-  plainText = contentText.replace(/\[ISSUE:[^\]]+]|\[\/ISSUE]/g, '')
+  plainText = contentText.replaceAll(/\[ISSUE:[^\]]+]|\[\/ISSUE]/g, '')
 
   return {
     plainText: plainText.trim(),
