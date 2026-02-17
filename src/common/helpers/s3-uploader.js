@@ -153,7 +153,7 @@ class S3Uploader {
    * @returns {Promise<Object>} Upload result
    */
   async uploadTextContent(textContent, uploadId, title = 'Text Content') {
-    const filename = `${title.replace(/[^a-zA-Z0-9-_]/g, '_')}.txt`
+    const filename = `${title.replaceAll(/[^a-zA-Z0-9-_]/g, '_')}.txt`
     const key = `${this.pathPrefix}/${uploadId}/${filename}`
 
     // Redact PII from content before uploading to S3

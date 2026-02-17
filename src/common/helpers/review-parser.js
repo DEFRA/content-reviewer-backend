@@ -15,7 +15,7 @@ function parseScores(scoresText) {
     if (match) {
       const [, category, score, note] = match
       scores[category.trim()] = {
-        score: parseInt(score),
+        score: Number.parseInt(score),
         note: note.trim()
       }
     }

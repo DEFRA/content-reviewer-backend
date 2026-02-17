@@ -583,7 +583,7 @@ class ReviewRepositoryS3 {
 
       // First, sort ALL S3 objects by LastModified (most recent first)
       // This ensures we process the most recent files
-      const sortedContents = response.Contents.sort(
+      const sortedContents = response.Contents.toSorted(
         (a, b) => b.LastModified - a.LastModified
       )
 
