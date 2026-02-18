@@ -9,6 +9,8 @@ const logger = createLogger()
  * S3 Client for file uploads
  */
 class S3Uploader {
+  static TEXT_CONTENT_TYPE = 'text/plain'
+
   constructor() {
     this.mockMode = config.get('mockMode.s3Upload')
 
@@ -146,6 +148,85 @@ class S3Uploader {
   }*/
 
   /**
+   * Create mock upload response
+   * @private
+   */
+  _createMockUploadResponse(
+    uploadId,
+    filename,
+    contentToUpload,
+    key,
+    redactionResult
+  ) {
+    logger.warn(
+      {
+        uploadId,
+        filename,
+        contentLength: contentToUpload.length,
+        hasPII: redactionResult.hasPII
+      },
+      '[MOCK MODE] Simulating S3 text upload - not actually uploading'
+    )
+
+    return {
+      success: true,
+      bucket: this.bucket,
+      key,
+      location: `s3://${this.bucket}/${key}`,
+      size: contentToUpload.length,
+      contentType: S3Uploader.TEXT_CONTENT_TYPE,
+      piiRedacted: redactionResult.hasPII,
+      piiRedactionCount: redactionResult.redactionCount
+    }
+  }
+
+  /**
+   * Create S3 put object command
+   * @private
+   */
+  _createPutCommand(key, contentToUpload, filename, uploadId, redactionResult) {
+    return new PutObjectCommand({
+      Bucket: this.bucket,
+      Key: key,
+      Body: Buffer.from(contentToUpload, 'utf-8'),
+      ContentType: S3Uploader.TEXT_CONTENT_TYPE,
+      Metadata: {
+        originalName: filename,
+        uploadId,
+        uploadedAt: new Date().toISOString(),
+        contentLength: contentToUpload.length.toString(),
+        piiRedacted: redactionResult.hasPII ? 'true' : 'false',
+        piiRedactionCount: redactionResult.redactionCount.toString()
+      }
+    })
+  }
+
+  /**
+   * Create successful upload response
+   * @private
+   */
+  _createUploadResponse(
+    uploadId,
+    filename,
+    contentToUpload,
+    key,
+    redactionResult
+  ) {
+    return {
+      success: true,
+      bucket: this.bucket,
+      key,
+      location: `s3://${this.bucket}/${key}`,
+      fileId: uploadId,
+      filename,
+      size: contentToUpload.length,
+      contentType: 'text/plain',
+      piiRedacted: redactionResult.hasPII,
+      piiRedactionCount: redactionResult.redactionCount
+    }
+  }
+
+  /**
    * Upload text content to S3
    * @param {string} textContent - Text content to upload
    * @param {string} uploadId - Unique upload ID
@@ -153,7 +234,7 @@ class S3Uploader {
    * @returns {Promise<Object>} Upload result
    */
   async uploadTextContent(textContent, uploadId, title = 'Text Content') {
-    const filename = `${title.replace(/[^a-zA-Z0-9-_]/g, '_')}.txt`
+    const filename = `${title.replaceAll(/[^a-zA-Z0-9-_]/g, '_')}.txt`
     const key = `${this.pathPrefix}/${uploadId}/${filename}`
 
     // Redact PII from content before uploading to S3
@@ -180,44 +261,22 @@ class S3Uploader {
 
     // Mock mode - simulate successful upload without actually uploading
     if (this.mockMode) {
-      logger.warn(
-        {
-          uploadId,
-          filename,
-          contentLength: contentToUpload.length,
-          hasPII: redactionResult.hasPII
-        },
-        '[MOCK MODE] Simulating S3 text upload - not actually uploading'
-      )
-
-      return {
-        success: true,
-        bucket: this.bucket,
-        key,
-        location: `s3://${this.bucket}/${key}`,
-        fileId: uploadId,
+      return this._createMockUploadResponse(
+        uploadId,
         filename,
-        size: contentToUpload.length,
-        contentType: 'text/plain',
-        piiRedacted: redactionResult.hasPII,
-        piiRedactionCount: redactionResult.redactionCount
-      }
+        contentToUpload,
+        key,
+        redactionResult
+      )
     }
 
-    const command = new PutObjectCommand({
-      Bucket: this.bucket,
-      Key: key,
-      Body: Buffer.from(contentToUpload, 'utf-8'),
-      ContentType: 'text/plain',
-      Metadata: {
-        originalName: filename,
-        uploadId,
-        uploadedAt: new Date().toISOString(),
-        contentLength: contentToUpload.length.toString(),
-        piiRedacted: redactionResult.hasPII ? 'true' : 'false',
-        piiRedactionCount: redactionResult.redactionCount.toString()
-      }
-    })
+    const command = this._createPutCommand(
+      key,
+      contentToUpload,
+      filename,
+      uploadId,
+      redactionResult
+    )
 
     try {
       await this.s3Client.send(command)
@@ -237,18 +296,13 @@ class S3Uploader {
         piiRedactionCount: redactionResult.redactionCount
       })
 
-      return {
-        success: true,
-        bucket: this.bucket,
-        key,
-        location: `s3://${this.bucket}/${key}`,
-        fileId: uploadId,
+      return this._createUploadResponse(
+        uploadId,
         filename,
-        size: contentToUpload.length,
-        contentType: 'text/plain',
-        piiRedacted: redactionResult.hasPII,
-        piiRedactionCount: redactionResult.redactionCount
-      }
+        contentToUpload,
+        key,
+        redactionResult
+      )
     } catch (error) {
       const endTime = performance.now()
       const duration = Math.round(endTime - startTime)
