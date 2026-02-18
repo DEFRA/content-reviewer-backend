@@ -582,10 +582,13 @@ class ReviewRepositoryS3 {
       }
 
       // First, sort ALL S3 objects by LastModified (most recent first)
-      // This ensures we process the most recent files
-      const sortedContents = response.Contents.sort(
-        (a, b) => b.LastModified - a.LastModified
-      )
+      // This ensures we process the most recent files without mutating the original array
+      const sortedContents = response.Contents.slice().sort((a, b) => {
+        return (
+          new Date(b.LastModified).getTime() -
+          new Date(a.LastModified).getTime()
+        )
+      })
 
       // Fetch the actual review data for the most recent objects
       // Now we take the limit AFTER sorting, ensuring we get the truly most recent
