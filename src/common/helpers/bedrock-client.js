@@ -7,6 +7,10 @@ import { createLogger } from './logging/logger.js'
 
 const logger = createLogger()
 
+const ERROR_MESSAGES = {
+  SERIALIZE_ERROR: 'Could not serialize full error'
+}
+
 /**
  * CDP-Compliant Bedrock Client
  *
@@ -58,6 +62,171 @@ class BedrockClient {
   }
 
   /**
+   * Extract error details from AWS SDK errors
+   * @private
+   */
+  _extractErrorDetails(error) {
+    const errorDetails = {
+      name: error.name,
+      message: error.message,
+      code: error.code,
+      statusCode: error.$metadata?.httpStatusCode,
+      requestId: error.$metadata?.requestId,
+      extendedRequestId: error.$metadata?.extendedRequestId,
+      $fault: error.$fault,
+      $service: error.$service,
+      stack: error.stack
+    }
+
+    try {
+      errorDetails.fullError = JSON.stringify(error)
+    } catch (serializeError) {
+      logger.warn(ERROR_MESSAGES.SERIALIZE_ERROR, {
+        error: serializeError.message
+      })
+      errorDetails.serializationError = ERROR_MESSAGES.SERIALIZE_ERROR
+    }
+
+    return errorDetails
+  }
+
+  /**
+   * Handle specific AWS error types
+   * @private
+   */
+  _handleAwsError(error) {
+    if (error.name === 'CredentialsProviderError') {
+      logger.error('AWS Credential diagnostics', {
+        awsProfile: process.env.AWS_PROFILE || 'none',
+        hasAccessKeyId: !!process.env.AWS_ACCESS_KEY_ID,
+        hasSecretAccessKey: !!process.env.AWS_SECRET_ACCESS_KEY,
+        hasSessionToken: !!process.env.AWS_SESSION_TOKEN,
+        nodeEnv: process.env.NODE_ENV,
+        awsRegion: this.region
+      })
+      throw new Error(
+        'AWS credentials not found. In CDP, ensure EC2 instance has IAM role with Bedrock permissions.'
+      )
+    }
+
+    if (error.name === 'AccessDeniedException') {
+      throw new Error(
+        'Access denied to Bedrock. Ensure IAM role has bedrock:InvokeModel permission.'
+      )
+    }
+
+    if (error.name === 'ResourceNotFoundException') {
+      throw new Error(
+        `Bedrock resource not found. Check inference profile ARN: ${this.inferenceProfileArn}`
+      )
+    }
+
+    if (error.name === 'ThrottlingException') {
+      throw new Error(
+        'Bedrock API token quota exceeded (too many tokens per minute). Please try again later.'
+      )
+    }
+
+    if (error.name === 'ValidationException') {
+      throw new Error(`Bedrock validation error: ${error.message}`)
+    }
+
+    if (error.name === 'ServiceUnavailableException') {
+      throw new Error('Bedrock service temporarily unavailable. Please retry.')
+    }
+
+    if (error.name === 'TimeoutError' || error.code === 'ETIMEDOUT') {
+      throw new Error(
+        'Bedrock API request timed out. The request took too long to process.'
+      )
+    }
+
+    throw new Error(`Bedrock API error: ${error.message}`)
+  }
+
+  /**
+   * Process Bedrock API response
+   * @private
+   */
+  _processResponse(response) {
+    const responseText = response.output?.message?.content?.[0]?.text || ''
+
+    const usage = {
+      inputTokens: response.usage?.inputTokens || 0,
+      outputTokens: response.usage?.outputTokens || 0,
+      totalTokens: response.usage?.totalTokens || 0
+    }
+
+    const guardrailAssessment = {
+      action: response.trace?.guardrail?.action || 'NONE',
+      assessments: response.trace?.guardrail?.assessments || []
+    }
+
+    logger.info('Received response from Bedrock', {
+      responseLength: responseText.length,
+      usage,
+      guardrailAction: guardrailAssessment.action
+    })
+
+    if (guardrailAssessment.action === 'BLOCKED') {
+      logger.warn('Content blocked by guardrail', { guardrailAssessment })
+      return {
+        success: false,
+        blocked: true,
+        reason: 'Content was blocked by content safety guardrails',
+        guardrailAssessment
+      }
+    }
+
+    return {
+      success: true,
+      blocked: false,
+      content: responseText,
+      usage,
+      guardrailAssessment,
+      stopReason: response.stopReason
+    }
+  }
+
+  /**
+   * Build messages array for Bedrock API
+   * @private
+   */
+  _buildMessages(userMessage, conversationHistory) {
+    return [
+      ...conversationHistory,
+      {
+        role: 'user',
+        content: [{ text: userMessage }]
+      }
+    ]
+  }
+
+  /**
+   * Build guardrail configuration
+   * @private
+   */
+  _buildGuardrailConfig() {
+    return {
+      guardrailIdentifier: this.guardrailArn,
+      guardrailVersion: this.guardrailVersion,
+      trace: 'enabled'
+    }
+  }
+
+  /**
+   * Build inference configuration
+   * @private
+   */
+  _buildInferenceConfig() {
+    return {
+      maxTokens: this.maxTokens,
+      temperature: this.temperature,
+      topP: this.topP
+    }
+  }
+
+  /**
    * Send a message to Claude and get a response
    *
    * @param {string} userMessage - The user's message/prompt
@@ -70,161 +239,23 @@ class BedrockClient {
     }
 
     try {
-      // Build messages array (conversation history + new message)
-      const messages = [
-        ...conversationHistory,
-        {
-          role: 'user',
-          content: [{ text: userMessage }]
-        }
-      ]
+      const messages = this._buildMessages(userMessage, conversationHistory)
+      const guardrailConfig = this._buildGuardrailConfig()
+      const inferenceConfig = this._buildInferenceConfig()
 
-      // Create guardrail configuration
-      const guardrailConfig = {
-        guardrailIdentifier: this.guardrailArn,
-        guardrailVersion: this.guardrailVersion,
-        trace: 'enabled'
-      }
-
-      // Build inference configuration
-      const inferenceConfig = {
-        maxTokens: this.maxTokens,
-        temperature: this.temperature,
-        topP: this.topP
-      }
-
-      // Create the Converse command
       const command = new ConverseCommand({
-        modelId: this.inferenceProfileArn, // Use inference profile ARN, not model ID
+        modelId: this.inferenceProfileArn,
         messages,
         inferenceConfig,
         guardrailConfig
       })
 
-      // Call Bedrock
       const response = await this.client.send(command)
-
-      // Extract the text content from the response
-      const responseText = response.output?.message?.content?.[0]?.text || ''
-
-      // Extract usage statistics
-      const usage = {
-        inputTokens: response.usage?.inputTokens || 0,
-        outputTokens: response.usage?.outputTokens || 0,
-        totalTokens: response.usage?.totalTokens || 0
-      }
-
-      // Extract guardrail assessment
-      const guardrailAssessment = {
-        action: response.trace?.guardrail?.action || 'NONE',
-        assessments: response.trace?.guardrail?.assessments || []
-      }
-
-      logger.info('Received response from Bedrock', {
-        responseLength: responseText.length,
-        usage,
-        guardrailAction: guardrailAssessment.action
-      })
-
-      // Check if content was blocked by guardrail
-      if (guardrailAssessment.action === 'BLOCKED') {
-        logger.warn('Content blocked by guardrail', { guardrailAssessment })
-        return {
-          success: false,
-          blocked: true,
-          reason: 'Content was blocked by content safety guardrails',
-          guardrailAssessment
-        }
-      }
-
-      return {
-        success: true,
-        blocked: false,
-        content: responseText,
-        usage,
-        guardrailAssessment,
-        stopReason: response.stopReason
-      }
+      return this._processResponse(response)
     } catch (error) {
-      // Extract all possible error properties from AWS SDK errors
-      const errorDetails = {
-        name: error.name,
-        message: error.message,
-        code: error.code,
-        statusCode: error.$metadata?.httpStatusCode,
-        requestId: error.$metadata?.requestId,
-        extendedRequestId: error.$metadata?.extendedRequestId,
-        $fault: error.$fault,
-        $service: error.$service,
-        stack: error.stack
-      }
-
-      // Try to serialize the full error object
-      try {
-        errorDetails.fullError = JSON.stringify(
-          error,
-          Object.getOwnPropertyNames(error),
-          2
-        )
-      } catch (serializeError) {
-        errorDetails.serializationError = 'Could not serialize full error'
-      }
-
-      // Log with all extracted details
-      logger.error('Error calling Bedrock API', errorDetails)
-
-      // Handle credential errors with extra diagnostics
-      if (error.name === 'CredentialsProviderError') {
-        logger.error('AWS Credential diagnostics', {
-          awsProfile: process.env.AWS_PROFILE || 'none',
-          hasAccessKeyId: !!process.env.AWS_ACCESS_KEY_ID,
-          hasSecretAccessKey: !!process.env.AWS_SECRET_ACCESS_KEY,
-          hasSessionToken: !!process.env.AWS_SESSION_TOKEN,
-          nodeEnv: process.env.NODE_ENV,
-          awsRegion: this.region
-        })
-
-        throw new Error(
-          'AWS credentials not found. In CDP, ensure EC2 instance has IAM role with Bedrock permissions.'
-        )
-      }
-
-      // Handle specific AWS errors
-      if (error.name === 'AccessDeniedException') {
-        throw new Error(
-          'Access denied to Bedrock. Ensure IAM role has bedrock:InvokeModel permission.'
-        )
-      }
-
-      if (error.name === 'ResourceNotFoundException') {
-        throw new Error(
-          `Bedrock resource not found. Check inference profile ARN: ${this.inferenceProfileArn}`
-        )
-      }
-
-      if (error.name === 'ThrottlingException') {
-        throw new Error(
-          'Bedrock API token quota exceeded (too many tokens per minute). Please try again later.'
-        )
-      }
-
-      if (error.name === 'ValidationException') {
-        throw new Error(`Bedrock validation error: ${error.message}`)
-      }
-
-      if (error.name === 'ServiceUnavailableException') {
-        throw new Error(
-          'Bedrock service temporarily unavailable. Please retry.'
-        )
-      }
-
-      if (error.name === 'TimeoutError' || error.code === 'ETIMEDOUT') {
-        throw new Error(
-          'Bedrock API request timed out. The request took too long to process.'
-        )
-      }
-
-      throw new Error(`Bedrock API error: ${error.message}`)
+      const errorDetails = this._extractErrorDetails(error)
+      logger.error('Bedrock API error', errorDetails)
+      return this._handleAwsError(error)
     }
   }
 

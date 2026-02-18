@@ -15,7 +15,7 @@ function parseScores(scoresText) {
     if (match) {
       const [, category, score, note] = match
       scores[category.trim()] = {
-        score: parseInt(score),
+        score: Number.parseInt(score),
         note: note.trim()
       }
     }
@@ -45,7 +45,7 @@ function parseReviewedContent(contentText) {
   }
 
   // Remove markers to get plain text
-  plainText = contentText.replace(/\[ISSUE:[^\]]+]|\[\/ISSUE]/g, '')
+  plainText = contentText.replaceAll(/\[ISSUE:[^\]]+]|\[\/ISSUE]/g, '')
 
   return {
     plainText: plainText.trim(),
@@ -61,30 +61,29 @@ function parseImprovements(improvementsText) {
   const blocks = improvementsText.split('[PRIORITY:')
 
   for (const block of blocks) {
-    if (!block.trim()) continue
+    // Skip empty blocks and extract severity level
+    const severityMatch = block.trim() && block.match(/^([^\]]+)\]/)
 
-    // Extract severity level
-    const severityMatch = block.match(/^([^\]]+)\]/)
-    if (!severityMatch) continue
+    if (severityMatch) {
+      const severity = severityMatch[1].trim().toLowerCase()
 
-    const severity = severityMatch[1].trim().toLowerCase()
+      // Extract each field
+      const categoryMatch = block.match(/CATEGORY:\s*([^\n]+)/i)
+      const issueMatch = block.match(/ISSUE:\s*([^\n]+)/i)
+      const whyMatch = block.match(/WHY:\s*([^\n]+)/i)
+      const currentMatch = block.match(/CURRENT:\s*([^\n]+)/i)
+      const suggestedMatch = block.match(/SUGGESTED:\s*([^\n]+)/i)
 
-    // Extract each field
-    const categoryMatch = block.match(/CATEGORY:\s*([^\n]+)/i)
-    const issueMatch = block.match(/ISSUE:\s*([^\n]+)/i)
-    const whyMatch = block.match(/WHY:\s*([^\n]+)/i)
-    const currentMatch = block.match(/CURRENT:\s*([^\n]+)/i)
-    const suggestedMatch = block.match(/SUGGESTED:\s*([^\n]+)/i)
-
-    if (categoryMatch && issueMatch && whyMatch) {
-      improvements.push({
-        severity,
-        category: categoryMatch[1].trim(),
-        issue: issueMatch[1].trim(),
-        why: whyMatch[1].trim(),
-        current: currentMatch ? currentMatch[1].trim() : '',
-        suggested: suggestedMatch ? suggestedMatch[1].trim() : ''
-      })
+      if (categoryMatch && issueMatch && whyMatch) {
+        improvements.push({
+          severity,
+          category: categoryMatch[1].trim(),
+          issue: issueMatch[1].trim(),
+          why: whyMatch[1].trim(),
+          current: currentMatch ? currentMatch[1].trim() : '',
+          suggested: suggestedMatch ? suggestedMatch[1].trim() : ''
+        })
+      }
     }
   }
 
