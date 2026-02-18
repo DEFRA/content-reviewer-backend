@@ -54,36 +54,51 @@ function parseReviewedContent(contentText) {
 }
 
 /**
+ * Extract field value from block
+ */
+function extractField(block, fieldName) {
+  const match = block.match(new RegExp(`${fieldName}:\\s*([^\n]+)`, 'i'))
+  return match ? match[1].trim() : ''
+}
+
+/**
+ * Parse a single improvement block
+ */
+function parseImprovementBlock(block) {
+  const severityMatch = block.trim() && block.match(/^([^\]]+)\]/)
+  if (!severityMatch) {
+    return null
+  }
+
+  const category = extractField(block, 'CATEGORY')
+  const issue = extractField(block, 'ISSUE')
+  const why = extractField(block, 'WHY')
+
+  if (!category || !issue || !why) {
+    return null
+  }
+
+  return {
+    severity: severityMatch[1].trim().toLowerCase(),
+    category,
+    issue,
+    why,
+    current: extractField(block, 'CURRENT'),
+    suggested: extractField(block, 'SUGGESTED')
+  }
+}
+
+/**
  * Parse the improvements section
  */
 function parseImprovements(improvementsText) {
-  const improvements = []
   const blocks = improvementsText.split('[PRIORITY:')
+  const improvements = []
 
   for (const block of blocks) {
-    // Skip empty blocks and extract severity level
-    const severityMatch = block.trim() && block.match(/^([^\]]+)\]/)
-
-    if (severityMatch) {
-      const severity = severityMatch[1].trim().toLowerCase()
-
-      // Extract each field
-      const categoryMatch = block.match(/CATEGORY:\s*([^\n]+)/i)
-      const issueMatch = block.match(/ISSUE:\s*([^\n]+)/i)
-      const whyMatch = block.match(/WHY:\s*([^\n]+)/i)
-      const currentMatch = block.match(/CURRENT:\s*([^\n]+)/i)
-      const suggestedMatch = block.match(/SUGGESTED:\s*([^\n]+)/i)
-
-      if (categoryMatch && issueMatch && whyMatch) {
-        improvements.push({
-          severity,
-          category: categoryMatch[1].trim(),
-          issue: issueMatch[1].trim(),
-          why: whyMatch[1].trim(),
-          current: currentMatch ? currentMatch[1].trim() : '',
-          suggested: suggestedMatch ? suggestedMatch[1].trim() : ''
-        })
-      }
+    const improvement = parseImprovementBlock(block)
+    if (improvement) {
+      improvements.push(improvement)
     }
   }
 
