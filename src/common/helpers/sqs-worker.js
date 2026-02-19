@@ -14,17 +14,29 @@ import { parseBedrockResponse } from './review-parser.js'
 
 const logger = createLogger()
 
+// Constants for configuration
+const AWS_REGION = 'aws.region'
+const AWS_ENDPOINT = 'aws.endpoint'
+const MAX_BODY_PREVIEW_LENGTH = 200
+const RECEIPT_HANDLE_PREVIEW_LENGTH = 20
+const BASE_BACKOFF_MS = 5000
+const MAX_BACKOFF_MS = 30000
+const MAX_ERROR_MESSAGE_LENGTH = 100
+const ERROR_MESSAGE_TRUNCATE_LENGTH = 97
+const MAX_CONSECUTIVE_ERRORS = 10
+const POLL_SLEEP_MS = 100
+
 /**
  * SQS Worker to process messages from content review queue
  */
 class SQSWorker {
   constructor() {
     const sqsConfig = {
-      region: config.get('aws.region')
+      region: config.get(AWS_REGION)
     }
 
     // Add endpoint for LocalStack if configured
-    const awsEndpoint = config.get('aws.endpoint')
+    const awsEndpoint = config.get(AWS_ENDPOINT)
     if (awsEndpoint) {
       sqsConfig.endpoint = awsEndpoint
     }
@@ -43,7 +55,7 @@ class SQSWorker {
 
     // Initialize S3 client for downloading files
     const s3Config = {
-      region: config.get('aws.region')
+      region: config.get(AWS_REGION)
     }
     if (awsEndpoint) {
       s3Config.endpoint = awsEndpoint
@@ -99,7 +111,7 @@ class SQSWorker {
     return {
       running: this.isRunning,
       queueUrl: this.queueUrl,
-      region: config.get('aws.region'),
+      region: config.get(AWS_REGION),
       maxMessages: this.maxMessages,
       waitTimeSeconds: this.waitTimeSeconds,
       visibilityTimeout: this.visibilityTimeout,
@@ -114,81 +126,99 @@ class SQSWorker {
    */
   async poll() {
     let consecutiveErrors = 0
-    const maxConsecutiveErrors = 10
 
     while (this.isRunning) {
       try {
-        // Only fetch new messages if we have capacity
-        const availableSlots =
-          this.maxConcurrentRequests - this.currentConcurrentRequests
-
-        if (availableSlots > 0) {
-          const messages = await this.receiveMessages()
-
-          if (messages && messages.length > 0) {
-            logger.info(
-              {
-                messageCount: messages.length,
-                currentConcurrent: this.currentConcurrentRequests,
-                maxConcurrent: this.maxConcurrentRequests,
-                availableSlots
-              },
-              'Received messages from SQS'
-            )
-
-            // Add messages to processing queue and start processing
-            for (const message of messages) {
-              this.enqueueMessage(message)
-            }
-
-            // Reset error counter on successful poll
-            consecutiveErrors = 0
-          }
-        }
+        await this.fetchAndEnqueueMessages()
+        consecutiveErrors = 0
 
         // Process messages from queue with concurrency control
         await this.processQueuedMessages()
 
         // Short sleep between poll cycles
-        await this.sleep(100)
+        await this.sleep(POLL_SLEEP_MS)
       } catch (error) {
         consecutiveErrors++
-
-        logger.error(
-          {
-            error: error.message,
-            errorName: error.name,
-            stack: error.stack,
-            consecutiveErrors,
-            maxConsecutiveErrors
-          },
-          `Error polling SQS queue (${consecutiveErrors}/${maxConsecutiveErrors})`
+        const shouldStop = await this.handlePollingError(
+          error,
+          consecutiveErrors
         )
-
-        // If too many consecutive errors, stop the worker to prevent infinite error loops
-        if (consecutiveErrors >= maxConsecutiveErrors) {
-          logger.error(
-            { consecutiveErrors, maxConsecutiveErrors },
-            'CRITICAL: Too many consecutive SQS polling errors - stopping worker to prevent resource exhaustion'
-          )
-          this.stop()
+        if (shouldStop) {
           break
         }
-
-        // Exponential backoff: wait longer after each error (max 30 seconds)
-        const backoffTime = Math.min(
-          5000 * Math.pow(2, consecutiveErrors - 1),
-          30000
-        )
-        logger.info(
-          { backoffTime, consecutiveErrors },
-          `Waiting ${backoffTime}ms before retry due to polling error`
-        )
-        await this.sleep(backoffTime)
       }
     }
 
     logger.info('SQS polling loop ended')
+  }
+
+  /**
+   * Fetch messages from SQS and enqueue them for processing
+   */
+  async fetchAndEnqueueMessages() {
+    const availableSlots =
+      this.maxConcurrentRequests - this.currentConcurrentRequests
+
+    if (availableSlots <= 0) {
+      return
+    }
+
+    const messages = await this.receiveMessages()
+
+    if (messages?.length > 0) {
+      logger.info(
+        {
+          messageCount: messages.length,
+          currentConcurrent: this.currentConcurrentRequests,
+          maxConcurrent: this.maxConcurrentRequests,
+          availableSlots
+        },
+        'Received messages from SQS'
+      )
+
+      for (const message of messages) {
+        this.enqueueMessage(message)
+      }
+    }
+  }
+
+  /**
+   * Handle polling errors with exponential backoff
+   * @param {Error} error - The error that occurred
+   * @param {number} consecutiveErrors - Number of consecutive errors
+   * @returns {Promise<boolean>} True if worker should stop
+   */
+  async handlePollingError(error, consecutiveErrors) {
+    logger.error(
+      {
+        error: error.message,
+        errorName: error.name,
+        stack: error.stack,
+        consecutiveErrors,
+        maxConsecutiveErrors: MAX_CONSECUTIVE_ERRORS
+      },
+      `Error polling SQS queue (${consecutiveErrors}/${MAX_CONSECUTIVE_ERRORS})`
+    )
+
+    if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+      logger.error(
+        { consecutiveErrors, maxConsecutiveErrors: MAX_CONSECUTIVE_ERRORS },
+        'CRITICAL: Too many consecutive SQS polling errors - stopping worker to prevent resource exhaustion'
+      )
+      this.stop()
+      return true
+    }
+
+    const backoffTime = Math.min(
+      BASE_BACKOFF_MS * Math.pow(2, consecutiveErrors - 1),
+      MAX_BACKOFF_MS
+    )
+    logger.info(
+      { backoffTime, consecutiveErrors },
+      `Waiting ${backoffTime}ms before retry due to polling error`
+    )
+    await this.sleep(backoffTime)
+    return false
   }
 
   /**
@@ -351,7 +381,7 @@ class SQSWorker {
 
     try {
       // Validate message structure
-      if (!message || !message.Body) {
+      if (!message?.Body) {
         logger.error(
           { messageId: message?.MessageId },
           'Invalid SQS message: missing Body'
@@ -372,7 +402,7 @@ class SQSWorker {
           {
             messageId: message.MessageId,
             parseError: parseError.message,
-            bodyPreview: message.Body?.substring(0, 200)
+            bodyPreview: message.Body?.substring(0, MAX_BODY_PREVIEW_LENGTH)
           },
           'Failed to parse SQS message body as JSON - deleting invalid message'
         )
@@ -400,7 +430,9 @@ class SQSWorker {
         reviewId: body.reviewId,
         messageType: body.messageType,
         s3Key: body.s3Key,
-        receiptHandle: message.ReceiptHandle?.substring(0, 20) + '...'
+        receiptHandle:
+          message.ReceiptHandle?.substring(0, RECEIPT_HANDLE_PREVIEW_LENGTH) +
+          '...'
       })
 
       await this.processContentReview(body)
@@ -444,7 +476,6 @@ class SQSWorker {
    * @param {Object} messageBody - Message body from SQS
    */
   async processContentReview(messageBody) {
-    // Use the reviewId as the canonical identifier; fall back to uploadId for older messages
     const reviewId = messageBody.reviewId || messageBody.uploadId
     const uploadId = messageBody.uploadId || messageBody.reviewId
 
@@ -453,7 +484,47 @@ class SQSWorker {
     }
 
     const processingStartTime = performance.now()
+    this.logReviewStart(reviewId, uploadId, messageBody)
 
+    try {
+      await this.updateReviewStatusToProcessing(reviewId)
+      const textContent = await this.extractTextContent(reviewId, messageBody)
+      const bedrockResult = await this.performBedrockReview(
+        reviewId,
+        textContent
+      )
+      const parseResult = await this.parseBedrockResponseData(
+        reviewId,
+        bedrockResult
+      )
+      await this.saveReviewToRepository(reviewId, parseResult, bedrockResult)
+
+      this.logReviewCompletion(
+        reviewId,
+        processingStartTime,
+        bedrockResult,
+        parseResult
+      )
+
+      return {
+        reviewId,
+        status: 'completed',
+        message: 'Review completed successfully'
+      }
+    } catch (error) {
+      await this.handleReviewProcessingError(
+        reviewId,
+        error,
+        processingStartTime
+      )
+      throw error
+    }
+  }
+
+  /**
+   * Log review start information
+   */
+  logReviewStart(reviewId, uploadId, messageBody) {
     logger.info(
       {
         reviewId,
@@ -465,447 +536,451 @@ class SQSWorker {
       },
       '[STEP 5/6] Content review processing started by SQS worker - START'
     )
+  }
 
+  /**
+   * Update review status to processing
+   */
+  async updateReviewStatusToProcessing(reviewId) {
     try {
-      // Update review status to processing - CRITICAL: Do this first!
-      try {
-        const statusUpdateStart = performance.now()
-        await reviewRepository.updateReviewStatus(reviewId, 'processing')
-        const statusUpdateDuration = Math.round(
-          performance.now() - statusUpdateStart
-        )
-        logger.info(
-          {
-            reviewId,
-            durationMs: statusUpdateDuration
-          },
-          `Review status updated to processing in ${statusUpdateDuration}ms`
-        )
-      } catch (statusError) {
-        logger.error(
-          {
-            reviewId,
-            error: statusError.message,
-            stack: statusError.stack
-          },
-          'CRITICAL: Failed to update review status to processing - attempting to continue'
-        )
-        // Continue processing even if status update fails
-        // The review will stay in 'pending' but will be processed
-      }
-
-      let textContent = ''
-
-      // Extract text based on message type
-      if (messageBody.messageType === 'file_review') {
-        // Download file from S3
-        logger.info(
-          {
-            reviewId,
-            s3Bucket: messageBody.s3Bucket,
-            s3Key: messageBody.s3Key
-          },
-          'S3 file download started'
-        )
-
-        const s3StartTime = performance.now()
-
-        const s3Response = await this.s3Client.send(
-          new GetObjectCommand({
-            Bucket: messageBody.s3Bucket,
-            Key: messageBody.s3Key
-          })
-        )
-
-        // Convert stream to buffer
-        const chunks = []
-        for await (const chunk of s3Response.Body) {
-          chunks.push(chunk)
-        }
-        const buffer = Buffer.concat(chunks)
-
-        const s3EndTime = performance.now()
-        const s3Duration = Math.round(s3EndTime - s3StartTime)
-
-        logger.info(
-          {
-            reviewId,
-            s3Key: messageBody.s3Key,
-            downloadedBytes: buffer.length,
-            durationMs: s3Duration
-          },
-          `S3 file downloaded in ${s3Duration}ms`
-        )
-
-        // Extract text from file
-        logger.info(
-          {
-            reviewId,
-            mimeType: messageBody.contentType,
-            fileSize: buffer.length
-          },
-          'Text extraction started'
-        )
-
-        const extractStartTime = performance.now()
-
-        textContent = await textExtractor.extractText(
-          buffer,
-          messageBody.contentType,
-          messageBody.filename
-        )
-
-        const extractEndTime = performance.now()
-        const extractDuration = Math.round(extractEndTime - extractStartTime)
-
-        logger.info(
-          {
-            reviewId,
-            extractedLength: textContent.length,
-            wordCount: textExtractor.countWords(textContent),
-            durationMs: extractDuration
-          },
-          `Text extracted successfully in ${extractDuration}ms`
-        )
-      } else if (messageBody.messageType === 'text_review') {
-        // Download text content from S3 (following reference architecture)
-        logger.info(
-          {
-            reviewId,
-            s3Bucket: messageBody.s3Bucket,
-            s3Key: messageBody.s3Key
-          },
-          'S3 text content download started'
-        )
-
-        const s3StartTime = performance.now()
-
-        const s3Response = await this.s3Client.send(
-          new GetObjectCommand({
-            Bucket: messageBody.s3Bucket,
-            Key: messageBody.s3Key
-          })
-        )
-
-        // Convert stream to string
-        const chunks = []
-        for await (const chunk of s3Response.Body) {
-          chunks.push(chunk)
-        }
-        const buffer = Buffer.concat(chunks)
-
-        textContent = buffer.toString('utf-8')
-
-        const s3EndTime = performance.now()
-        const s3Duration = Math.round(s3EndTime - s3StartTime)
-
-        logger.info(
-          {
-            reviewId,
-            contentLength: textContent.length,
-            durationMs: s3Duration
-          },
-          `S3 text content downloaded in ${s3Duration}ms`
-        )
-      } else {
-        throw new Error(`Unknown message type: ${messageBody.messageType}`)
-      }
-
-      // ============================================
-      // PREPARE PROMPT FOR BEDROCK
-      // ============================================
-      const userPrompt = `Please review the following content:\n\n---\n${textContent}\n---\n\nProvide a comprehensive content review following the guidelines in your system prompt.`
-
-      logger.info(
-        {
-          reviewId,
-          promptLength: userPrompt.length,
-          textContentLength: textContent.length
-        },
-        'Bedrock AI review started'
+      const statusUpdateStart = performance.now()
+      await reviewRepository.updateReviewStatus(reviewId, 'processing')
+      const statusUpdateDuration = Math.round(
+        performance.now() - statusUpdateStart
       )
 
       logger.info(
-        {
-          reviewId,
-          promptLength: userPrompt.length,
-          textContentLength: textContent.length
-        },
-        `User prompt prepared for Bedrock AI review | ReviewId: ${reviewId} | Length: ${userPrompt.length} chars`
+        { reviewId, durationMs: statusUpdateDuration },
+        `Review status updated to processing in ${statusUpdateDuration}ms`
       )
-
-      // Load system prompt from S3
-      const promptLoadStartTime = performance.now()
-      const systemPrompt = await promptManager.getSystemPrompt()
-      const promptLoadEndTime = performance.now()
-      const promptLoadDuration = Math.round(
-        promptLoadEndTime - promptLoadStartTime
-      )
-
-      logger.info(
-        {
-          reviewId,
-          systemPromptLength: systemPrompt.length,
-          durationMs: promptLoadDuration
-        },
-        `System prompt loaded from S3 in ${promptLoadDuration}ms | ReviewId: ${reviewId} | Length: ${systemPrompt.length} chars`
-      )
-
-      // Send to Bedrock with system prompt
-      const bedrockStartTime = performance.now()
-
-      logger.info(
-        {
-          reviewId,
-          userPromptLength: userPrompt.length,
-          systemPromptLength: systemPrompt.length
-        },
-        '[BEDROCK] Sending request to Bedrock AI - START'
-      )
-
-      const bedrockResponse = await bedrockClient.sendMessage(userPrompt, [
-        {
-          role: 'user',
-          content: [{ text: systemPrompt }]
-        },
-        {
-          role: 'assistant',
-          content: [
-            {
-              text: 'I understand. I will review content according to GOV.UK standards and provide structured feedback as specified.'
-            }
-          ]
-        }
-      ])
-
-      const bedrockEndTime = performance.now()
-      const bedrockDuration = Math.round(bedrockEndTime - bedrockStartTime)
-
-      if (!bedrockResponse.success) {
-        logger.error(
-          {
-            reviewId,
-            blocked: bedrockResponse.blocked,
-            reason: bedrockResponse.reason,
-            durationMs: bedrockDuration
-          },
-          `[BEDROCK] AI review FAILED after ${bedrockDuration}ms`
-        )
-
-        throw new Error(
-          bedrockResponse.blocked
-            ? 'Content blocked by guardrails'
-            : 'Bedrock review failed'
-        )
-      }
-
-      logger.info(
-        {
-          reviewId,
-          responseLength: bedrockResponse.content.length,
-          inputTokens: bedrockResponse.usage?.inputTokens,
-          outputTokens: bedrockResponse.usage?.outputTokens,
-          totalTokens: bedrockResponse.usage?.totalTokens,
-          durationMs: bedrockDuration
-        },
-        `[BEDROCK] AI review COMPLETED successfully in ${bedrockDuration}ms (Tokens: ${bedrockResponse.usage?.inputTokens}→${bedrockResponse.usage?.outputTokens})`
-      )
-
-      logger.info(
-        {
-          reviewId,
-          responseLength: bedrockResponse.content.length,
-          inputTokens: bedrockResponse.usage?.inputTokens,
-          outputTokens: bedrockResponse.usage?.outputTokens,
-          totalTokens: bedrockResponse.usage?.totalTokens,
-          durationMs: bedrockDuration
-        },
-        `Bedrock AI review completed successfully in ${bedrockDuration}ms`
-      )
-
-      // ============================================
-      // PARSE BEDROCK RESPONSE
-      // ============================================
-      const parseStart = performance.now()
-      const finalReviewContent = bedrockResponse.content
-
-      // Parse the structured text response from Bedrock into JSON
-      const parsedReview = parseBedrockResponse(finalReviewContent)
-      const parseDuration = Math.round(performance.now() - parseStart)
-
-      logger.info(
-        {
-          reviewId,
-          parsedScoreCount: Object.keys(parsedReview.scores || {}).length,
-          parsedIssueCount: parsedReview.reviewedContent?.issues?.length || 0,
-          parsedImprovementCount: parsedReview.improvements?.length || 0,
-          hasParseError: !!parsedReview.parseError,
-          durationMs: parseDuration
-        },
-        `Bedrock response parsed in ${parseDuration}ms`
-      )
-
-      logger.info(
-        {
-          reviewId,
-          parsedScoreCount: Object.keys(parsedReview.scores || {}).length,
-          parsedIssueCount: parsedReview.reviewedContent?.issues?.length || 0,
-          parsedImprovementCount: parsedReview.improvements?.length || 0,
-          hasParseError: !!parsedReview.parseError,
-          durationMs: parseDuration
-        },
-        `Bedrock response parsed in ${parseDuration}ms`
-      )
-
-      // ============================================
-      // SAVE REVIEW RESULT (WITH PARSED DATA)
-      // ============================================
-      const saveStart = performance.now()
-      await reviewRepository.saveReviewResult(
-        reviewId,
-        {
-          reviewData: parsedReview, // Structured JSON data for rendering
-          rawResponse: finalReviewContent, // Original plain text response
-          guardrailAssessment: bedrockResponse.guardrailAssessment,
-          stopReason: bedrockResponse.stopReason,
-          completedAt: new Date()
-        },
-        bedrockResponse.usage
-      )
-      const saveDuration = Math.round(performance.now() - saveStart)
-
-      logger.info(
-        {
-          reviewId,
-          durationMs: saveDuration
-        },
-        `Review result saved to S3 in ${saveDuration}ms`
-      )
-
-      const processingEndTime = performance.now()
-      const totalProcessingDuration = Math.round(
-        processingEndTime - processingStartTime
-      )
-
-      logger.info(
-        {
-          reviewId,
-          totalDurationMs: totalProcessingDuration,
-          bedrockDurationMs: bedrockDuration,
-          parseDurationMs: parseDuration,
-          saveDurationMs: saveDuration
-        },
-        `[STEP 6/6] Content review processing COMPLETED - TOTAL: ${totalProcessingDuration}ms (Bedrock: ${bedrockDuration}ms, Parse: ${parseDuration}ms, Save: ${saveDuration}ms)`
-      )
-
-      return {
-        reviewId,
-        status: 'completed',
-        message: 'Review completed successfully'
-      }
-    } catch (error) {
-      const processingEndTime = performance.now()
-      const totalProcessingDuration = Math.round(
-        processingEndTime - processingStartTime
-      )
-
+    } catch (statusError) {
       logger.error(
         {
           reviewId,
-          error: error.message,
-          errorName: error.name,
-          stack: error.stack,
-          totalDurationMs: totalProcessingDuration
+          error: statusError.message,
+          stack: statusError.stack
         },
-        `Review processing failed after ${totalProcessingDuration}ms`
+        'CRITICAL: Failed to update review status to processing - attempting to continue'
+      )
+    }
+  }
+
+  /**
+   * Extract text content based on message type
+   */
+  async extractTextContent(reviewId, messageBody) {
+    if (messageBody.messageType === 'file_review') {
+      return this.extractTextFromFile(reviewId, messageBody)
+    }
+
+    if (messageBody.messageType === 'text_review') {
+      return this.extractTextFromS3(reviewId, messageBody)
+    }
+
+    throw new Error(`Unknown message type: ${messageBody.messageType}`)
+  }
+
+  /**
+   * Extract text from uploaded file
+   */
+  async extractTextFromFile(reviewId, messageBody) {
+    logger.info(
+      {
+        reviewId,
+        s3Bucket: messageBody.s3Bucket,
+        s3Key: messageBody.s3Key
+      },
+      'S3 file download started'
+    )
+
+    const s3StartTime = performance.now()
+    const buffer = await this.downloadFromS3(
+      messageBody.s3Bucket,
+      messageBody.s3Key
+    )
+    const s3Duration = Math.round(performance.now() - s3StartTime)
+
+    logger.info(
+      {
+        reviewId,
+        s3Key: messageBody.s3Key,
+        downloadedBytes: buffer.length,
+        durationMs: s3Duration
+      },
+      `S3 file downloaded in ${s3Duration}ms`
+    )
+
+    logger.info(
+      {
+        reviewId,
+        mimeType: messageBody.contentType,
+        fileSize: buffer.length
+      },
+      'Text extraction started'
+    )
+
+    const extractStartTime = performance.now()
+    const textContent = await textExtractor.extractText(
+      buffer,
+      messageBody.contentType,
+      messageBody.filename
+    )
+    const extractDuration = Math.round(performance.now() - extractStartTime)
+
+    logger.info(
+      {
+        reviewId,
+        extractedLength: textContent.length,
+        wordCount: textExtractor.countWords(textContent),
+        durationMs: extractDuration
+      },
+      `Text extracted successfully in ${extractDuration}ms`
+    )
+
+    return textContent
+  }
+
+  /**
+   * Extract text content from S3
+   */
+  async extractTextFromS3(reviewId, messageBody) {
+    logger.info(
+      {
+        reviewId,
+        s3Bucket: messageBody.s3Bucket,
+        s3Key: messageBody.s3Key
+      },
+      'S3 text content download started'
+    )
+
+    const s3StartTime = performance.now()
+    const buffer = await this.downloadFromS3(
+      messageBody.s3Bucket,
+      messageBody.s3Key
+    )
+    const textContent = buffer.toString('utf-8')
+    const s3Duration = Math.round(performance.now() - s3StartTime)
+
+    logger.info(
+      {
+        reviewId,
+        contentLength: textContent.length,
+        durationMs: s3Duration
+      },
+      `S3 text content downloaded in ${s3Duration}ms`
+    )
+
+    return textContent
+  }
+
+  /**
+   * Download file from S3 and return as buffer
+   */
+  async downloadFromS3(bucket, key) {
+    const s3Response = await this.s3Client.send(
+      new GetObjectCommand({
+        Bucket: bucket,
+        Key: key
+      })
+    )
+
+    const chunks = []
+    for await (const chunk of s3Response.Body) {
+      chunks.push(chunk)
+    }
+    return Buffer.concat(chunks)
+  }
+
+  /**
+   * Perform Bedrock AI review
+   */
+  async performBedrockReview(reviewId, textContent) {
+    const userPrompt = `Please review the following content:\n\n---\n${textContent}\n---\n\nProvide a comprehensive content review following the guidelines in your system prompt.`
+
+    logger.info(
+      {
+        reviewId,
+        promptLength: userPrompt.length,
+        textContentLength: textContent.length
+      },
+      `User prompt prepared for Bedrock AI review | ReviewId: ${reviewId} | Length: ${userPrompt.length} chars`
+    )
+
+    const promptLoadStartTime = performance.now()
+    const systemPrompt = await promptManager.getSystemPrompt()
+    const promptLoadDuration = Math.round(
+      performance.now() - promptLoadStartTime
+    )
+
+    logger.info(
+      {
+        reviewId,
+        systemPromptLength: systemPrompt.length,
+        durationMs: promptLoadDuration
+      },
+      `System prompt loaded from S3 in ${promptLoadDuration}ms | ReviewId: ${reviewId} | Length: ${systemPrompt.length} chars`
+    )
+
+    const bedrockStartTime = performance.now()
+
+    logger.info(
+      {
+        reviewId,
+        userPromptLength: userPrompt.length,
+        systemPromptLength: systemPrompt.length
+      },
+      '[BEDROCK] Sending request to Bedrock AI - START'
+    )
+
+    const bedrockResponse = await bedrockClient.sendMessage(userPrompt, [
+      {
+        role: 'user',
+        content: [{ text: systemPrompt }]
+      },
+      {
+        role: 'assistant',
+        content: [
+          {
+            text: 'I understand. I will review content according to GOV.UK standards and provide structured feedback as specified.'
+          }
+        ]
+      }
+    ])
+
+    const bedrockDuration = Math.round(performance.now() - bedrockStartTime)
+
+    if (!bedrockResponse.success) {
+      logger.error(
+        {
+          reviewId,
+          blocked: bedrockResponse.blocked,
+          reason: bedrockResponse.reason,
+          durationMs: bedrockDuration
+        },
+        `[BEDROCK] AI review FAILED after ${bedrockDuration}ms`
       )
 
-      // Convert errors to user-friendly messages for UI display
-      let errorMessage = error.message
+      throw new Error(
+        bedrockResponse.blocked
+          ? 'Content blocked by guardrails'
+          : 'Bedrock review failed'
+      )
+    }
 
-      // Timeout errors
-      if (
-        error.message.includes('timed out') ||
-        error.message.includes('timeout') ||
-        error.message.includes('ETIMEDOUT') ||
-        error.name === 'TimeoutError'
-      ) {
-        errorMessage = 'TIMEOUT'
-      }
-      // Bedrock throttling/rate limit errors - be specific about token quota
-      else if (
-        error.message.includes('token quota') ||
-        error.message.includes('tokens per minute')
-      ) {
-        errorMessage = 'Token Quota Exceeded'
-      } else if (error.message.includes('rate limit')) {
-        errorMessage = 'Rate Limit Exceeded'
-      }
-      // Other Bedrock service errors - make them concise for UI
-      else if (error.message.includes('temporarily unavailable')) {
-        errorMessage = 'Service Temporarily Unavailable'
-      } else if (error.message.includes('Access denied')) {
-        errorMessage = 'Access Denied'
-      } else if (error.message.includes('not found')) {
-        errorMessage = 'Resource Not Found'
-      } else if (error.message.includes('credentials')) {
-        errorMessage = 'Authentication Error'
-      } else if (error.message.includes('validation error')) {
-        errorMessage = 'Invalid Request'
-      } else if (error.message.includes('Bedrock')) {
-        // Generic Bedrock errors - extract just the meaningful part
-        errorMessage = error.message
-          .replace('Bedrock API error: ', '')
-          .substring(0, 100)
-      } else if (error.message.length > 100) {
-        // Truncate very long error messages for UI display
-        errorMessage = error.message.substring(0, 97) + '...'
-      }
+    logger.info(
+      {
+        reviewId,
+        responseLength: bedrockResponse.content.length,
+        inputTokens: bedrockResponse.usage?.inputTokens,
+        outputTokens: bedrockResponse.usage?.outputTokens,
+        totalTokens: bedrockResponse.usage?.totalTokens,
+        durationMs: bedrockDuration
+      },
+      `[BEDROCK] AI review COMPLETED successfully in ${bedrockDuration}ms (Tokens: ${bedrockResponse.usage?.inputTokens}→${bedrockResponse.usage?.outputTokens})`
+    )
 
-      // Save error to database with user-friendly message
-      try {
-        await reviewRepository.saveReviewError(reviewId, errorMessage)
-        logger.info(
-          {
-            reviewId,
-            errorMessage,
-            originalError: error.message
-          },
-          'Review error saved to database - status updated to failed'
-        )
-      } catch (saveError) {
-        logger.error(
-          {
-            reviewId,
-            errorMessage,
-            saveError: saveError.message,
-            saveErrorStack: saveError.stack
-          },
-          'CRITICAL: Failed to save review error - review will be stuck in processing state!'
-        )
+    return { bedrockResponse, bedrockDuration }
+  }
 
-        // Last resort: Try one more time with minimal data
-        try {
-          await reviewRepository.updateReviewStatus(reviewId, 'failed', {
-            error: {
-              message: 'Processing failed - error details unavailable',
-              code: 'SAVE_ERROR_FAILED'
-            }
-          })
-          logger.warn(
-            { reviewId },
-            'Successfully marked review as failed on retry'
-          )
-        } catch (retryError) {
-          logger.error(
-            { reviewId, retryError: retryError.message },
-            'CRITICAL: Review is permanently stuck - manual intervention required'
-          )
+  /**
+   * Parse Bedrock response data
+   */
+  async parseBedrockResponseData(reviewId, bedrockResult) {
+    const parseStart = performance.now()
+    const finalReviewContent = bedrockResult.bedrockResponse.content
+
+    const parsedReview = parseBedrockResponse(finalReviewContent)
+    const parseDuration = Math.round(performance.now() - parseStart)
+
+    logger.info(
+      {
+        reviewId,
+        parsedScoreCount: Object.keys(parsedReview.scores || {}).length,
+        parsedIssueCount: parsedReview.reviewedContent?.issues?.length || 0,
+        parsedImprovementCount: parsedReview.improvements?.length || 0,
+        hasParseError: !!parsedReview.parseError,
+        durationMs: parseDuration
+      },
+      `Bedrock response parsed in ${parseDuration}ms`
+    )
+
+    return { parsedReview, parseDuration, finalReviewContent }
+  }
+
+  /**
+   * Save review to repository
+   */
+  async saveReviewToRepository(reviewId, parseResult, bedrockResult) {
+    const saveStart = performance.now()
+    await reviewRepository.saveReviewResult(
+      reviewId,
+      {
+        reviewData: parseResult.parsedReview,
+        rawResponse: parseResult.finalReviewContent,
+        guardrailAssessment: bedrockResult.bedrockResponse.guardrailAssessment,
+        stopReason: bedrockResult.bedrockResponse.stopReason,
+        completedAt: new Date()
+      },
+      bedrockResult.bedrockResponse.usage
+    )
+    const saveDuration = Math.round(performance.now() - saveStart)
+
+    logger.info(
+      { reviewId, durationMs: saveDuration },
+      `Review result saved to S3 in ${saveDuration}ms`
+    )
+  }
+
+  /**
+   * Log review completion
+   */
+  logReviewCompletion(
+    reviewId,
+    processingStartTime,
+    bedrockResult,
+    parseResult
+  ) {
+    const totalProcessingDuration = Math.round(
+      performance.now() - processingStartTime
+    )
+
+    logger.info(
+      {
+        reviewId,
+        totalDurationMs: totalProcessingDuration,
+        bedrockDurationMs: bedrockResult.bedrockDuration,
+        parseDurationMs: parseResult.parseDuration
+      },
+      `[STEP 6/6] Content review processing COMPLETED - TOTAL: ${totalProcessingDuration}ms (Bedrock: ${bedrockResult.bedrockDuration}ms, Parse: ${parseResult.parseDuration}ms)`
+    )
+  }
+
+  /**
+   * Handle review processing error
+   */
+  async handleReviewProcessingError(reviewId, error, processingStartTime) {
+    const totalProcessingDuration = Math.round(
+      performance.now() - processingStartTime
+    )
+
+    logger.error(
+      {
+        reviewId,
+        error: error.message,
+        errorName: error.name,
+        stack: error.stack,
+        totalDurationMs: totalProcessingDuration
+      },
+      `Review processing failed after ${totalProcessingDuration}ms`
+    )
+
+    const errorMessage = this.formatErrorForUI(error)
+
+    try {
+      await reviewRepository.saveReviewError(reviewId, errorMessage)
+      logger.info(
+        {
+          reviewId,
+          errorMessage,
+          originalError: error.message
+        },
+        'Review error saved to database - status updated to failed'
+      )
+    } catch (saveError) {
+      await this.handleSaveErrorFailure(reviewId, saveError)
+    }
+  }
+
+  /**
+   * Format error message for UI display
+   */
+  formatErrorForUI(error) {
+    const errorPatterns = [
+      {
+        check: () =>
+          error.name === 'TimeoutError' ||
+          error.message.includes('timed out') ||
+          error.message.includes('timeout') ||
+          error.message.includes('ETIMEDOUT'),
+        message: 'TIMEOUT'
+      },
+      {
+        check: () =>
+          error.message.includes('token quota') ||
+          error.message.includes('tokens per minute'),
+        message: 'Token Quota Exceeded'
+      },
+      {
+        check: () => error.message.includes('rate limit'),
+        message: 'Rate Limit Exceeded'
+      },
+      {
+        check: () => error.message.includes('temporarily unavailable'),
+        message: 'Service Temporarily Unavailable'
+      },
+      {
+        check: () => error.message.includes('Access denied'),
+        message: 'Access Denied'
+      },
+      {
+        check: () => error.message.includes('not found'),
+        message: 'Resource Not Found'
+      },
+      {
+        check: () => error.message.includes('credentials'),
+        message: 'Authentication Error'
+      },
+      {
+        check: () => error.message.includes('validation error'),
+        message: 'Invalid Request'
+      }
+    ]
+
+    for (const pattern of errorPatterns) {
+      if (pattern.check()) {
+        return pattern.message
+      }
+    }
+
+    if (error.message.includes('Bedrock')) {
+      return error.message
+        .replace('Bedrock API error: ', '')
+        .substring(0, MAX_ERROR_MESSAGE_LENGTH)
+    }
+
+    if (error.message.length > MAX_ERROR_MESSAGE_LENGTH) {
+      return error.message.substring(0, ERROR_MESSAGE_TRUNCATE_LENGTH) + '...'
+    }
+
+    return error.message
+  }
+
+  /**
+   * Handle failure to save error to database
+   */
+  async handleSaveErrorFailure(reviewId, saveError) {
+    logger.error(
+      {
+        reviewId,
+        saveError: saveError.message,
+        saveErrorStack: saveError.stack
+      },
+      'CRITICAL: Failed to save review error - review will be stuck in processing state!'
+    )
+
+    try {
+      await reviewRepository.updateReviewStatus(reviewId, 'failed', {
+        error: {
+          message: 'Processing failed - error details unavailable',
+          code: 'SAVE_ERROR_FAILED'
         }
-      }
-
-      // Re-throw to mark message as failed (will retry)
-      throw error
+      })
+      logger.warn({ reviewId }, 'Successfully marked review as failed on retry')
+    } catch (retryError) {
+      logger.error(
+        { reviewId, retryError: retryError.message },
+        'CRITICAL: Review is permanently stuck - manual intervention required'
+      )
     }
   }
 
