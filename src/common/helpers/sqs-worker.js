@@ -27,6 +27,18 @@ const MAX_CONSECUTIVE_ERRORS = 10
 const POLL_SLEEP_MS = 100
 
 /**
+ * Truncate receipt handle for logging
+ * @param {string} receiptHandle - Receipt handle to truncate
+ * @returns {string} Truncated receipt handle with ellipsis
+ */
+function truncateReceiptHandle(receiptHandle) {
+  if (!receiptHandle) {
+    return 'undefined'
+  }
+  return receiptHandle.substring(0, RECEIPT_HANDLE_PREVIEW_LENGTH) + '...'
+}
+
+/**
  * SQS Worker to process messages from content review queue
  */
 class SQSWorker {
@@ -286,6 +298,72 @@ class SQSWorker {
   }
 
   /**
+   * Check if error is a critical queue error that should stop the worker
+   * @param {Error} error - The error object
+   * @param {string} errorCode - The error code
+   * @returns {boolean} True if critical error requiring worker stop
+   */
+  isCriticalQueueError(error, errorCode) {
+    // Non-existent queue
+    if (
+      errorCode === 'AWS.SimpleQueueService.NonExistentQueue' ||
+      errorCode === 'QueueDoesNotExist'
+    ) {
+      logger.error(
+        { error: error.message, queueUrl: this.queueUrl, errorCode },
+        'CRITICAL: SQS queue does not exist - stopping worker'
+      )
+      return true
+    }
+
+    // Access denied
+    if (errorCode === 'AccessDenied' || errorCode === 'AccessDeniedException') {
+      logger.error(
+        { error: error.message, queueUrl: this.queueUrl, errorCode },
+        'CRITICAL: Access denied to SQS queue - check IAM permissions - stopping worker'
+      )
+      return true
+    }
+
+    return false
+  }
+
+  /**
+   * Check if error is a retryable error (throttling or network)
+   * @param {Error} error - The error object
+   * @param {string} errorCode - The error code
+   * @returns {boolean} True if error is retryable
+   */
+  isRetryableError(error, errorCode) {
+    // Throttling errors
+    if (
+      errorCode === 'ThrottlingException' ||
+      errorCode === 'RequestThrottled'
+    ) {
+      logger.warn(
+        { error: error.message, errorCode },
+        'SQS request throttled - will retry after delay'
+      )
+      return true
+    }
+
+    // Network/timeout errors
+    if (
+      error.name === 'TimeoutError' ||
+      error.code === 'ETIMEDOUT' ||
+      error.code === 'ECONNRESET'
+    ) {
+      logger.warn(
+        { error: error.message, errorCode: error.code || error.name },
+        'SQS network error - will retry after delay'
+      )
+      return true
+    }
+
+    return false
+  }
+
+  /**
    * Receive messages from SQS queue
    * @returns {Promise<Array>} Array of messages
    */
@@ -303,58 +381,17 @@ class SQSWorker {
       const result = await this.sqsClient.send(command)
       return result.Messages || []
     } catch (error) {
-      // Handle specific AWS SQS errors
       const errorCode = error.Code || error.name
 
-      // Non-existent queue - critical error, stop worker
-      if (
-        errorCode === 'AWS.SimpleQueueService.NonExistentQueue' ||
-        errorCode === 'QueueDoesNotExist'
-      ) {
-        logger.error(
-          { error: error.message, queueUrl: this.queueUrl, errorCode },
-          'CRITICAL: SQS queue does not exist - stopping worker'
-        )
+      // Check for critical errors
+      if (this.isCriticalQueueError(error, errorCode)) {
         this.stop()
         throw error
       }
 
-      // Access denied - critical error, stop worker
-      if (
-        errorCode === 'AccessDenied' ||
-        errorCode === 'AccessDeniedException'
-      ) {
-        logger.error(
-          { error: error.message, queueUrl: this.queueUrl, errorCode },
-          'CRITICAL: Access denied to SQS queue - check IAM permissions - stopping worker'
-        )
-        this.stop()
-        throw error
-      }
-
-      // Throttling - log and retry (don't throw)
-      if (
-        errorCode === 'ThrottlingException' ||
-        errorCode === 'RequestThrottled'
-      ) {
-        logger.warn(
-          { error: error.message, errorCode },
-          'SQS request throttled - will retry after delay'
-        )
-        return [] // Return empty array, will retry on next poll
-      }
-
-      // Network/timeout errors - log and retry
-      if (
-        error.name === 'TimeoutError' ||
-        error.code === 'ETIMEDOUT' ||
-        error.code === 'ECONNRESET'
-      ) {
-        logger.warn(
-          { error: error.message, errorCode: error.code || error.name },
-          'SQS network error - will retry after delay'
-        )
-        return [] // Return empty array, will retry on next poll
+      // Check for retryable errors
+      if (this.isRetryableError(error, errorCode)) {
+        return []
       }
 
       // Generic error - log and retry
@@ -368,7 +405,7 @@ class SQSWorker {
         'Failed to receive messages from SQS - will retry'
       )
 
-      return [] // Return empty array instead of throwing, will retry on next poll
+      return []
     }
   }
 
@@ -434,9 +471,7 @@ class SQSWorker {
       reviewId: body.reviewId,
       messageType: body.messageType,
       s3Key: body.s3Key,
-      receiptHandle:
-        message.ReceiptHandle?.substring(0, RECEIPT_HANDLE_PREVIEW_LENGTH) +
-        '...'
+      receiptHandle: truncateReceiptHandle(message.ReceiptHandle)
     })
   }
 
@@ -1029,10 +1064,7 @@ class SQSWorker {
     try {
       await this.sqsClient.send(command)
       logger.debug(
-        {
-          receiptHandle:
-            receiptHandle.substring(0, RECEIPT_HANDLE_PREVIEW_LENGTH) + '...'
-        },
+        { receiptHandle: truncateReceiptHandle(receiptHandle) },
         'Message deleted from SQS queue'
       )
     } catch (error) {
@@ -1048,8 +1080,7 @@ class SQSWorker {
           {
             error: error.message,
             errorCode,
-            receiptHandle:
-              receiptHandle.substring(0, RECEIPT_HANDLE_PREVIEW_LENGTH) + '...'
+            receiptHandle: truncateReceiptHandle(receiptHandle)
           },
           'Message receipt handle is invalid (message may have already been deleted or expired)'
         )
@@ -1060,8 +1091,7 @@ class SQSWorker {
         {
           error: error.message,
           errorCode,
-          receiptHandle:
-            receiptHandle.substring(0, RECEIPT_HANDLE_PREVIEW_LENGTH) + '...'
+          receiptHandle: truncateReceiptHandle(receiptHandle)
         },
         'Failed to delete message from SQS - message will be reprocessed after visibility timeout'
       )
