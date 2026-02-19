@@ -373,43 +373,26 @@ class SQSWorker {
   }
 
   /**
-   * Process a single message
+   * Validate and parse message body
    * @param {Object} message - SQS message
+   * @returns {Promise<Object|null>} Parsed body or null if invalid
    */
-  async processMessage(message) {
-    const startTime = performance.now()
-
-    try {
-      // Validate message structure
-      if (!message?.Body) {
-        logger.error(
-          { messageId: message?.MessageId },
-          'Invalid SQS message: missing Body'
-        )
-        // Delete invalid message to prevent reprocessing
-        if (message?.ReceiptHandle) {
-          await this.deleteMessage(message.ReceiptHandle)
-        }
-        return
-      }
-
-      // Parse message body
-      let body
-      try {
-        body = JSON.parse(message.Body)
-      } catch (parseError) {
-        logger.error(
-          {
-            messageId: message.MessageId,
-            parseError: parseError.message,
-            bodyPreview: message.Body?.substring(0, MAX_BODY_PREVIEW_LENGTH)
-          },
-          'Failed to parse SQS message body as JSON - deleting invalid message'
-        )
-        // Delete unparseable message to prevent infinite reprocessing
+  async validateAndParseMessage(message) {
+    // Validate message structure
+    if (!message?.Body) {
+      logger.error(
+        { messageId: message?.MessageId },
+        'Invalid SQS message: missing Body'
+      )
+      if (message?.ReceiptHandle) {
         await this.deleteMessage(message.ReceiptHandle)
-        return
       }
+      return null
+    }
+
+    // Parse message body
+    try {
+      const body = JSON.parse(message.Body)
 
       // Validate required fields
       if (!body.uploadId && !body.reviewId) {
@@ -421,28 +404,61 @@ class SQSWorker {
           'SQS message missing both uploadId and reviewId - deleting invalid message'
         )
         await this.deleteMessage(message.ReceiptHandle)
+        return null
+      }
+
+      return body
+    } catch (parseError) {
+      logger.error(
+        {
+          messageId: message.MessageId,
+          parseError: parseError.message,
+          bodyPreview: message.Body?.substring(0, MAX_BODY_PREVIEW_LENGTH)
+        },
+        'Failed to parse SQS message body as JSON - deleting invalid message'
+      )
+      await this.deleteMessage(message.ReceiptHandle)
+      return null
+    }
+  }
+
+  /**
+   * Log message processing start
+   * @param {Object} message - SQS message
+   * @param {Object} body - Parsed message body
+   */
+  logMessageProcessingStart(message, body) {
+    logger.info({
+      messageId: message.MessageId,
+      uploadId: body.uploadId,
+      reviewId: body.reviewId,
+      messageType: body.messageType,
+      s3Key: body.s3Key,
+      receiptHandle:
+        message.ReceiptHandle?.substring(0, RECEIPT_HANDLE_PREVIEW_LENGTH) +
+        '...'
+    })
+  }
+
+  /**
+   * Process a single message
+   * @param {Object} message - SQS message
+   */
+  async processMessage(message) {
+    const startTime = performance.now()
+
+    try {
+      const body = await this.validateAndParseMessage(message)
+      if (!body) {
         return
       }
 
-      logger.info({
-        messageId: message.MessageId,
-        uploadId: body.uploadId,
-        reviewId: body.reviewId,
-        messageType: body.messageType,
-        s3Key: body.s3Key,
-        receiptHandle:
-          message.ReceiptHandle?.substring(0, RECEIPT_HANDLE_PREVIEW_LENGTH) +
-          '...'
-      })
+      this.logMessageProcessingStart(message, body)
 
       await this.processContentReview(body)
-
-      // Delete message from queue after successful processing
       await this.deleteMessage(message.ReceiptHandle)
 
-      const endTime = performance.now()
-      const duration = Math.round(endTime - startTime)
-
+      const duration = Math.round(performance.now() - startTime)
       logger.info(
         {
           messageId: message.MessageId,
@@ -453,9 +469,7 @@ class SQSWorker {
         `SQS message processed successfully in ${duration}ms`
       )
     } catch (error) {
-      const endTime = performance.now()
-      const duration = Math.round(endTime - startTime)
-
+      const duration = Math.round(performance.now() - startTime)
       logger.error(
         {
           messageId: message.MessageId,
@@ -466,8 +480,6 @@ class SQSWorker {
         },
         `Failed to process SQS message after ${duration}ms: ${error.message}`
       )
-      // Message will become visible again after visibility timeout
-      // and will be retried (SQS handles retry logic automatically)
     }
   }
 
@@ -692,20 +704,9 @@ class SQSWorker {
   }
 
   /**
-   * Perform Bedrock AI review
+   * Load system prompt from S3
    */
-  async performBedrockReview(reviewId, textContent) {
-    const userPrompt = `Please review the following content:\n\n---\n${textContent}\n---\n\nProvide a comprehensive content review following the guidelines in your system prompt.`
-
-    logger.info(
-      {
-        reviewId,
-        promptLength: userPrompt.length,
-        textContentLength: textContent.length
-      },
-      `User prompt prepared for Bedrock AI review | ReviewId: ${reviewId} | Length: ${userPrompt.length} chars`
-    )
-
+  async loadSystemPrompt(reviewId) {
     const promptLoadStartTime = performance.now()
     const systemPrompt = await promptManager.getSystemPrompt()
     const promptLoadDuration = Math.round(
@@ -721,6 +722,13 @@ class SQSWorker {
       `System prompt loaded from S3 in ${promptLoadDuration}ms | ReviewId: ${reviewId} | Length: ${systemPrompt.length} chars`
     )
 
+    return { systemPrompt, promptLoadDuration }
+  }
+
+  /**
+   * Send request to Bedrock AI
+   */
+  async sendBedrockRequest(reviewId, userPrompt, systemPrompt) {
     const bedrockStartTime = performance.now()
 
     logger.info(
@@ -780,6 +788,25 @@ class SQSWorker {
     )
 
     return { bedrockResponse, bedrockDuration }
+  }
+
+  /**
+   * Perform Bedrock AI review
+   */
+  async performBedrockReview(reviewId, textContent) {
+    const userPrompt = `Please review the following content:\n\n---\n${textContent}\n---\n\nProvide a comprehensive content review following the guidelines in your system prompt.`
+
+    logger.info(
+      {
+        reviewId,
+        promptLength: userPrompt.length,
+        textContentLength: textContent.length
+      },
+      `User prompt prepared for Bedrock AI review | ReviewId: ${reviewId} | Length: ${userPrompt.length} chars`
+    )
+
+    const { systemPrompt } = await this.loadSystemPrompt(reviewId)
+    return this.sendBedrockRequest(reviewId, userPrompt, systemPrompt)
   }
 
   /**
@@ -1002,7 +1029,10 @@ class SQSWorker {
     try {
       await this.sqsClient.send(command)
       logger.debug(
-        { receiptHandle: receiptHandle.substring(0, 20) + '...' },
+        {
+          receiptHandle:
+            receiptHandle.substring(0, RECEIPT_HANDLE_PREVIEW_LENGTH) + '...'
+        },
         'Message deleted from SQS queue'
       )
     } catch (error) {
@@ -1018,7 +1048,8 @@ class SQSWorker {
           {
             error: error.message,
             errorCode,
-            receiptHandle: receiptHandle.substring(0, 20) + '...'
+            receiptHandle:
+              receiptHandle.substring(0, RECEIPT_HANDLE_PREVIEW_LENGTH) + '...'
           },
           'Message receipt handle is invalid (message may have already been deleted or expired)'
         )
@@ -1029,7 +1060,8 @@ class SQSWorker {
         {
           error: error.message,
           errorCode,
-          receiptHandle: receiptHandle.substring(0, 20) + '...'
+          receiptHandle:
+            receiptHandle.substring(0, RECEIPT_HANDLE_PREVIEW_LENGTH) + '...'
         },
         'Failed to delete message from SQS - message will be reprocessed after visibility timeout'
       )
