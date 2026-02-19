@@ -1,13 +1,496 @@
-import { randomUUID } from 'crypto'
+import { randomUUID } from 'node:crypto'
 import { config } from '../config.js'
 import { reviewRepository } from '../common/helpers/review-repository.js'
 import { sqsClient } from '../common/helpers/sqs-client.js'
 import { s3Uploader } from '../common/helpers/s3-uploader.js'
 
+// HTTP Status Codes
+const HTTP_STATUS = {
+  OK: 200,
+  ACCEPTED: 202,
+  BAD_REQUEST: 400,
+  NOT_FOUND: 404,
+  INTERNAL_SERVER_ERROR: 500
+}
+
+// Constants
+const ENDPOINTS = {
+  REVIEW_TEXT: '/api/review/text',
+  REVIEW_BY_ID: '/api/review/{id}',
+  REVIEWS_LIST: '/api/reviews',
+  REVIEWS_DELETE: '/api/reviews/{reviewId}'
+}
+
+const CORS_CONFIG_KEYS = {
+  ORIGIN: 'cors.origin',
+  CREDENTIALS: 'cors.credentials'
+}
+
+const CONTENT_DEFAULTS = {
+  TITLE: 'Text Content',
+  MIN_LENGTH: 10
+}
+
+const PAGINATION_DEFAULTS = {
+  LIMIT: 50,
+  SKIP: 0
+}
+
+const CONTENT_TYPES = {
+  TEXT_PLAIN: 'text/plain'
+}
+
+const MESSAGE_TYPES = {
+  TEXT_REVIEW: 'text_review'
+}
+
+const SOURCE_TYPES = {
+  TEXT: 'text'
+}
+
+const REVIEW_STATUSES = {
+  PENDING: 'pending',
+  FAILED: 'failed'
+}
+
+const ERROR_CODES = {
+  SQS_SEND_FAILED: 'SQS_SEND_FAILED'
+}
+
 /**
  * Review routes - Async review processing
  * Supports both file uploads and direct text input
  */
+
+// ============ VALIDATION HELPERS ============
+
+/**
+ * Validates text content from request payload
+ * @param {Object} payload - Request payload
+ * @param {Object} logger - Request logger
+ * @returns {Object} Validation result with error info if invalid
+ */
+function validateTextContent(payload, logger) {
+  const { content, title } = payload
+
+  if (!content || typeof content !== 'string') {
+    logger.warn(
+      {
+        endpoint: ENDPOINTS.REVIEW_TEXT,
+        error: 'Content is required and must be a string'
+      },
+      'Text review request rejected - invalid content'
+    )
+    return {
+      valid: false,
+      error: 'Content is required and must be a string',
+      statusCode: HTTP_STATUS.BAD_REQUEST
+    }
+  }
+
+  if (content.length < CONTENT_DEFAULTS.MIN_LENGTH) {
+    logger.warn(
+      {
+        endpoint: ENDPOINTS.REVIEW_TEXT,
+        contentLength: content.length
+      },
+      'Text review request rejected - content too short'
+    )
+    return {
+      valid: false,
+      error: `Content must be at least ${CONTENT_DEFAULTS.MIN_LENGTH} characters`,
+      statusCode: HTTP_STATUS.BAD_REQUEST
+    }
+  }
+
+  const maxCharLength = config.get('contentReview.maxCharLength')
+  if (content.length > maxCharLength) {
+    logger.warn(
+      {
+        endpoint: ENDPOINTS.REVIEW_TEXT,
+        contentLength: content.length,
+        maxCharLength
+      },
+      'Text review request rejected - content too long'
+    )
+    return {
+      valid: false,
+      error: `Content must not exceed ${maxCharLength.toLocaleString()} characters`,
+      statusCode: HTTP_STATUS.BAD_REQUEST
+    }
+  }
+
+  return { valid: true, content, title }
+}
+
+// ============ S3 UPLOAD HELPERS ============
+
+/**
+ * Uploads text content to S3
+ * @param {string} content - Text content to upload
+ * @param {string} reviewId - Review ID
+ * @param {string} title - Content title
+ * @param {Object} logger - Request logger
+ * @returns {Object} S3 upload result with duration
+ */
+async function uploadTextToS3(content, reviewId, title, logger) {
+  const s3UploadStart = performance.now()
+  const s3Result = await s3Uploader.uploadTextContent(
+    content,
+    reviewId,
+    title || CONTENT_DEFAULTS.TITLE
+  )
+  const s3UploadDuration = Math.round(performance.now() - s3UploadStart)
+
+  logger.info(
+    {
+      reviewId,
+      s3Key: s3Result.key,
+      contentLength: content.length,
+      durationMs: s3UploadDuration
+    },
+    `⏱️ [STEP 2/6] Text content uploaded to S3 - COMPLETED in ${s3UploadDuration}ms`
+  )
+
+  return { s3Result, s3UploadDuration }
+}
+
+// ============ DATABASE HELPERS ============
+
+/**
+ * Creates review record in database
+ * @param {string} reviewId - Review ID
+ * @param {Object} s3Result - S3 upload result
+ * @param {string} title - Content title
+ * @param {number} contentLength - Content length in bytes
+ * @param {Object} logger - Request logger
+ * @returns {number} Database creation duration in ms
+ */
+async function createReviewRecord(
+  reviewId,
+  s3Result,
+  title,
+  contentLength,
+  logger
+) {
+  const dbCreateStart = performance.now()
+  await reviewRepository.createReview({
+    id: reviewId,
+    sourceType: SOURCE_TYPES.TEXT,
+    fileName: title || CONTENT_DEFAULTS.TITLE,
+    fileSize: contentLength,
+    mimeType: CONTENT_TYPES.TEXT_PLAIN,
+    s3Key: s3Result.key
+  })
+  const dbCreateDuration = Math.round(performance.now() - dbCreateStart)
+
+  logger.info(
+    {
+      reviewId,
+      s3Key: s3Result.key,
+      fileName: title || CONTENT_DEFAULTS.TITLE,
+      title,
+      filename: title || CONTENT_DEFAULTS.TITLE,
+      durationMs: dbCreateDuration
+    },
+    `⏱️ [STEP 3/6] Review record created in S3 repository - COMPLETED in ${dbCreateDuration}ms`
+  )
+
+  return dbCreateDuration
+}
+
+// ============ SQS QUEUE HELPERS ============
+
+/**
+ * Sends review message to SQS queue
+ * @param {string} reviewId - Review ID
+ * @param {Object} s3Result - S3 upload result
+ * @param {string} title - Content title
+ * @param {number} contentLength - Content length in bytes
+ * @param {Object} headers - Request headers
+ * @param {Object} logger - Request logger
+ * @returns {number} SQS send duration in ms
+ */
+async function queueReviewJob(
+  reviewId,
+  s3Result,
+  title,
+  contentLength,
+  headers,
+  logger
+) {
+  const sqsSendStart = performance.now()
+
+  try {
+    await sqsClient.sendMessage({
+      uploadId: reviewId,
+      reviewId,
+      filename: title || CONTENT_DEFAULTS.TITLE,
+      messageType: MESSAGE_TYPES.TEXT_REVIEW,
+      s3Bucket: s3Result.bucket,
+      s3Key: s3Result.key,
+      s3Location: s3Result.location,
+      contentType: CONTENT_TYPES.TEXT_PLAIN,
+      fileSize: contentLength,
+      userId: headers['x-user-id'] || 'anonymous',
+      sessionId: headers['x-session-id'] || null
+    })
+
+    const sqsSendDuration = Math.round(performance.now() - sqsSendStart)
+
+    logger.info(
+      {
+        reviewId,
+        sqsQueue: 'content_review_queue',
+        durationMs: sqsSendDuration
+      },
+      `⏱️ [STEP 4/6] SQS message sent successfully - COMPLETED in ${sqsSendDuration}ms`
+    )
+
+    return sqsSendDuration
+  } catch (sqsError) {
+    logger.error(
+      {
+        reviewId,
+        error: sqsError.message,
+        errorName: sqsError.name,
+        stack: sqsError.stack
+      },
+      'Failed to send SQS message - marking review as failed'
+    )
+
+    await reviewRepository.updateReviewStatus(
+      reviewId,
+      REVIEW_STATUSES.FAILED,
+      {
+        error: {
+          message: `Failed to queue review: ${sqsError.message}`,
+          code: ERROR_CODES.SQS_SEND_FAILED,
+          timestamp: new Date().toISOString()
+        }
+      }
+    )
+
+    throw sqsError
+  }
+}
+
+// ============ TEXT REVIEW HANDLER HELPERS ============
+
+/**
+ * Processes text review submission
+ * @param {Object} payload - Request payload with content and title
+ * @param {Object} headers - Request headers
+ * @param {Object} logger - Request logger
+ * @returns {Object} Processing result with reviewId and timings
+ */
+async function processTextReviewSubmission(payload, headers, logger) {
+  const { content, title } = payload
+
+  const reviewId = `review_${randomUUID()}`
+
+  logger.info(
+    {
+      reviewId,
+      contentLength: content.length,
+      title: title || CONTENT_DEFAULTS.TITLE
+    },
+    '⏱️ [STEP 1/6] Processing text review request - START'
+  )
+
+  // Upload text content to S3
+  const { s3Result, s3UploadDuration } = await uploadTextToS3(
+    content,
+    reviewId,
+    title,
+    logger
+  )
+
+  // Create review record in database
+  const dbCreateDuration = await createReviewRecord(
+    reviewId,
+    s3Result,
+    title,
+    content.length,
+    logger
+  )
+
+  // Queue review job in SQS
+  const sqsSendDuration = await queueReviewJob(
+    reviewId,
+    s3Result,
+    title,
+    content.length,
+    headers,
+    logger
+  )
+
+  return {
+    reviewId,
+    s3Result,
+    timings: {
+      s3UploadDuration,
+      dbCreateDuration,
+      sqsSendDuration
+    }
+  }
+}
+
+// ============ RESPONSE HELPERS ============
+
+/**
+ * Calculates processing time between two timestamps
+ * @param {Date|string} completedAt - Processing completed timestamp
+ * @param {Date|string} startedAt - Processing started timestamp
+ * @returns {number|null} Processing time in ms or null if not available
+ */
+function calculateProcessingTime(completedAt, startedAt) {
+  if (!completedAt || !startedAt) {
+    return null
+  }
+  return new Date(completedAt).getTime() - new Date(startedAt).getTime()
+}
+
+/**
+ * Formats a review record for API response
+ * @param {Object} review - Review record from database
+ * @returns {Object} Formatted review data
+ */
+function formatReviewForResponse(review) {
+  return {
+    id: review.id || review._id,
+    status: review.status,
+    sourceType: review.sourceType,
+    fileName: review.fileName,
+    fileSize: review.fileSize,
+    createdAt: review.createdAt,
+    updatedAt: review.updatedAt,
+    result: review.result,
+    error: review.error,
+    processingTime: calculateProcessingTime(
+      review.processingCompletedAt,
+      review.processingStartedAt
+    )
+  }
+}
+
+/**
+ * Derives review ID from various possible fields
+ * @param {Object} review - Review record
+ * @returns {string|undefined} Derived ID
+ */
+function deriveReviewId(review) {
+  return review.id || review._id || review.jobId
+}
+
+/**
+ * Checks if review has default or missing fileName
+ * @param {Object} review - Review record
+ * @returns {boolean} True if fileName is default or missing
+ */
+function hasDefaultFileName(review) {
+  return !review.fileName || review.fileName === CONTENT_DEFAULTS.TITLE
+}
+
+/**
+ * Calculates processing time in seconds for review list
+ * @param {Date|string} completedAt - Processing completed timestamp
+ * @param {Date|string} startedAt - Processing started timestamp
+ * @returns {number|null} Processing time in seconds or null
+ */
+function calculateProcessingTimeInSeconds(completedAt, startedAt) {
+  if (!completedAt || !startedAt) {
+    return null
+  }
+  return Math.round(
+    (new Date(completedAt).getTime() - new Date(startedAt).getTime()) / 1000
+  )
+}
+
+/**
+ * Formats a review record for review list API response
+ * @param {Object} review - Review record from database
+ * @param {Object} logger - Request logger for warnings
+ * @returns {Object} Formatted review data
+ */
+function formatReviewForList(review, logger) {
+  const derivedId = deriveReviewId(review)
+
+  if (!derivedId) {
+    logger.warn(
+      { s3Key: review.s3Key },
+      'Review missing id/reviewId; could not derive from s3Key'
+    )
+  }
+
+  if (hasDefaultFileName(review)) {
+    logger.warn(
+      {
+        reviewId: derivedId,
+        fileName: review.fileName,
+        status: review.status,
+        sourceType: review.sourceType
+      },
+      'Review has default or missing fileName'
+    )
+  }
+
+  if (!review.createdAt) {
+    logger.warn(
+      {
+        reviewId: derivedId,
+        createdAt: review.createdAt,
+        updatedAt: review.updatedAt,
+        status: review.status
+      },
+      'Review missing createdAt timestamp'
+    )
+  }
+
+  return {
+    id: derivedId,
+    reviewId: derivedId,
+    status: review.status,
+    sourceType: review.sourceType,
+    fileName: review.fileName,
+    filename: review.fileName,
+    fileSize: review.fileSize,
+    createdAt: review.createdAt,
+    uploadedAt: review.createdAt,
+    updatedAt: review.updatedAt,
+    hasResult: !!review.result,
+    hasError: !!review.error,
+    errorMessage: review.error?.message || review.error || null,
+    processingTime: calculateProcessingTimeInSeconds(
+      review.processingCompletedAt,
+      review.processingStartedAt
+    )
+  }
+}
+
+/**
+ * Determines appropriate error status code based on error message
+ * @param {string} errorMessage - Error message
+ * @returns {number} HTTP status code
+ */
+function getErrorStatusCode(errorMessage) {
+  return errorMessage.includes('not found')
+    ? HTTP_STATUS.NOT_FOUND
+    : HTTP_STATUS.INTERNAL_SERVER_ERROR
+}
+
+/**
+ * Gets CORS configuration object
+ * @returns {Object} CORS configuration
+ */
+function getCorsConfig() {
+  return {
+    origin: config.get(CORS_CONFIG_KEYS.ORIGIN),
+    credentials: config.get(CORS_CONFIG_KEYS.CREDENTIALS)
+  }
+}
+
+// ============ MAIN ROUTE EXPORTS ============
 export const reviewRoutes = {
   plugin: {
     name: 'review-routes',
@@ -237,16 +720,13 @@ export const reviewRoutes = {
        */
       server.route({
         method: 'POST',
-        path: '/api/review/text',
+        path: ENDPOINTS.REVIEW_TEXT,
         options: {
           payload: {
             maxBytes: 1024 * 1024, // 1MB max for text
             parse: true
           },
-          cors: {
-            origin: config.get('cors.origin'),
-            credentials: config.get('cors.credentials')
-          }
+          cors: getCorsConfig()
         },
         handler: async (request, h) => {
           const requestStartTime = performance.now()
@@ -256,7 +736,7 @@ export const reviewRoutes = {
 
             request.logger.info(
               {
-                endpoint: '/api/review/text',
+                endpoint: ENDPOINTS.REVIEW_TEXT,
                 hasContent: !!content,
                 contentLength: content?.length,
                 hasTitle: !!title,
@@ -266,166 +746,27 @@ export const reviewRoutes = {
               `Text review request received with title: "${title || 'NO TITLE PROVIDED'}"`
             )
 
-            if (!content || typeof content !== 'string') {
-              request.logger.warn(
-                {
-                  endpoint: '/api/review/text',
-                  error: 'Content is required and must be a string'
-                },
-                'Text review request rejected - invalid content'
-              )
-
+            // Validate text content
+            const validation = validateTextContent(
+              request.payload,
+              request.logger
+            )
+            if (!validation.valid) {
               return h
                 .response({
                   success: false,
-                  error: 'Content is required and must be a string'
+                  error: validation.error
                 })
-                .code(400)
+                .code(validation.statusCode)
             }
 
-            if (content.length < 10) {
-              request.logger.warn(
-                {
-                  endpoint: '/api/review/text',
-                  contentLength: content.length
-                },
-                'Text review request rejected - content too short'
+            // Process text review submission (upload, record, queue)
+            const { reviewId, s3Result, timings } =
+              await processTextReviewSubmission(
+                request.payload,
+                request.headers,
+                request.logger
               )
-
-              return h
-                .response({
-                  success: false,
-                  error: 'Content must be at least 10 characters'
-                })
-                .code(400)
-            }
-
-            const maxCharLength = config.get('contentReview.maxCharLength')
-            if (content.length > maxCharLength) {
-              request.logger.warn(
-                {
-                  endpoint: '/api/review/text',
-                  contentLength: content.length,
-                  maxCharLength
-                },
-                'Text review request rejected - content too long'
-              )
-
-              return h
-                .response({
-                  success: false,
-                  error: `Content must not exceed ${maxCharLength.toLocaleString()} characters`
-                })
-                .code(400)
-            }
-
-            const reviewId = `review_${randomUUID()}`
-
-            request.logger.info(
-              {
-                reviewId,
-                contentLength: content.length,
-                title: title || 'Text Content'
-              },
-              '⏱️ [STEP 1/6] Processing text review request - START'
-            )
-
-            // Upload text content to S3 (following reference architecture)
-            const s3UploadStart = performance.now()
-            const s3Result = await s3Uploader.uploadTextContent(
-              content,
-              reviewId,
-              title || 'Text Content'
-            )
-            const s3UploadDuration = Math.round(
-              performance.now() - s3UploadStart
-            )
-
-            request.logger.info(
-              {
-                reviewId,
-                s3Key: s3Result.key,
-                contentLength: content.length,
-                durationMs: s3UploadDuration
-              },
-              `⏱️ [STEP 2/6] Text content uploaded to S3 - COMPLETED in ${s3UploadDuration}ms`
-            )
-
-            // Create review record in MongoDB (store S3 reference, not full content)
-            const dbCreateStart = performance.now()
-            await reviewRepository.createReview({
-              id: reviewId,
-              sourceType: 'text',
-              fileName: title || 'Text Content',
-              fileSize: content.length,
-              mimeType: 'text/plain',
-              s3Key: s3Result.key
-            })
-            const dbCreateDuration = Math.round(
-              performance.now() - dbCreateStart
-            )
-
-            request.logger.info(
-              {
-                reviewId,
-                s3Key: s3Result.key,
-                fileName: title || 'Text Content',
-                title,
-                filename: title || 'Text Content',
-                durationMs: dbCreateDuration
-              },
-              `⏱️ [STEP 3/6] Review record created in S3 repository - COMPLETED in ${dbCreateDuration}ms`
-            )
-
-            // Queue review job in SQS (send only reference, not content)
-            let sqsSendDuration = 0
-            try {
-              const sqsSendStart = performance.now()
-              await sqsClient.sendMessage({
-                uploadId: reviewId,
-                reviewId,
-                filename: title || 'Text Content',
-                messageType: 'text_review',
-                s3Bucket: s3Result.bucket,
-                s3Key: s3Result.key,
-                s3Location: s3Result.location,
-                contentType: 'text/plain',
-                fileSize: content.length,
-                userId: request.headers['x-user-id'] || 'anonymous',
-                sessionId: request.headers['x-session-id'] || null
-              })
-              sqsSendDuration = Math.round(performance.now() - sqsSendStart)
-
-              request.logger.info(
-                {
-                  reviewId,
-                  sqsQueue: 'content_review_queue',
-                  durationMs: sqsSendDuration
-                },
-                `⏱️ [STEP 4/6] SQS message sent successfully - COMPLETED in ${sqsSendDuration}ms`
-              )
-            } catch (sqsError) {
-              request.logger.error(
-                {
-                  reviewId,
-                  error: sqsError.message,
-                  errorName: sqsError.name,
-                  stack: sqsError.stack
-                },
-                'Failed to send SQS message - marking review as failed'
-              )
-
-              // Mark review as failed if SQS send fails
-              await reviewRepository.updateReviewStatus(reviewId, 'failed', {
-                error: {
-                  message: `Failed to queue review: ${sqsError.message}`,
-                  code: 'SQS_SEND_FAILED',
-                  timestamp: new Date().toISOString()
-                }
-              })
-
-              throw sqsError
-            }
 
             const requestEndTime = performance.now()
             const requestDuration = Math.round(
@@ -438,22 +779,20 @@ export const reviewRoutes = {
                 contentLength: content.length,
                 s3Key: s3Result.key,
                 totalDurationMs: requestDuration,
-                s3UploadMs: s3UploadDuration,
-                dbCreateMs: dbCreateDuration,
-                sqsSendMs: sqsSendDuration,
-                endpoint: '/api/review/text'
+                ...timings,
+                endpoint: ENDPOINTS.REVIEW_TEXT
               },
-              `⏱️ [UPLOAD PHASE] Text review queued successfully - TOTAL: ${requestDuration}ms (S3: ${s3UploadDuration}ms, DB: ${dbCreateDuration}ms, SQS: ${sqsSendDuration}ms)`
+              `⏱️ [UPLOAD PHASE] Text review queued successfully - TOTAL: ${requestDuration}ms (S3: ${timings.s3UploadDuration}ms, DB: ${timings.dbCreateDuration}ms, SQS: ${timings.sqsSendDuration}ms)`
             )
 
             return h
               .response({
                 success: true,
                 reviewId,
-                status: 'pending',
+                status: REVIEW_STATUSES.PENDING,
                 message: 'Review queued for processing'
               })
-              .code(202)
+              .code(HTTP_STATUS.ACCEPTED)
           } catch (error) {
             const requestEndTime = performance.now()
             const requestDuration = Math.round(
@@ -475,7 +814,7 @@ export const reviewRoutes = {
                 success: false,
                 error: error.message || 'Failed to queue text review'
               })
-              .code(500)
+              .code(HTTP_STATUS.INTERNAL_SERVER_ERROR)
           }
         }
       })
@@ -486,12 +825,9 @@ export const reviewRoutes = {
        */
       server.route({
         method: 'GET',
-        path: '/api/review/{id}',
+        path: ENDPOINTS.REVIEW_BY_ID,
         options: {
-          cors: {
-            origin: config.get('cors.origin'),
-            credentials: config.get('cors.credentials')
-          }
+          cors: getCorsConfig()
         },
         handler: async (request, h) => {
           const requestStartTime = performance.now()
@@ -502,7 +838,7 @@ export const reviewRoutes = {
             request.logger.info(
               {
                 reviewId: id,
-                endpoint: '/api/review/{id}'
+                endpoint: ENDPOINTS.REVIEW_BY_ID
               },
               'Review status request received'
             )
@@ -522,7 +858,7 @@ export const reviewRoutes = {
                   success: false,
                   error: 'Review not found'
                 })
-                .code(404)
+                .code(HTTP_STATUS.NOT_FOUND)
             }
 
             const requestEndTime = performance.now()
@@ -546,24 +882,9 @@ export const reviewRoutes = {
             return h
               .response({
                 success: true,
-                data: {
-                  id: review.id || review._id, // S3 uses 'id', MongoDB used '_id'
-                  status: review.status,
-                  sourceType: review.sourceType,
-                  fileName: review.fileName,
-                  fileSize: review.fileSize,
-                  createdAt: review.createdAt,
-                  updatedAt: review.updatedAt,
-                  result: review.result,
-                  error: review.error,
-                  processingTime:
-                    review.processingCompletedAt && review.processingStartedAt
-                      ? new Date(review.processingCompletedAt).getTime() -
-                        new Date(review.processingStartedAt).getTime()
-                      : null
-                }
+                data: formatReviewForResponse(review)
               })
-              .code(200)
+              .code(HTTP_STATUS.OK)
           } catch (error) {
             const requestEndTime = performance.now()
             const requestDuration = Math.round(
@@ -585,7 +906,7 @@ export const reviewRoutes = {
                 success: false,
                 error: 'Failed to retrieve review'
               })
-              .code(500)
+              .code(HTTP_STATUS.INTERNAL_SERVER_ERROR)
           }
         }
       })
@@ -596,22 +917,23 @@ export const reviewRoutes = {
        */
       server.route({
         method: 'GET',
-        path: '/api/reviews',
+        path: ENDPOINTS.REVIEWS_LIST,
         options: {
-          cors: {
-            origin: config.get('cors.origin'),
-            credentials: config.get('cors.credentials')
-          }
+          cors: getCorsConfig()
         },
         handler: async (request, h) => {
           request.logger.info(
             { query: request.query },
-            '/api/reviews request received'
+            `${ENDPOINTS.REVIEWS_LIST} request received`
           )
 
           try {
-            const limit = parseInt(request.query.limit) || 50
-            const skip = parseInt(request.query.skip) || 0
+            const limit =
+              Number.parseInt(request.query.limit, 10) ||
+              PAGINATION_DEFAULTS.LIMIT
+            const skip =
+              Number.parseInt(request.query.skip, 10) ||
+              PAGINATION_DEFAULTS.SKIP
 
             request.logger.info(
               { limit, skip },
@@ -635,64 +957,9 @@ export const reviewRoutes = {
             )
 
             // Format reviews for response
-            const formattedReviews = reviews.map((review) => {
-              const derivedId = review.id || review._id || review.jobId
-
-              if (!derivedId) {
-                request.logger.warn(
-                  { s3Key: review.s3Key },
-                  'Review missing id/reviewId; could not derive from s3Key'
-                )
-              }
-
-              if (!review.fileName || review.fileName === 'Text Content') {
-                request.logger.warn(
-                  {
-                    reviewId: derivedId,
-                    fileName: review.fileName,
-                    status: review.status,
-                    sourceType: review.sourceType
-                  },
-                  'Review has default or missing fileName'
-                )
-              }
-
-              if (!review.createdAt) {
-                request.logger.warn(
-                  {
-                    reviewId: derivedId,
-                    createdAt: review.createdAt,
-                    updatedAt: review.updatedAt,
-                    status: review.status
-                  },
-                  'Review missing createdAt timestamp'
-                )
-              }
-
-              return {
-                id: derivedId,
-                reviewId: derivedId,
-                status: review.status,
-                sourceType: review.sourceType,
-                fileName: review.fileName,
-                filename: review.fileName, // For frontend compatibility (lowercase)
-                fileSize: review.fileSize,
-                createdAt: review.createdAt,
-                uploadedAt: review.createdAt, // For frontend compatibility
-                updatedAt: review.updatedAt,
-                hasResult: !!review.result,
-                hasError: !!review.error,
-                errorMessage: review.error?.message || review.error || null, // Extract error message from error object
-                processingTime:
-                  review.processingCompletedAt && review.processingStartedAt
-                    ? Math.round(
-                        (new Date(review.processingCompletedAt).getTime() -
-                          new Date(review.processingStartedAt).getTime()) /
-                          1000
-                      )
-                    : null
-              }
-            })
+            const formattedReviews = reviews.map((review) =>
+              formatReviewForList(review, request.logger)
+            )
 
             return h
               .response({
@@ -705,7 +972,7 @@ export const reviewRoutes = {
                   returned: formattedReviews.length
                 }
               })
-              .code(200)
+              .code(HTTP_STATUS.OK)
           } catch (error) {
             request.logger.error(
               {
@@ -719,7 +986,7 @@ export const reviewRoutes = {
                 success: false,
                 error: 'Failed to retrieve reviews'
               })
-              .code(500)
+              .code(HTTP_STATUS.INTERNAL_SERVER_ERROR)
           }
         }
       })
@@ -730,19 +997,16 @@ export const reviewRoutes = {
        */
       server.route({
         method: 'DELETE',
-        path: '/api/reviews/{reviewId}',
+        path: ENDPOINTS.REVIEWS_DELETE,
         options: {
-          cors: {
-            origin: config.get('cors.origin'),
-            credentials: config.get('cors.credentials')
-          }
+          cors: getCorsConfig()
         },
         handler: async (request, h) => {
           const { reviewId } = request.params
 
           request.logger.info(
             { reviewId },
-            'DELETE /api/reviews/{reviewId} request received'
+            `DELETE ${ENDPOINTS.REVIEWS_DELETE} request received`
           )
 
           try {
@@ -766,7 +1030,7 @@ export const reviewRoutes = {
                 deletedCount: result.deletedCount,
                 deletedKeys: result.deletedKeys
               })
-              .code(200)
+              .code(HTTP_STATUS.OK)
           } catch (error) {
             request.logger.error(
               {
@@ -778,7 +1042,7 @@ export const reviewRoutes = {
             )
 
             // Return appropriate error code
-            const statusCode = error.message.includes('not found') ? 404 : 500
+            const statusCode = getErrorStatusCode(error.message)
 
             return h
               .response({

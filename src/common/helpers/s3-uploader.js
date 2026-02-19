@@ -227,20 +227,17 @@ class S3Uploader {
   }
 
   /**
-   * Upload text content to S3
-   * @param {string} textContent - Text content to upload
-   * @param {string} uploadId - Unique upload ID
-   * @param {string} title - Optional title for the content
-   * @returns {Promise<Object>} Upload result
+   * Log upload start information
+   * @private
    */
-  async uploadTextContent(textContent, uploadId, title = 'Text Content') {
-    const filename = `${title.replaceAll(/[^a-zA-Z0-9-_]/g, '_')}.txt`
-    const key = `${this.pathPrefix}/${uploadId}/${filename}`
-
-    // Redact PII from content before uploading to S3
-    const redactionResult = piiRedactor.redactUserContent(textContent)
-    const contentToUpload = redactionResult.redactedText
-
+  _logUploadStart(
+    uploadId,
+    filename,
+    textContent,
+    contentToUpload,
+    redactionResult,
+    key
+  ) {
     logger.info(
       {
         uploadId,
@@ -255,6 +252,76 @@ class S3Uploader {
       redactionResult.hasPII
         ? `S3 text upload started - PII REDACTED (${redactionResult.redactionCount} instances)`
         : 'S3 text content upload started'
+    )
+  }
+
+  /**
+   * Log successful upload
+   * @private
+   */
+  _logUploadSuccess(
+    uploadId,
+    filename,
+    contentToUpload,
+    key,
+    duration,
+    redactionResult
+  ) {
+    logger.info({
+      uploadId,
+      filename,
+      contentLength: contentToUpload.length,
+      bucket: this.bucket,
+      key,
+      s3Location: `s3://${this.bucket}/${key}`,
+      durationMs: duration,
+      piiRedacted: redactionResult.hasPII,
+      piiRedactionCount: redactionResult.redactionCount
+    })
+  }
+
+  /**
+   * Log upload error
+   * @private
+   */
+  _logUploadError(uploadId, filename, key, error, duration) {
+    logger.error(
+      {
+        uploadId,
+        filename,
+        bucket: this.bucket,
+        key,
+        error: error.message,
+        errorName: error.name,
+        errorCode: error.Code,
+        durationMs: duration
+      },
+      `S3 text upload failed after ${duration}ms: ${error.message}`
+    )
+  }
+
+  /**
+   * Upload text content to S3
+   * @param {string} textContent - Text content to upload
+   * @param {string} uploadId - Unique upload ID
+   * @param {string} title - Optional title for the content
+   * @returns {Promise<Object>} Upload result
+   */
+  async uploadTextContent(textContent, uploadId, title = 'Text Content') {
+    const filename = `${title.replaceAll(/[^a-zA-Z0-9-_]/g, '_')}.txt`
+    const key = `${this.pathPrefix}/${uploadId}/${filename}`
+
+    // Redact PII from content before uploading to S3
+    const redactionResult = piiRedactor.redactUserContent(textContent)
+    const contentToUpload = redactionResult.redactedText
+
+    this._logUploadStart(
+      uploadId,
+      filename,
+      textContent,
+      contentToUpload,
+      redactionResult,
+      key
     )
 
     const startTime = performance.now()
@@ -281,20 +348,15 @@ class S3Uploader {
     try {
       await this.s3Client.send(command)
 
-      const endTime = performance.now()
-      const duration = Math.round(endTime - startTime)
-
-      logger.info({
+      const duration = Math.round(performance.now() - startTime)
+      this._logUploadSuccess(
         uploadId,
         filename,
-        contentLength: contentToUpload.length,
-        bucket: this.bucket,
+        contentToUpload,
         key,
-        s3Location: `s3://${this.bucket}/${key}`,
-        durationMs: duration,
-        piiRedacted: redactionResult.hasPII,
-        piiRedactionCount: redactionResult.redactionCount
-      })
+        duration,
+        redactionResult
+      )
 
       return this._createUploadResponse(
         uploadId,
@@ -304,23 +366,8 @@ class S3Uploader {
         redactionResult
       )
     } catch (error) {
-      const endTime = performance.now()
-      const duration = Math.round(endTime - startTime)
-
-      logger.error(
-        {
-          uploadId,
-          filename,
-          bucket: this.bucket,
-          key,
-          error: error.message,
-          errorName: error.name,
-          errorCode: error.Code,
-          durationMs: duration
-        },
-        `S3 text upload failed after ${duration}ms: ${error.message}`
-      )
-
+      const duration = Math.round(performance.now() - startTime)
+      this._logUploadError(uploadId, filename, key, error, duration)
       throw new Error(`S3 text upload failed: ${error.message}`)
     }
   }

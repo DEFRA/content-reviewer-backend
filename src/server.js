@@ -70,7 +70,9 @@ async function createServer() {
 
   const skipWorker = config.get('mockMode.skipSqsWorker')
 
-  if (!skipWorker) {
+  if (skipWorker) {
+    server.logger.info('SQS worker not started (SKIP_SQS_WORKER=true)')
+  } else {
     server.logger.info('Starting SQS worker for content review queue')
     sqsWorker.start().catch((error) => {
       server.logger.error(
@@ -84,8 +86,6 @@ async function createServer() {
       server.logger.info('Stopping SQS worker')
       sqsWorker.stop()
     })
-  } else {
-    server.logger.info('SQS worker not started (SKIP_SQS_WORKER=true)')
   }
 
   return server
