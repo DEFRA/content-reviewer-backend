@@ -131,7 +131,7 @@ function validateTextContent(payload, logger) {
  * @param {string} reviewId - Review ID
  * @param {string} title - Content title
  * @param {Object} logger - Request logger
- * @returns {Object} S3 upload result with duration
+ * @returns {Promise<Object>} S3 upload result with duration
  */
 async function uploadTextToS3(content, reviewId, title, logger) {
   const s3UploadStart = performance.now()
@@ -164,7 +164,7 @@ async function uploadTextToS3(content, reviewId, title, logger) {
  * @param {string} title - Content title
  * @param {number} contentLength - Content length in bytes
  * @param {Object} logger - Request logger
- * @returns {number} Database creation duration in ms
+ * @returns {Promise<number>} Database creation duration in ms
  */
 async function createReviewRecord(
   reviewId,
@@ -209,7 +209,7 @@ async function createReviewRecord(
  * @param {number} contentLength - Content length in bytes
  * @param {Object} headers - Request headers
  * @param {Object} logger - Request logger
- * @returns {number} SQS send duration in ms
+ * @returns {Promise<number>} SQS send duration in ms
  */
 async function queueReviewJob(
   reviewId,
@@ -282,7 +282,7 @@ async function queueReviewJob(
  * @param {Object} payload - Request payload with content and title
  * @param {Object} headers - Request headers
  * @param {Object} logger - Request logger
- * @returns {Object} Processing result with reviewId and timings
+ * @returns {Promise<Object>} Processing result with reviewId and timings
  */
 async function processTextReviewSubmission(payload, headers, logger) {
   const { content, title } = payload
