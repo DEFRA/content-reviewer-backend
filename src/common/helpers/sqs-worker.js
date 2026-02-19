@@ -957,59 +957,48 @@ class SQSWorker {
    * Format error message for UI display
    */
   formatErrorForUI(error) {
+    // Check timeout errors first (includes name check)
+    if (
+      error.name === 'TimeoutError' ||
+      error.message.includes('timed out') ||
+      error.message.includes('timeout') ||
+      error.message.includes('ETIMEDOUT')
+    ) {
+      return 'TIMEOUT'
+    }
+
+    // Define error patterns with their corresponding messages
     const errorPatterns = [
       {
-        check: () =>
-          error.name === 'TimeoutError' ||
-          error.message.includes('timed out') ||
-          error.message.includes('timeout') ||
-          error.message.includes('ETIMEDOUT'),
-        message: 'TIMEOUT'
-      },
-      {
-        check: () =>
-          error.message.includes('token quota') ||
-          error.message.includes('tokens per minute'),
+        keywords: ['token quota', 'tokens per minute'],
         message: 'Token Quota Exceeded'
       },
+      { keywords: ['rate limit'], message: 'Rate Limit Exceeded' },
       {
-        check: () => error.message.includes('rate limit'),
-        message: 'Rate Limit Exceeded'
-      },
-      {
-        check: () => error.message.includes('temporarily unavailable'),
+        keywords: ['temporarily unavailable'],
         message: 'Service Temporarily Unavailable'
       },
-      {
-        check: () => error.message.includes('Access denied'),
-        message: 'Access Denied'
-      },
-      {
-        check: () => error.message.includes('not found'),
-        message: 'Resource Not Found'
-      },
-      {
-        check: () => error.message.includes('credentials'),
-        message: 'Authentication Error'
-      },
-      {
-        check: () => error.message.includes('validation error'),
-        message: 'Invalid Request'
-      }
+      { keywords: ['Access denied'], message: 'Access Denied' },
+      { keywords: ['not found'], message: 'Resource Not Found' },
+      { keywords: ['credentials'], message: 'Authentication Error' },
+      { keywords: ['validation error'], message: 'Invalid Request' }
     ]
 
+    // Check if error message matches any pattern
     for (const pattern of errorPatterns) {
-      if (pattern.check()) {
+      if (pattern.keywords.some((keyword) => error.message.includes(keyword))) {
         return pattern.message
       }
     }
 
+    // Handle Bedrock-specific errors
     if (error.message.includes('Bedrock')) {
       return error.message
         .replace('Bedrock API error: ', '')
         .substring(0, MAX_ERROR_MESSAGE_LENGTH)
     }
 
+    // Truncate long error messages
     if (error.message.length > MAX_ERROR_MESSAGE_LENGTH) {
       return error.message.substring(0, ERROR_MESSAGE_TRUNCATE_LENGTH) + '...'
     }
