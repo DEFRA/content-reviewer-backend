@@ -1,13 +1,27 @@
 import {
   S3Client,
   PutObjectCommand,
-  GetObjectCommand,
-  ListObjectsV2Command,
-  DeleteObjectCommand
+  GetObjectCommand
 } from '@aws-sdk/client-s3'
 import { config } from '../../config.js'
 import { createLogger } from './logging/logger.js'
-import { piiRedactor } from './pii-redactor.js'
+import { redactPIIFromReview } from './review-repository-pii.js'
+import {
+  deleteUploadedContent,
+  deleteReviewMetadataFile,
+  deleteOldReviews as deleteOldReviewsHelper
+} from './review-repository-deletion.js'
+import {
+  preserveImmutableFields,
+  sanitizeAdditionalData,
+  restoreImmutableFields,
+  updateProcessingTimestamps
+} from './review-repository-helpers.js'
+import {
+  getRecentReviews as getRecentReviewsHelper,
+  getReviewCount as getReviewCountHelper
+} from './review-repository-queries.js'
+import { searchReview as searchReviewHelper } from './review-repository-search.js'
 
 const logger = createLogger()
 
@@ -127,76 +141,6 @@ class ReviewRepositoryS3 {
   }
 
   /**
-   * Redact PII from review improvements
-   * @param {Array} improvements - Array of improvement objects
-   * @returns {Array} Redacted improvements
-   */
-  redactImprovements(improvements) {
-    return improvements.map((improvement) => {
-      const redactedImprovement = { ...improvement }
-      if (improvement.current) {
-        const redacted = piiRedactor.redact(improvement.current, {
-          preserveFormat: false
-        })
-        redactedImprovement.current = redacted.redactedText
-      }
-      if (improvement.suggested) {
-        const redacted = piiRedactor.redact(improvement.suggested, {
-          preserveFormat: false
-        })
-        redactedImprovement.suggested = redacted.redactedText
-      }
-      return redactedImprovement
-    })
-  }
-
-  /**
-   * Redact PII from review results
-   * @param {Object} review - Review object
-   * @returns {Object} PII redaction information
-   */
-  redactPIIFromReview(review) {
-    let piiRedactionInfo = { hasPII: false, redactionCount: 0 }
-
-    if (!review.result) {
-      return piiRedactionInfo
-    }
-
-    // Redact PII from raw response
-    if (review.result.rawResponse) {
-      const redactionResult = piiRedactor.redactBedrockResponse(
-        review.result.rawResponse
-      )
-      review.result.rawResponse = redactionResult.redactedText
-      piiRedactionInfo = {
-        hasPII: redactionResult.hasPII,
-        redactionCount: redactionResult.redactionCount,
-        detectedPII: redactionResult.detectedPII
-      }
-    }
-
-    // Redact PII from reviewData
-    if (review.result.reviewData) {
-      if (Array.isArray(review.result.reviewData.improvements)) {
-        review.result.reviewData.improvements = this.redactImprovements(
-          review.result.reviewData.improvements
-        )
-      }
-
-      if (review.result.reviewData.reviewedContent?.plainText) {
-        const redacted = piiRedactor.redact(
-          review.result.reviewData.reviewedContent.plainText,
-          { preserveFormat: false }
-        )
-        review.result.reviewData.reviewedContent.plainText =
-          redacted.redactedText
-      }
-    }
-
-    return piiRedactionInfo
-  }
-
-  /**
    * Save review to S3
    * @param {Object} review - Review object
    * @returns {Promise<void>}
@@ -205,7 +149,7 @@ class ReviewRepositoryS3 {
     const key = this.getReviewKey(review.id)
 
     // Redact PII from review results before saving to S3
-    const piiRedactionInfo = this.redactPIIFromReview(review)
+    const piiRedactionInfo = redactPIIFromReview(review)
 
     logger.info(
       {
@@ -277,7 +221,12 @@ class ReviewRepositoryS3 {
     } catch (error) {
       if (error.name === 'NoSuchKey') {
         // Strategy 2: Search for the review in recent days
-        return this.searchReview(reviewId)
+        return searchReviewHelper(
+          this.s3Client,
+          this.bucket,
+          this.prefix,
+          reviewId
+        )
       }
       logger.error(
         { error: error.message, reviewId },
@@ -285,85 +234,6 @@ class ReviewRepositoryS3 {
       )
       throw error
     }
-  }
-
-  /**
-   * Search for a review across multiple days
-   * @param {string} reviewId - Review ID
-   * @returns {Promise<Object|null>} Review or null if not found
-   */
-  async searchReview(reviewId) {
-    try {
-      const SEARCH_DAYS_BACK = 7
-      for (let daysAgo = 0; daysAgo < SEARCH_DAYS_BACK; daysAgo++) {
-        const review = await this.searchReviewForDay(reviewId, daysAgo)
-        if (review) {
-          return review
-        }
-      }
-
-      logger.warn({ reviewId }, 'Review not found in S3 (searched last 7 days)')
-      return null
-    } catch (error) {
-      logger.error(
-        { error: error.message, reviewId },
-        'Failed to search for review'
-      )
-      throw error
-    }
-  }
-
-  /**
-   * Search for a review in a specific day
-   * @param {string} reviewId - Review ID
-   * @param {number} daysAgo - Number of days back to search
-   * @returns {Promise<Object|null>} Review or null if not found
-   */
-  async searchReviewForDay(reviewId, daysAgo) {
-    const date = new Date()
-    date.setDate(date.getDate() - daysAgo)
-    const year = date.getFullYear()
-    const month = String(date.getMonth() + 1).padStart(2, '0')
-    const day = String(date.getDate()).padStart(2, '0')
-    const prefix = `${this.prefix}${year}/${month}/${day}/`
-
-    const listCommand = new ListObjectsV2Command({
-      Bucket: this.bucket,
-      Prefix: prefix,
-      MaxKeys: 1000
-    })
-
-    const listResponse = await this.s3Client.send(listCommand)
-
-    if (!listResponse.Contents) {
-      return null
-    }
-
-    const matchingKey = listResponse.Contents.find((obj) =>
-      obj.Key.includes(reviewId)
-    )
-
-    if (!matchingKey) {
-      return null
-    }
-
-    return this.fetchReviewByKey(matchingKey.Key)
-  }
-
-  /**
-   * Fetch a review by its S3 key
-   * @param {string} key - S3 key
-   * @returns {Promise<Object>} Review object
-   */
-  async fetchReviewByKey(key) {
-    const getCommand = new GetObjectCommand({
-      Bucket: this.bucket,
-      Key: key
-    })
-
-    const response = await this.s3Client.send(getCommand)
-    const body = await response.Body.transformToString()
-    return JSON.parse(body)
   }
 
   /**
@@ -405,91 +275,6 @@ class ReviewRepositoryS3 {
   }
 
   /**
-   * Preserve immutable fields from a review
-   * @param {Object} review - Review object
-   * @returns {Object} Preserved immutable fields
-   */
-  preserveImmutableFields(review) {
-    return {
-      fileName: review.fileName,
-      createdAt: review.createdAt,
-      s3Key: review.s3Key,
-      id: review.id,
-      sourceType: review.sourceType
-    }
-  }
-
-  /**
-   * Remove immutable fields from additional data and log warnings
-   * @param {Object} additionalData - Additional data to sanitize
-   * @param {string} reviewId - Review ID for logging
-   * @param {Object} preservedFields - Preserved immutable fields
-   * @returns {Object} Sanitized additional data
-   */
-  sanitizeAdditionalData(additionalData, reviewId, preservedFields) {
-    const safeData = { ...additionalData }
-    const immutableKeys = ['fileName', 'createdAt', 's3Key', 'id', 'sourceType']
-
-    immutableKeys.forEach((key) => {
-      if (additionalData[key] !== undefined) {
-        logger.warn(
-          {
-            reviewId,
-            [`attempted${key.charAt(0).toUpperCase() + key.slice(1)}`]:
-              additionalData[key],
-            [`preserved${key.charAt(0).toUpperCase() + key.slice(1)}`]:
-              preservedFields[key]
-          },
-          `Blocked attempt to overwrite ${key} in additionalData`
-        )
-        delete safeData[key]
-      }
-    })
-
-    return safeData
-  }
-
-  /**
-   * Restore immutable fields to review object
-   * @param {Object} review - Review object to restore fields to
-   * @param {Object} preservedFields - Preserved immutable fields
-   * @param {string} reviewId - Review ID for logging
-   */
-  restoreImmutableFields(review, preservedFields, reviewId) {
-    Object.entries(preservedFields).forEach(([key, value]) => {
-      review[key] = value
-
-      if (!review[key] && value) {
-        logger.warn(
-          {
-            reviewId,
-            [`preserved${key.charAt(0).toUpperCase() + key.slice(1)}`]: value
-          },
-          `Restored ${key} after merge`
-        )
-      }
-    })
-  }
-
-  /**
-   * Update processing timestamps based on status
-   * @param {Object} review - Review object
-   * @param {string} status - New status
-   * @param {string} now - Current timestamp
-   */
-  updateProcessingTimestamps(review, status, now) {
-    if (status === 'processing' && !review.processingStartedAt) {
-      review.processingStartedAt = now
-    }
-    if (
-      (status === 'completed' || status === 'failed') &&
-      !review.processingCompletedAt
-    ) {
-      review.processingCompletedAt = now
-    }
-  }
-
-  /**
    * Update review status
    * @param {string} reviewId - Review ID
    * @param {string} status - New status
@@ -515,14 +300,14 @@ class ReviewRepositoryS3 {
     )
 
     const now = new Date().toISOString()
-    const preservedFields = this.preserveImmutableFields(review)
+    const preservedFields = preserveImmutableFields(review)
 
     // Update mutable fields
     review.status = status
     review.updatedAt = now
 
     // Sanitize and merge additional data
-    const safeAdditionalData = this.sanitizeAdditionalData(
+    const safeAdditionalData = sanitizeAdditionalData(
       additionalData,
       reviewId,
       preservedFields
@@ -530,10 +315,10 @@ class ReviewRepositoryS3 {
     Object.assign(review, safeAdditionalData)
 
     // Restore immutable fields
-    this.restoreImmutableFields(review, preservedFields, reviewId)
+    restoreImmutableFields(review, preservedFields, reviewId)
 
     // Update processing timestamps
-    this.updateProcessingTimestamps(review, status, now)
+    updateProcessingTimestamps(review, status, now)
 
     logger.info(
       {
@@ -628,97 +413,10 @@ class ReviewRepositoryS3 {
    * @returns {Promise<Object>} Reviews and pagination info
    */
   async getRecentReviews({ limit = 20, continuationToken = null } = {}) {
-    try {
-      // Fetch enough objects to ensure we can properly sort and limit
-      // System maintains max 100 reviews, so always fetch all 100 to ensure accurate sorting
-      const fetchLimit = 100
-
-      const listCommand = new ListObjectsV2Command({
-        Bucket: this.bucket,
-        Prefix: this.prefix,
-        MaxKeys: fetchLimit,
-        ContinuationToken: continuationToken || undefined
-      })
-
-      const response = await this.s3Client.send(listCommand)
-
-      if (!response.Contents || response.Contents.length === 0) {
-        return {
-          reviews: [],
-          hasMore: false,
-          nextToken: null
-        }
-      }
-
-      // First, sort ALL S3 objects by LastModified (most recent first)
-      // This ensures we process the most recent files without mutating the original array
-      const sortedContents = response.Contents.slice().sort((a, b) => {
-        return (
-          new Date(b.LastModified).getTime() -
-          new Date(a.LastModified).getTime()
-        )
-      })
-
-      // Fetch the actual review data for the most recent objects
-      // Now we take the limit AFTER sorting, ensuring we get the truly most recent
-      const reviewPromises = sortedContents.slice(0, limit).map(async (obj) => {
-        try {
-          const getCommand = new GetObjectCommand({
-            Bucket: this.bucket,
-            Key: obj.Key
-          })
-          const reviewResponse = await this.s3Client.send(getCommand)
-          const body = await reviewResponse.Body.transformToString()
-          const review = JSON.parse(body)
-          // Add S3 LastModified to the review object for accurate sorting/display
-          review.lastModified = obj.LastModified?.toISOString()
-          return review
-        } catch (error) {
-          logger.warn(
-            { key: obj.Key, error: error.message },
-            'Failed to load review'
-          )
-          return null
-        }
-      })
-
-      const reviews = (await Promise.all(reviewPromises)).filter(
-        (r) => r !== null
-      )
-
-      // Sort reviews by lastModified (S3 LastModified) for most accurate ordering
-      // This ensures reviews are sorted by their actual modification time in S3
-      reviews.sort((a, b) => {
-        const aTime = new Date(
-          a.lastModified || a.updatedAt || a.createdAt
-        ).getTime()
-        const bTime = new Date(
-          b.lastModified || b.updatedAt || b.createdAt
-        ).getTime()
-        return bTime - aTime // Most recent first
-      })
-
-      logger.info(
-        {
-          fetchedCount: response.Contents.length,
-          requestedLimit: limit,
-          returnedCount: reviews.length
-        },
-        'Retrieved and sorted reviews from S3'
-      )
-
-      return {
-        reviews,
-        hasMore: response.IsTruncated || false,
-        nextToken: response.NextContinuationToken || null
-      }
-    } catch (error) {
-      logger.error(
-        { error: error.message },
-        'Failed to get recent reviews from S3'
-      )
-      throw error
-    }
+    return getRecentReviewsHelper(this.s3Client, this.bucket, this.prefix, {
+      limit,
+      continuationToken
+    })
   }
 
   /**
@@ -764,78 +462,7 @@ class ReviewRepositoryS3 {
    * @returns {Promise<number>} Total number of reviews
    */
   async getReviewCount() {
-    try {
-      const listCommand = new ListObjectsV2Command({
-        Bucket: this.bucket,
-        Prefix: this.prefix
-      })
-
-      let count = 0
-      let continuationToken = null
-
-      do {
-        listCommand.input.ContinuationToken = continuationToken
-        const response = await this.s3Client.send(listCommand)
-        count += response.KeyCount || 0
-        continuationToken = response.NextContinuationToken
-      } while (continuationToken)
-
-      return count
-    } catch (error) {
-      logger.error({ error: error.message }, 'Failed to get review count')
-      throw error
-    }
-  }
-
-  /**
-   * Delete uploaded content file from S3
-   * @param {string} reviewId - Review ID
-   * @param {string} s3Key - S3 key of the content file
-   * @param {Array} deletedKeys - Array to track deleted keys
-   * @returns {Promise<void>}
-   */
-  async deleteUploadedContent(reviewId, s3Key, deletedKeys) {
-    try {
-      const deleteContentCommand = new DeleteObjectCommand({
-        Bucket: this.bucket,
-        Key: s3Key
-      })
-
-      await this.s3Client.send(deleteContentCommand)
-      deletedKeys.push(s3Key)
-
-      logger.info({ reviewId, s3Key }, 'Deleted uploaded content from S3')
-    } catch (error) {
-      logger.error(
-        {
-          reviewId,
-          s3Key,
-          error: error.message
-        },
-        'Failed to delete uploaded content (may not exist)'
-      )
-      // Continue even if content deletion fails
-    }
-  }
-
-  /**
-   * Delete review metadata file from S3
-   * @param {string} reviewId - Review ID
-   * @param {Array} deletedKeys - Array to track deleted keys
-   * @returns {Promise<void>}
-   */
-  async deleteReviewMetadataFile(reviewId, deletedKeys) {
-    const reviewKey = this.getReviewKey(reviewId)
-
-    const deleteReviewCommand = new DeleteObjectCommand({
-      Bucket: this.bucket,
-      Key: reviewKey
-    })
-
-    await this.s3Client.send(deleteReviewCommand)
-    deletedKeys.push(reviewKey)
-
-    logger.info({ reviewId, reviewKey }, 'Deleted review metadata from S3')
+    return getReviewCountHelper(this.s3Client, this.bucket, this.prefix)
   }
 
   /**
@@ -858,11 +485,24 @@ class ReviewRepositoryS3 {
 
       // Delete the uploaded content file if it exists
       if (review.s3Key) {
-        await this.deleteUploadedContent(reviewId, review.s3Key, deletedKeys)
+        await deleteUploadedContent(
+          this.s3Client,
+          this.bucket,
+          reviewId,
+          review.s3Key,
+          deletedKeys
+        )
       }
 
       // Delete the review metadata file
-      await this.deleteReviewMetadataFile(reviewId, deletedKeys)
+      const reviewKey = this.getReviewKey(reviewId)
+      await deleteReviewMetadataFile(
+        this.s3Client,
+        this.bucket,
+        reviewKey,
+        reviewId,
+        deletedKeys
+      )
 
       logger.info(
         {
@@ -895,123 +535,18 @@ class ReviewRepositoryS3 {
   }
 
   /**
-   * Delete all S3 objects for a specific review
-   * @param {Object} review - Review object to delete
-   * @returns {Promise<boolean>} True if deleted successfully, false otherwise
-   */
-  async deleteSingleOldReview(review) {
-    try {
-      const reviewId = review.id || review.reviewId
-
-      if (!reviewId) {
-        logger.warn(
-          {
-            hasId: !!review.id,
-            hasReviewId: !!review.reviewId,
-            status: review.status,
-            createdAt: review.createdAt
-          },
-          'Skipping review without ID'
-        )
-        return false
-      }
-
-      // List all objects for this review
-      const listCommand = new ListObjectsV2Command({
-        Bucket: this.bucket,
-        Prefix: `${this.prefix}${reviewId}/`
-      })
-
-      const listResponse = await this.s3Client.send(listCommand)
-
-      if (listResponse.Contents && listResponse.Contents.length > 0) {
-        // Delete all objects for this review
-        const deletePromises = listResponse.Contents.map((obj) => {
-          const deleteCommand = new DeleteObjectCommand({
-            Bucket: this.bucket,
-            Key: obj.Key
-          })
-          return this.s3Client.send(deleteCommand)
-        })
-
-        await Promise.all(deletePromises)
-
-        logger.info(
-          {
-            reviewId,
-            filesDeleted: listResponse.Contents.length,
-            createdAt: review.createdAt
-          },
-          'Deleted old review'
-        )
-        return true
-      }
-
-      return false
-    } catch (deleteError) {
-      logger.error(
-        { error: deleteError.message, reviewId: review.id },
-        'Failed to delete individual review'
-      )
-      return false
-    }
-  }
-
-  /**
    * Delete old reviews to maintain storage limits
    * @param {number} keepCount - Number of most recent reviews to keep
    * @returns {Promise<number>} Number of reviews deleted
    */
   async deleteOldReviews(keepCount = 100) {
-    try {
-      logger.info(
-        { maxReviews: keepCount },
-        'Checking if review cleanup is needed'
-      )
-
-      // Get all reviews sorted by most recent first (max 100 reviews in system)
-      const { reviews } = await this.getRecentReviews({ limit: 100 })
-
-      if (reviews.length <= keepCount) {
-        logger.info(
-          { currentCount: reviews.length, maxReviews: keepCount },
-          'No cleanup needed - review count within limit'
-        )
-        return 0
-      }
-
-      // Get reviews to delete (everything after the first maxReviews)
-      const reviewsToDelete = reviews.slice(keepCount)
-
-      logger.info(
-        {
-          totalReviews: reviews.length,
-          keepCount,
-          deleteCount: reviewsToDelete.length
-        },
-        'Starting cleanup of old reviews'
-      )
-
-      let deletedCount = 0
-
-      // Delete old reviews
-      for (const review of reviewsToDelete) {
-        const deleted = await this.deleteSingleOldReview(review)
-        if (deleted) {
-          deletedCount++
-        }
-      }
-
-      logger.info(
-        { deletedCount, requestedDelete: reviewsToDelete.length },
-        'Review cleanup completed'
-      )
-
-      return deletedCount
-    } catch (error) {
-      logger.error({ error: error.message }, 'Failed to delete old reviews')
-      throw error
-    }
+    return deleteOldReviewsHelper(
+      this.s3Client,
+      this.bucket,
+      this.prefix,
+      this.getRecentReviews.bind(this),
+      keepCount
+    )
   }
 
   /**
