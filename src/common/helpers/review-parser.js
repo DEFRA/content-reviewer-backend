@@ -11,14 +11,24 @@ function parseScores(scoresText) {
 
   for (const line of lines) {
     // Match: "Plain English: 4/5 - Good use of simple language"
-    // Fixed: Use possessive quantifier pattern to prevent ReDoS
-    // Pattern: (?=(.*?))\3 mimics possessive behavior, preventing backtracking
-    const match = line.match(/^([^:]+):\s*(\d)\/5\s*-\s*(?=(.*?))\3$/i)
-    if (match) {
-      const [, category, score, , note] = match
-      scores[category.trim()] = {
-        score: Number.parseInt(score),
-        note: note.trim()
+    // Use indexOf to avoid regex backtracking
+    const colonIndex = line.indexOf(':')
+    if (colonIndex > 0) {
+      const category = line.substring(0, colonIndex).trim()
+      const afterColon = line.substring(colonIndex + 1).trim()
+
+      // Check for "X/5 - note" pattern
+      if (afterColon.length >= 3 && /^\d\/5/.test(afterColon)) {
+        const score = afterColon.charAt(0)
+        const dashIndex = afterColon.indexOf('-', 3)
+
+        if (dashIndex > 0) {
+          const note = afterColon.substring(dashIndex + 1).trim()
+          scores[category] = {
+            score: Number.parseInt(score),
+            note
+          }
+        }
       }
     }
   }
@@ -33,26 +43,54 @@ function parseReviewedContent(contentText) {
   const issues = []
   let plainText = contentText
 
-  // Extract all issue markers
-  // Simplified regex: Match [ISSUE:category]text[/ISSUE] with reduced complexity
-  const issueRegex = /\[ISSUE:([^\]]+)\](.*?)(?=\[\/ISSUE\])\[\/ISSUE\]/gs
-  let match
+  // Use indexOf/split to avoid regex backtracking
+  let searchPos = 0
+  while (true) {
+    const startMarkerPos = contentText.indexOf('[ISSUE:', searchPos)
+    if (startMarkerPos === -1) break
 
-  while ((match = issueRegex.exec(contentText)) !== null) {
-    const [, category, text] = match
+    const closeBracketPos = contentText.indexOf(']', startMarkerPos + 7)
+    if (closeBracketPos === -1) break
+
+    const category = contentText.substring(startMarkerPos + 7, closeBracketPos)
+    const endMarkerPos = contentText.indexOf('[/ISSUE]', closeBracketPos + 1)
+    if (endMarkerPos === -1) break
+
+    const text = contentText.substring(closeBracketPos + 1, endMarkerPos)
     issues.push({
       category: category.trim(),
       text: text.trim(),
-      position: match.index
+      position: startMarkerPos
     })
+
+    searchPos = endMarkerPos + 8
   }
 
-  // Remove markers to get plain text
-  // Fixed: Use atomic pattern to prevent backtracking
-  plainText = contentText.replaceAll(
-    /\[ISSUE:(?=[^\]]+)[^\]]+\]|\[\/ISSUE\]/g,
-    ''
-  )
+  // Remove markers to get plain text - use simple string replacement
+  plainText = contentText.split('[/ISSUE]').join('')
+
+  // Remove [ISSUE:category] markers
+  // eslint-disable-next-line no-unused-vars
+  let result = ''
+  let pos = 0
+  let shouldContinue = true
+  while (pos < plainText.length && shouldContinue) {
+    const markerStart = plainText.indexOf('[ISSUE:', pos)
+    if (markerStart === -1) {
+      result += plainText.substring(pos)
+      shouldContinue = false
+    } else {
+      result += plainText.substring(pos, markerStart)
+      const markerEnd = plainText.indexOf(']', markerStart + 7)
+      if (markerEnd === -1) {
+        result += plainText.substring(markerStart)
+        shouldContinue = false
+      } else {
+        pos = markerEnd + 1
+      }
+    }
+  }
+  plainText = result
 
   return {
     plainText: plainText.trim(),
@@ -64,8 +102,22 @@ function parseReviewedContent(contentText) {
  * Extract field value from block
  */
 function extractField(block, fieldName) {
-  const match = block.match(new RegExp(`${fieldName}:\\s*([^\n]+)`, 'i'))
-  return match ? match[1].trim() : ''
+  // Use indexOf instead of regex to avoid backtracking
+  const searchString = `${fieldName}:`
+  const startIndex = block.indexOf(searchString)
+
+  if (startIndex === -1) {
+    return ''
+  }
+
+  const valueStart = startIndex + searchString.length
+  let lineEnd = block.indexOf('\n', valueStart)
+
+  if (lineEnd === -1) {
+    lineEnd = block.length
+  }
+
+  return block.substring(valueStart, lineEnd).trim()
 }
 
 /**
@@ -113,6 +165,43 @@ function parseImprovements(improvementsText) {
 }
 
 /**
+ * Helper function to parse a score line
+ */
+function parseScoreLine(trimmedLine, colonIndex) {
+  const afterColon = trimmedLine.substring(colonIndex + 1).trim()
+
+  // Check if it starts with a digit followed by /5
+  const MIN_SCORE_PATTERN_LENGTH = 3 // Minimum length for "X/5" pattern
+  if (
+    afterColon.length < MIN_SCORE_PATTERN_LENGTH ||
+    !/^\d\/5/.test(afterColon)
+  ) {
+    return null
+  }
+
+  const score = afterColon.charAt(0)
+  // Find the dash separator (either - or –)
+  const DASH_SEARCH_START = 3 // Start searching after "X/5"
+  let dashIndex = afterColon.indexOf('-', DASH_SEARCH_START)
+  if (dashIndex === -1) {
+    dashIndex = afterColon.indexOf('–', DASH_SEARCH_START)
+  }
+
+  if (dashIndex <= 0) {
+    return null
+  }
+
+  const category = trimmedLine.substring(0, colonIndex).trim()
+  const note = afterColon.substring(dashIndex + 1).trim()
+
+  return {
+    category,
+    score: Number.parseInt(score),
+    note
+  }
+}
+
+/**
  * Parse plain text review format (actual Bedrock output)
  * Converts plain text to the expected scores/reviewedContent/improvements format
  */
@@ -130,20 +219,13 @@ function parsePlainTextReview(bedrockResponse) {
     }
 
     // Match "Category: 3/5 - Feedback text"
-    // Use indexOf to avoid regex backtracking issues
     const colonIndex = trimmedLine.indexOf(':')
     if (colonIndex > 0) {
-      const afterColon = trimmedLine.substring(colonIndex + 1).trim()
-      // Match "3/5 - Feedback text" or "3/5 – Feedback text"
-      const scorePattern = /^(\d)\/5\s*[-–]\s*(.+)$/
-      const scoreMatch = afterColon.match(scorePattern)
-
-      if (scoreMatch) {
-        const category = trimmedLine.substring(0, colonIndex).trim()
-        const [, score, note] = scoreMatch
-        scores[category] = {
-          score: Number.parseInt(score),
-          note: note.trim()
+      const scoreData = parseScoreLine(trimmedLine, colonIndex)
+      if (scoreData) {
+        scores[scoreData.category] = {
+          score: scoreData.score,
+          note: scoreData.note
         }
       }
     }
@@ -167,6 +249,67 @@ function parsePlainTextReview(bedrockResponse) {
 }
 
 /**
+ * Parse marker-based review format
+ */
+function parseMarkerBasedReview(bedrockResponse) {
+  const result = {
+    scores: {},
+    reviewedContent: {
+      plainText: '',
+      issues: []
+    },
+    improvements: []
+  }
+
+  // Extract [SCORES] section using indexOf
+  const scoresStart = bedrockResponse.indexOf('[SCORES]')
+  const scoresEnd = bedrockResponse.indexOf('[/SCORES]')
+  if (scoresStart !== -1 && scoresEnd !== -1 && scoresEnd > scoresStart) {
+    const scoresText = bedrockResponse.substring(scoresStart + 8, scoresEnd)
+    result.scores = parseScores(scoresText)
+  }
+
+  // Extract [REVIEWED_CONTENT] section using indexOf
+  const contentStart = bedrockResponse.indexOf('[REVIEWED_CONTENT]')
+  const contentEnd = bedrockResponse.indexOf('[/REVIEWED_CONTENT]')
+  if (contentStart !== -1 && contentEnd !== -1 && contentEnd > contentStart) {
+    const REVIEWED_CONTENT_TAG_LENGTH = '[REVIEWED_CONTENT]'.length
+    const contentText = bedrockResponse.substring(
+      contentStart + REVIEWED_CONTENT_TAG_LENGTH,
+      contentEnd
+    )
+    result.reviewedContent = parseReviewedContent(contentText)
+  }
+
+  // Extract [IMPROVEMENTS] section using indexOf
+  const improvementsStart = bedrockResponse.indexOf('[IMPROVEMENTS]')
+  const improvementsEnd = bedrockResponse.indexOf('[/IMPROVEMENTS]')
+  if (
+    improvementsStart !== -1 &&
+    improvementsEnd !== -1 &&
+    improvementsEnd > improvementsStart
+  ) {
+    const IMPROVEMENTS_TAG_LENGTH = '[IMPROVEMENTS]'.length
+    const improvementsText = bedrockResponse.substring(
+      improvementsStart + IMPROVEMENTS_TAG_LENGTH,
+      improvementsEnd
+    )
+    result.improvements = parseImprovements(improvementsText)
+  }
+
+  logger.info(
+    {
+      scoreCount: Object.keys(result.scores).length,
+      issueCount: result.reviewedContent.issues.length,
+      improvementCount: result.improvements.length
+    },
+    'Parsed Bedrock response with markers'
+  )
+
+  return result
+}
+
+/**
  * Main parser function - converts Bedrock's plain text to structured JSON
  */
 export function parseBedrockResponse(bedrockResponse) {
@@ -182,48 +325,7 @@ export function parseBedrockResponse(bedrockResponse) {
       return parsePlainTextReview(bedrockResponse)
     }
 
-    // Original marker-based parsing
-    const result = {
-      scores: {},
-      reviewedContent: {
-        plainText: '',
-        issues: []
-      },
-      improvements: []
-    }
-
-    const scoresMatch = bedrockResponse.match(
-      /\[SCORES\](?=((?:(?!\[\/SCORES\]).)*?))\1\[\/SCORES\]/s
-    )
-    const contentMatch = bedrockResponse.match(
-      /\[REVIEWED_CONTENT\](?=((?:(?!\[\/REVIEWED_CONTENT\]).)*?))\1\[\/REVIEWED_CONTENT\]/s
-    )
-    const improvementsMatch = bedrockResponse.match(
-      /\[IMPROVEMENTS\](?=((?:(?!\[\/IMPROVEMENTS\]).)*?))\1\[\/IMPROVEMENTS\]/s
-    )
-
-    if (scoresMatch) {
-      result.scores = parseScores(scoresMatch[1])
-    }
-
-    if (contentMatch) {
-      result.reviewedContent = parseReviewedContent(contentMatch[1])
-    }
-
-    if (improvementsMatch) {
-      result.improvements = parseImprovements(improvementsMatch[1])
-    }
-
-    logger.info(
-      {
-        scoreCount: Object.keys(result.scores).length,
-        issueCount: result.reviewedContent.issues.length,
-        improvementCount: result.improvements.length
-      },
-      'Parsed Bedrock response with markers'
-    )
-
-    return result
+    return parseMarkerBasedReview(bedrockResponse)
   } catch (error) {
     logger.error({ error: error.message }, 'Failed to parse Bedrock response')
 
