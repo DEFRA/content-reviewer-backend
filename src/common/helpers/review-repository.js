@@ -345,6 +345,11 @@ class ReviewRepositoryS3 {
    * @returns {Promise<void>}
    */
   async saveReviewResult(reviewId, result, usage) {
+    // 🔍 DEBUG: Log what we're about to save
+    logger.info(
+      `DEBUG saveReviewResult: About to save - ${JSON.stringify({ reviewId, result }).substring(0, 1000)}`
+    )
+
     // Update review status to 'completed' and add result + usage
     // This saves the COMPLETE review object with fileName, createdAt, etc.
     await this.updateReviewStatus(reviewId, 'completed', {
@@ -352,9 +357,11 @@ class ReviewRepositoryS3 {
       bedrockUsage: usage
     })
 
-    // ❌ REMOVED: resultsStorage.storeResult() was overwriting the review file
-    // with only {jobId, status, result, completedAt}, losing fileName and createdAt
-    // The updateReviewStatus() already saves the complete review via saveReview()
+    // Verify what was saved
+    const savedReview = await this.getReview(reviewId)
+    logger.info(
+      `DEBUG saveReviewResult: Verified saved - ${JSON.stringify({ reviewId, savedResult: savedReview?.result }).substring(0, 1000)}`
+    )
 
     logger.info({ reviewId, hasResult: !!result, hasUsage: !!usage })
   }
