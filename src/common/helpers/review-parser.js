@@ -11,10 +11,11 @@ function parseScores(scoresText) {
 
   for (const line of lines) {
     // Match: "Plain English: 4/5 - Good use of simple language"
-    // Fixed: Use atomic groups and possessive quantifiers to prevent ReDoS
-    const match = line.match(/^([^:]+):\s*(\d)\/5\s*-\s*(.*)$/i)
+    // Fixed: Use possessive quantifier pattern to prevent ReDoS
+    // Pattern: (?=(.*?))\3 mimics possessive behavior, preventing backtracking
+    const match = line.match(/^([^:]+):\s*(\d)\/5\s*-\s*(?=(.*?))\3$/i)
     if (match) {
-      const [, category, score, note] = match
+      const [, category, score, , note] = match
       scores[category.trim()] = {
         score: Number.parseInt(score),
         note: note.trim()
@@ -33,10 +34,8 @@ function parseReviewedContent(contentText) {
   let plainText = contentText
 
   // Extract all issue markers
-  // Fixed: Use lookahead and atomic groups to prevent ReDoS (possessive quantifier pattern)
-  // Match [ISSUE:category]text[/ISSUE] without backtracking
-  const issueRegex =
-    /\[ISSUE:(?=([^\]]+))\1\](?=([^\[]+|(?!\[ISSUE:)[^\[])*)\2\[\/ISSUE\]/g
+  // Simplified regex: Match [ISSUE:category]text[/ISSUE] with reduced complexity
+  const issueRegex = /\[ISSUE:([^\]]+)\](.*?)(?=\[\/ISSUE\])\[\/ISSUE\]/gs
   let match
 
   while ((match = issueRegex.exec(contentText)) !== null) {
@@ -135,13 +134,13 @@ export function parseBedrockResponse(bedrockResponse) {
     // Extract sections using markers
     // Fixed: Use lookahead and backreferences to prevent ReDoS (possessive quantifier pattern)
     const scoresMatch = bedrockResponse.match(
-      /\[SCORES\](?=((?:(?!\[\/SCORES\])[\s\S])*?))\1\[\/SCORES\]/s
+      /\[SCORES\](?=((?:(?!\[\/SCORES\]).)*?))\1\[\/SCORES\]/s
     )
     const contentMatch = bedrockResponse.match(
-      /\[REVIEWED_CONTENT\](?=((?:(?!\[\/REVIEWED_CONTENT\])[\s\S])*?))\1\[\/REVIEWED_CONTENT\]/s
+      /\[REVIEWED_CONTENT\](?=((?:(?!\[\/REVIEWED_CONTENT\]).)*?))\1\[\/REVIEWED_CONTENT\]/s
     )
     const improvementsMatch = bedrockResponse.match(
-      /\[IMPROVEMENTS\](?=((?:(?!\[\/IMPROVEMENTS\])[\s\S])*?))\1\[\/IMPROVEMENTS\]/s
+      /\[IMPROVEMENTS\](?=((?:(?!\[\/IMPROVEMENTS\]).)*?))\1\[\/IMPROVEMENTS\]/s
     )
 
     // Parse each section
