@@ -72,7 +72,7 @@ const handleTextReview = async (request, h) => {
         ...timings,
         endpoint: ENDPOINTS.REVIEW_TEXT
       },
-      `⏱️ [UPLOAD PHASE] Text review queued successfully - TOTAL: ${requestDuration}ms (S3: ${timings.s3UploadDuration}ms, DB: ${timings.dbCreateDuration}ms, SQS: ${timings.sqsSendDuration}ms)`
+      `[UPLOAD PHASE] Text review queued successfully - TOTAL: ${requestDuration}ms (S3: ${timings.s3UploadDuration}ms, DB: ${timings.dbCreateDuration}ms, SQS: ${timings.sqsSendDuration}ms)`
     )
 
     return h

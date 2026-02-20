@@ -154,7 +154,7 @@ export async function uploadTextToS3(content, reviewId, title, logger) {
       contentLength: content.length,
       durationMs: s3UploadDuration
     },
-    `⏱️ [STEP 2/6] Text content uploaded to S3 - COMPLETED in ${s3UploadDuration}ms`
+    `[STEP 2/6] Text content uploaded to S3 - COMPLETED in ${s3UploadDuration}ms`
   )
 
   return { s3Result, s3UploadDuration }
@@ -198,7 +198,7 @@ export async function createReviewRecord(
       filename: title || CONTENT_DEFAULTS.TITLE,
       durationMs: dbCreateDuration
     },
-    `⏱️ [STEP 3/6] Review record created in S3 repository - COMPLETED in ${dbCreateDuration}ms`
+    `[STEP 3/6] Review record created in S3 repository - COMPLETED in ${dbCreateDuration}ms`
   )
 
   return dbCreateDuration
@@ -249,7 +249,7 @@ export async function queueReviewJob(
         sqsQueue: 'content_review_queue',
         durationMs: sqsSendDuration
       },
-      `⏱️ [STEP 4/6] SQS message sent successfully - COMPLETED in ${sqsSendDuration}ms`
+      `[STEP 4/6] SQS message sent successfully - COMPLETED in ${sqsSendDuration}ms`
     )
 
     return sqsSendDuration
@@ -300,7 +300,7 @@ export async function processTextReviewSubmission(payload, headers, logger) {
       contentLength: content.length,
       title: title || CONTENT_DEFAULTS.TITLE
     },
-    '⏱️ [STEP 1/6] Processing text review request - START'
+    '[STEP 1/6] Processing text review request - START'
   )
 
   // Upload text content to S3
