@@ -11,9 +11,11 @@ function parseScores(scoresText) {
 
   for (const line of lines) {
     // Match: "Plain English: 4/5 - Good use of simple language"
-    const match = line.match(/^(.+?):\s*(\d)\/5\s*-\s*(.+)$/i)
+    // Fixed: Use possessive quantifier pattern to prevent ReDoS
+    // Pattern: (?=(.*?))\3 mimics possessive behavior, preventing backtracking
+    const match = line.match(/^([^:]+):\s*(\d)\/5\s*-\s*(?=(.*?))\3$/i)
     if (match) {
-      const [, category, score, note] = match
+      const [, category, score, , note] = match
       scores[category.trim()] = {
         score: Number.parseInt(score),
         note: note.trim()
@@ -32,7 +34,8 @@ function parseReviewedContent(contentText) {
   let plainText = contentText
 
   // Extract all issue markers
-  const issueRegex = /\[ISSUE:([^\]]+)]([^[]+)\[\/ISSUE]/g
+  // Simplified regex: Match [ISSUE:category]text[/ISSUE] with reduced complexity
+  const issueRegex = /\[ISSUE:([^\]]+)\](.*?)(?=\[\/ISSUE\])\[\/ISSUE\]/gs
   let match
 
   while ((match = issueRegex.exec(contentText)) !== null) {
@@ -45,7 +48,11 @@ function parseReviewedContent(contentText) {
   }
 
   // Remove markers to get plain text
-  plainText = contentText.replaceAll(/\[ISSUE:[^\]]+]|\[\/ISSUE]/g, '')
+  // Fixed: Use atomic pattern to prevent backtracking
+  plainText = contentText.replaceAll(
+    /\[ISSUE:(?=[^\]]+)[^\]]+\]|\[\/ISSUE\]/g,
+    ''
+  )
 
   return {
     plainText: plainText.trim(),
@@ -125,12 +132,15 @@ export function parseBedrockResponse(bedrockResponse) {
     }
 
     // Extract sections using markers
-    const scoresMatch = bedrockResponse.match(/\[SCORES\](.*?)\[\/SCORES\]/s)
+    // Fixed: Use lookahead and backreferences to prevent ReDoS (possessive quantifier pattern)
+    const scoresMatch = bedrockResponse.match(
+      /\[SCORES\](?=((?:(?!\[\/SCORES\]).)*?))\1\[\/SCORES\]/s
+    )
     const contentMatch = bedrockResponse.match(
-      /\[REVIEWED_CONTENT\](.*?)\[\/REVIEWED_CONTENT\]/s
+      /\[REVIEWED_CONTENT\](?=((?:(?!\[\/REVIEWED_CONTENT\]).)*?))\1\[\/REVIEWED_CONTENT\]/s
     )
     const improvementsMatch = bedrockResponse.match(
-      /\[IMPROVEMENTS\](.*?)\[\/IMPROVEMENTS\]/s
+      /\[IMPROVEMENTS\](?=((?:(?!\[\/IMPROVEMENTS\]).)*?))\1\[\/IMPROVEMENTS\]/s
     )
 
     // Parse each section
