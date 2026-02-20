@@ -138,7 +138,7 @@ function parsePlainTextReview(bedrockResponse) {
         note: note.trim()
       }
     }
-    
+
     fullText += line + '\n'
   }
 
@@ -163,9 +163,10 @@ function parsePlainTextReview(bedrockResponse) {
 export function parseBedrockResponse(bedrockResponse) {
   try {
     // Check if response uses marker format or plain text format
-    const hasMarkers = bedrockResponse.includes('[SCORES]') || 
-                      bedrockResponse.includes('[REVIEWED_CONTENT]') ||
-                      bedrockResponse.includes('[IMPROVEMENTS]')
+    const hasMarkers =
+      bedrockResponse.includes('[SCORES]') ||
+      bedrockResponse.includes('[REVIEWED_CONTENT]') ||
+      bedrockResponse.includes('[IMPROVEMENTS]')
 
     if (!hasMarkers) {
       logger.info('Using plain text parser for Bedrock response')
@@ -215,10 +216,7 @@ export function parseBedrockResponse(bedrockResponse) {
 
     return result
   } catch (error) {
-    logger.error(
-      { error: error.message },
-      'Failed to parse Bedrock response'
-    )
+    logger.error({ error: error.message }, 'Failed to parse Bedrock response')
 
     return {
       scores: {},
