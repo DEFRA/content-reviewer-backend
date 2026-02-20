@@ -130,7 +130,10 @@ function parsePlainTextReview(bedrockResponse) {
     }
 
     // Match "Category: 3/5 - Feedback text"
-    const scoreMatch = trimmedLine.match(/^([^:]+):\s*(\d)\/5\s*[-–]\s*(.+)$/i)
+    // Fixed: Use lookahead and backreference to mimic possessive quantifier (prevents ReDoS)
+    const scoreMatch = trimmedLine.match(
+      /^(?=([^:]+))\1:\s*(\d)\/5\s*[-–]\s*(?=(.*$))\3/i
+    )
     if (scoreMatch) {
       const [, category, score, note] = scoreMatch
       scores[category.trim()] = {
