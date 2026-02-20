@@ -130,15 +130,21 @@ function parsePlainTextReview(bedrockResponse) {
     }
 
     // Match "Category: 3/5 - Feedback text"
-    // Fixed: Use lookahead and backreference to mimic possessive quantifier (prevents ReDoS)
-    const scoreMatch = trimmedLine.match(
-      /^(?=([^:]+))\1:\s*(\d)\/5\s*[-–]\s*(?=(.*$))\3/i
-    )
-    if (scoreMatch) {
-      const [, category, score, note] = scoreMatch
-      scores[category.trim()] = {
-        score: Number.parseInt(score),
-        note: note.trim()
+    // Use indexOf to avoid regex backtracking issues
+    const colonIndex = trimmedLine.indexOf(':')
+    if (colonIndex > 0) {
+      const afterColon = trimmedLine.substring(colonIndex + 1).trim()
+      // Match "3/5 - Feedback text" or "3/5 – Feedback text"
+      const scorePattern = /^(\d)\/5\s*[-–]\s*(.+)$/
+      const scoreMatch = afterColon.match(scorePattern)
+
+      if (scoreMatch) {
+        const category = trimmedLine.substring(0, colonIndex).trim()
+        const [, score, note] = scoreMatch
+        scores[category] = {
+          score: Number.parseInt(score),
+          note: note.trim()
+        }
       }
     }
 
