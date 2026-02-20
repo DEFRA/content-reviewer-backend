@@ -113,15 +113,66 @@ function parseImprovements(improvementsText) {
 }
 
 /**
+ * Parse plain text review format (actual Bedrock output)
+ * Converts plain text to the expected scores/reviewedContent/improvements format
+ */
+function parsePlainTextReview(bedrockResponse) {
+  const scores = {}
+  const improvements = []
+  let fullText = ''
+
+  const lines = bedrockResponse.split('\n')
+
+  for (const line of lines) {
+    const trimmedLine = line.trim()
+    if (!trimmedLine) {
+      continue
+    }
+
+    // Match "Category: 3/5 - Feedback text"
+    const scoreMatch = trimmedLine.match(/^([^:]+):\s*(\d)\/5\s*[-–]\s*(.+)$/i)
+    if (scoreMatch) {
+      const [, category, score, note] = scoreMatch
+      scores[category.trim()] = {
+        score: Number.parseInt(score),
+        note: note.trim()
+      }
+    }
+    
+    fullText += line + '\n'
+  }
+
+  logger.info(
+    { scoreCount: Object.keys(scores).length },
+    'Converted plain text to scores format'
+  )
+
+  return {
+    scores,
+    reviewedContent: {
+      plainText: bedrockResponse,
+      issues: []
+    },
+    improvements
+  }
+}
+
+/**
  * Main parser function - converts Bedrock's plain text to structured JSON
  */
 export function parseBedrockResponse(bedrockResponse) {
   try {
-    logger.info(
-      { responseLength: bedrockResponse.length },
-      'Parsing Bedrock plain text response'
-    )
+    // Check if response uses marker format or plain text format
+    const hasMarkers = bedrockResponse.includes('[SCORES]') || 
+                      bedrockResponse.includes('[REVIEWED_CONTENT]') ||
+                      bedrockResponse.includes('[IMPROVEMENTS]')
 
+    if (!hasMarkers) {
+      logger.info('Using plain text parser for Bedrock response')
+      return parsePlainTextReview(bedrockResponse)
+    }
+
+    // Original marker-based parsing
     const result = {
       scores: {},
       reviewedContent: {
@@ -131,8 +182,6 @@ export function parseBedrockResponse(bedrockResponse) {
       improvements: []
     }
 
-    // Extract sections using markers
-    // Fixed: Use lookahead and backreferences to prevent ReDoS (possessive quantifier pattern)
     const scoresMatch = bedrockResponse.match(
       /\[SCORES\](?=((?:(?!\[\/SCORES\]).)*?))\1\[\/SCORES\]/s
     )
@@ -143,29 +192,16 @@ export function parseBedrockResponse(bedrockResponse) {
       /\[IMPROVEMENTS\](?=((?:(?!\[\/IMPROVEMENTS\]).)*?))\1\[\/IMPROVEMENTS\]/s
     )
 
-    // Parse each section
     if (scoresMatch) {
       result.scores = parseScores(scoresMatch[1])
-      logger.debug(
-        { scoreCount: Object.keys(result.scores).length },
-        'Parsed scores section'
-      )
     }
 
     if (contentMatch) {
       result.reviewedContent = parseReviewedContent(contentMatch[1])
-      logger.debug(
-        { issueCount: result.reviewedContent.issues.length },
-        'Parsed reviewed content'
-      )
     }
 
     if (improvementsMatch) {
       result.improvements = parseImprovements(improvementsMatch[1])
-      logger.debug(
-        { improvementCount: result.improvements.length },
-        'Parsed improvements section'
-      )
     }
 
     logger.info(
@@ -174,25 +210,23 @@ export function parseBedrockResponse(bedrockResponse) {
         issueCount: result.reviewedContent.issues.length,
         improvementCount: result.improvements.length
       },
-      'Successfully parsed Bedrock response'
+      'Parsed Bedrock response with markers'
     )
 
     return result
   } catch (error) {
     logger.error(
-      { error: error.message, stack: error.stack },
+      { error: error.message },
       'Failed to parse Bedrock response'
     )
 
-    // Return minimal valid structure on parse failure
     return {
       scores: {},
       reviewedContent: {
         plainText: bedrockResponse,
         issues: []
       },
-      improvements: [],
-      parseError: error.message
+      improvements: []
     }
   }
 }
