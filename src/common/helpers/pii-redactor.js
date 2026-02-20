@@ -185,7 +185,7 @@ class PIIRedactor {
    * @returns {Array} List of detected PII entities with types and actions
    */
   extractGuardrailPII(guardrailAssessment) {
-    if (!guardrailAssessment || !guardrailAssessment.assessments) {
+    if (!guardrailAssessment?.assessments) {
       return []
     }
 
