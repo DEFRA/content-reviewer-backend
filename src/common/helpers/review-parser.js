@@ -3,6 +3,43 @@ import { createLogger } from './logging/logger.js'
 const logger = createLogger()
 
 /**
+ * Try to parse a score from a line
+ */
+function tryParseScoreLine(line) {
+  const colonIndex = line.indexOf(':')
+  if (colonIndex <= 0) {
+    return null
+  }
+
+  const category = line.substring(0, colonIndex).trim()
+  const afterColon = line.substring(colonIndex + 1).trim()
+
+  const MIN_SCORE_PATTERN_LENGTH = 3
+  const DASH_SEARCH_START = 3
+
+  if (
+    afterColon.length < MIN_SCORE_PATTERN_LENGTH ||
+    !/^\d\/5/.test(afterColon)
+  ) {
+    return null
+  }
+
+  const score = afterColon.charAt(0)
+  const dashIndex = afterColon.indexOf('-', DASH_SEARCH_START)
+
+  if (dashIndex <= 0) {
+    return null
+  }
+
+  const note = afterColon.substring(dashIndex + 1).trim()
+  return {
+    category,
+    score: Number.parseInt(score),
+    note
+  }
+}
+
+/**
  * Parse the scores section
  */
 function parseScores(scoresText) {
@@ -10,25 +47,11 @@ function parseScores(scoresText) {
   const lines = scoresText.trim().split('\n')
 
   for (const line of lines) {
-    // Match: "Plain English: 4/5 - Good use of simple language"
-    // Use indexOf to avoid regex backtracking
-    const colonIndex = line.indexOf(':')
-    if (colonIndex > 0) {
-      const category = line.substring(0, colonIndex).trim()
-      const afterColon = line.substring(colonIndex + 1).trim()
-
-      // Check for "X/5 - note" pattern
-      if (afterColon.length >= 3 && /^\d\/5/.test(afterColon)) {
-        const score = afterColon.charAt(0)
-        const dashIndex = afterColon.indexOf('-', 3)
-
-        if (dashIndex > 0) {
-          const note = afterColon.substring(dashIndex + 1).trim()
-          scores[category] = {
-            score: Number.parseInt(score),
-            note
-          }
-        }
+    const scoreData = tryParseScoreLine(line)
+    if (scoreData) {
+      scores[scoreData.category] = {
+        score: scoreData.score,
+        note: scoreData.note
       }
     }
   }
@@ -37,60 +60,117 @@ function parseScores(scoresText) {
 }
 
 /**
- * Parse the reviewed content with issue markers
+ * Try to extract a single issue at the given position
  */
-function parseReviewedContent(contentText) {
-  const issues = []
-  let plainText = contentText
+function tryExtractIssue(contentText, searchPos) {
+  const ISSUE_TAG_LENGTH = '[ISSUE:'.length
+  const CATEGORY_OFFSET = 7 // '[ISSUE:'.length
+  const END_ISSUE_TAG_LENGTH = 8 // '[/ISSUE]'.length
 
-  // Use indexOf/split to avoid regex backtracking
-  let searchPos = 0
-  while (true) {
-    const startMarkerPos = contentText.indexOf('[ISSUE:', searchPos)
-    if (startMarkerPos === -1) break
+  const startMarkerPos = contentText.indexOf('[ISSUE:', searchPos)
+  if (startMarkerPos === -1) {
+    return null
+  }
 
-    const closeBracketPos = contentText.indexOf(']', startMarkerPos + 7)
-    if (closeBracketPos === -1) break
+  const closeBracketPos = contentText.indexOf(
+    ']',
+    startMarkerPos + ISSUE_TAG_LENGTH
+  )
+  if (closeBracketPos === -1) {
+    return null
+  }
 
-    const category = contentText.substring(startMarkerPos + 7, closeBracketPos)
-    const endMarkerPos = contentText.indexOf('[/ISSUE]', closeBracketPos + 1)
-    if (endMarkerPos === -1) break
+  const category = contentText.substring(
+    startMarkerPos + CATEGORY_OFFSET,
+    closeBracketPos
+  )
+  const endMarkerPos = contentText.indexOf('[/ISSUE]', closeBracketPos + 1)
+  if (endMarkerPos === -1) {
+    return null
+  }
 
-    const text = contentText.substring(closeBracketPos + 1, endMarkerPos)
-    issues.push({
+  const text = contentText.substring(closeBracketPos + 1, endMarkerPos)
+  return {
+    issue: {
       category: category.trim(),
       text: text.trim(),
       position: startMarkerPos
-    })
+    },
+    nextSearchPos: endMarkerPos + END_ISSUE_TAG_LENGTH
+  }
+}
 
-    searchPos = endMarkerPos + 8
+/**
+ * Extract issues from content text
+ */
+function extractIssues(contentText) {
+  const issues = []
+  let searchPos = 0
+
+  while (searchPos < contentText.length) {
+    const result = tryExtractIssue(contentText, searchPos)
+    if (!result) {
+      break
+    }
+
+    issues.push(result.issue)
+    searchPos = result.nextSearchPos
   }
 
-  // Remove markers to get plain text - use simple string replacement
-  plainText = contentText.split('[/ISSUE]').join('')
+  return issues
+}
 
-  // Remove [ISSUE:category] markers
-  // eslint-disable-next-line no-unused-vars
-  let result = ''
-  let pos = 0
-  let shouldContinue = true
-  while (pos < plainText.length && shouldContinue) {
-    const markerStart = plainText.indexOf('[ISSUE:', pos)
-    if (markerStart === -1) {
-      result += plainText.substring(pos)
-      shouldContinue = false
-    } else {
-      result += plainText.substring(pos, markerStart)
-      const markerEnd = plainText.indexOf(']', markerStart + 7)
-      if (markerEnd === -1) {
-        result += plainText.substring(markerStart)
-        shouldContinue = false
-      } else {
-        pos = markerEnd + 1
-      }
+/**
+ * Process a marker removal step
+ */
+function processMarkerRemoval(text, pos) {
+  const ISSUE_TAG_LENGTH = '[ISSUE:'.length
+  const markerStart = text.indexOf('[ISSUE:', pos)
+
+  if (markerStart === -1) {
+    return {
+      textChunk: text.substring(pos),
+      nextPos: -1
     }
   }
-  plainText = result
+
+  const markerEnd = text.indexOf(']', markerStart + ISSUE_TAG_LENGTH)
+  if (markerEnd === -1) {
+    return {
+      textChunk: text.substring(pos),
+      nextPos: -1
+    }
+  }
+
+  return {
+    textChunk: text.substring(pos, markerStart),
+    nextPos: markerEnd + 1
+  }
+}
+
+/**
+ * Remove issue markers from content
+ */
+function removeIssueMarkers(contentText) {
+  const withoutClosingTags = contentText.split('[/ISSUE]').join('')
+  let result = ''
+  let pos = 0
+
+  while (pos < withoutClosingTags.length && pos !== -1) {
+    const { textChunk, nextPos } = processMarkerRemoval(withoutClosingTags, pos)
+    result += textChunk
+    pos = nextPos
+  }
+
+  return result
+}
+
+/**
+ * Parse the reviewed content with issue markers
+ */
+function parseReviewedContent(contentText) {
+  const issues = extractIssues(contentText)
+  const plainText = removeIssueMarkers(contentText)
 
   return {
     plainText: plainText.trim(),
