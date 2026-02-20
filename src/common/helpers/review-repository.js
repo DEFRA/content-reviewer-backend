@@ -167,6 +167,8 @@ class ReviewRepositoryS3 {
         : 'Saving review to S3'
     )
 
+    logger.info(`Review data: ${JSON.stringify(review.result, null, 2)}`)
+
     const command = new PutObjectCommand({
       Bucket: this.bucket,
       Key: key,
