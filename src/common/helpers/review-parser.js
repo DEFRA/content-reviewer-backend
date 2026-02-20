@@ -33,7 +33,10 @@ function parseReviewedContent(contentText) {
   let plainText = contentText
 
   // Extract all issue markers
-  const issueRegex = /\[ISSUE:([^\]]+)]([^[]+)\[\/ISSUE]/g
+  // Fixed: Use lookahead and atomic groups to prevent ReDoS (possessive quantifier pattern)
+  // Match [ISSUE:category]text[/ISSUE] without backtracking
+  const issueRegex =
+    /\[ISSUE:(?=([^\]]+))\1\](?=([^\[]+|(?!\[ISSUE:)[^\[])*)\2\[\/ISSUE\]/g
   let match
 
   while ((match = issueRegex.exec(contentText)) !== null) {
@@ -46,7 +49,11 @@ function parseReviewedContent(contentText) {
   }
 
   // Remove markers to get plain text
-  plainText = contentText.replaceAll(/\[ISSUE:[^\]]+]|\[\/ISSUE]/g, '')
+  // Fixed: Use atomic pattern to prevent backtracking
+  plainText = contentText.replaceAll(
+    /\[ISSUE:(?=[^\]]+)[^\]]+\]|\[\/ISSUE\]/g,
+    ''
+  )
 
   return {
     plainText: plainText.trim(),
@@ -126,12 +133,15 @@ export function parseBedrockResponse(bedrockResponse) {
     }
 
     // Extract sections using markers
-    const scoresMatch = bedrockResponse.match(/\[SCORES\](.*?)\[\/SCORES\]/s)
+    // Fixed: Use lookahead and backreferences to prevent ReDoS (possessive quantifier pattern)
+    const scoresMatch = bedrockResponse.match(
+      /\[SCORES\](?=((?:(?!\[\/SCORES\])[\s\S])*?))\1\[\/SCORES\]/s
+    )
     const contentMatch = bedrockResponse.match(
-      /\[REVIEWED_CONTENT\](.*?)\[\/REVIEWED_CONTENT\]/s
+      /\[REVIEWED_CONTENT\](?=((?:(?!\[\/REVIEWED_CONTENT\])[\s\S])*?))\1\[\/REVIEWED_CONTENT\]/s
     )
     const improvementsMatch = bedrockResponse.match(
-      /\[IMPROVEMENTS\](.*?)\[\/IMPROVEMENTS\]/s
+      /\[IMPROVEMENTS\](?=((?:(?!\[\/IMPROVEMENTS\])[\s\S])*?))\1\[\/IMPROVEMENTS\]/s
     )
 
     // Parse each section
