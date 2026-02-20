@@ -11,7 +11,8 @@ function parseScores(scoresText) {
 
   for (const line of lines) {
     // Match: "Plain English: 4/5 - Good use of simple language"
-    const match = line.match(/^(.+?):\s*(\d)\/5\s*-\s*(.+)$/i)
+    // Fixed: Use atomic groups and possessive quantifiers to prevent ReDoS
+    const match = line.match(/^([^:]+):\s*(\d)\/5\s*-\s*(.*)$/i)
     if (match) {
       const [, category, score, note] = match
       scores[category.trim()] = {
