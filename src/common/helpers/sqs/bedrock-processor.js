@@ -121,9 +121,13 @@ export class BedrockReviewProcessor {
   async parseBedrockResponseData(reviewId, bedrockResult) {
     const parseStart = performance.now()
     const finalReviewContent = bedrockResult.bedrockResponse.content
-
-    const parsedReview = parseBedrockResponse(finalReviewContent)
-
+    // If reviewContent is available in bedrockResult, pass as fallback
+    const fallbackRawResponse =
+      bedrockResult.bedrockResponse.reviewContent || finalReviewContent
+    const parsedReview = parseBedrockResponse(
+      finalReviewContent,
+      fallbackRawResponse
+    )
     const parseDuration = Math.round(performance.now() - parseStart)
 
     logger.info(

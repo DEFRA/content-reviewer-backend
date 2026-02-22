@@ -389,26 +389,80 @@ function parseMarkerBasedReview(bedrockResponse) {
   return result
 }
 
+const SCORES_TAG = '[SCORES]'
+const SCORES_END_TAG = '[/SCORES]'
+const REVIEWED_CONTENT_TAG = '[REVIEWED_CONTENT]'
+const REVIEWED_CONTENT_END_TAG = '[/REVIEWED_CONTENT]'
+const IMPROVEMENTS_TAG = '[IMPROVEMENTS]'
+const IMPROVEMENTS_END_TAG = '[/IMPROVEMENTS]'
+const FALLBACK_PREVIEW_LENGTH = 200
+
+/**
+ * Helper to check if fallback is needed
+ */
+function isFallbackNeeded(parsedResult, fallbackRawResponse) {
+  const scoresEmpty =
+    !parsedResult.scores || Object.keys(parsedResult.scores).length === 0
+  const issuesEmpty =
+    !parsedResult.reviewedContent?.issues ||
+    parsedResult.reviewedContent.issues.length === 0
+  const improvementsEmpty =
+    !parsedResult.improvements || parsedResult.improvements.length === 0
+  return (
+    scoresEmpty &&
+    issuesEmpty &&
+    improvementsEmpty &&
+    typeof fallbackRawResponse === 'string' &&
+    fallbackRawResponse.length > 0
+  )
+}
+
+/**
+ * Check if parsed result is empty and apply fallback if needed
+ */
+function applyFallbackIfNeeded(parsedResult, fallbackRawResponse) {
+  if (isFallbackNeeded(parsedResult, fallbackRawResponse)) {
+    logger.warn(
+      {
+        fallbackRawResponsePreview: fallbackRawResponse.substring(
+          0,
+          FALLBACK_PREVIEW_LENGTH
+        )
+      },
+      'Fallback: reparsing reviewContent for missing sections'
+    )
+    const fallbackHasMarkers =
+      fallbackRawResponse.includes(SCORES_TAG) ||
+      fallbackRawResponse.includes(REVIEWED_CONTENT_TAG) ||
+      fallbackRawResponse.includes(IMPROVEMENTS_TAG)
+    return fallbackHasMarkers
+      ? parseMarkerBasedReview(fallbackRawResponse)
+      : parsePlainTextReview(fallbackRawResponse)
+  }
+
+  return parsedResult
+}
+
 /**
  * Main parser function - converts Bedrock's plain text to structured JSON
  */
-export function parseBedrockResponse(bedrockResponse) {
+export function parseBedrockResponse(bedrockResponse, fallbackRawResponse) {
   try {
-    // Check if response uses marker format or plain text format
     const hasMarkers =
-      bedrockResponse.includes('[SCORES]') ||
-      bedrockResponse.includes('[REVIEWED_CONTENT]') ||
-      bedrockResponse.includes('[IMPROVEMENTS]')
+      bedrockResponse.includes(SCORES_TAG) ||
+      bedrockResponse.includes(REVIEWED_CONTENT_TAG) ||
+      bedrockResponse.includes(IMPROVEMENTS_TAG)
 
-    if (!hasMarkers) {
-      logger.info('Using plain text parser for Bedrock response')
-      return parsePlainTextReview(bedrockResponse)
+    let parsedResult
+    if (hasMarkers) {
+      parsedResult = parseMarkerBasedReview(bedrockResponse)
+    } else {
+      parsedResult = parsePlainTextReview(bedrockResponse)
     }
 
-    return parseMarkerBasedReview(bedrockResponse)
+    return applyFallbackIfNeeded(parsedResult, fallbackRawResponse)
   } catch (error) {
     logger.error({ error: error.message }, 'Failed to parse Bedrock response')
-
     return {
       scores: {},
       reviewedContent: {
