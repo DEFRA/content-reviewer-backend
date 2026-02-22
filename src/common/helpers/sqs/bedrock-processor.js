@@ -124,11 +124,6 @@ export class BedrockReviewProcessor {
 
     const parsedReview = parseBedrockResponse(finalReviewContent)
 
-    // 🔍 CRITICAL DEBUG: Check parser output structure
-    logger.info(
-      `DEBUG parseBedrockResponseData: Parser output structure : ${JSON.stringify(parsedReview).substring(0, 500)}`
-    )
-
     const parseDuration = Math.round(performance.now() - parseStart)
 
     logger.info(
