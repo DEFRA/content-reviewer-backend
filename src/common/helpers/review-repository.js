@@ -167,8 +167,6 @@ class ReviewRepositoryS3 {
         : 'Saving review to S3'
     )
 
-    logger.info(`Review data: ${JSON.stringify(review.result, null, 2)}`)
-
     const command = new PutObjectCommand({
       Bucket: this.bucket,
       Key: key,
@@ -345,23 +343,12 @@ class ReviewRepositoryS3 {
    * @returns {Promise<void>}
    */
   async saveReviewResult(reviewId, result, usage) {
-    // 🔍 DEBUG: Log what we're about to save
-    logger.info(
-      `DEBUG saveReviewResult: About to save - ${JSON.stringify({ reviewId, result }).substring(0, 1000)}`
-    )
-
     // Update review status to 'completed' and add result + usage
     // This saves the COMPLETE review object with fileName, createdAt, etc.
     await this.updateReviewStatus(reviewId, 'completed', {
       result,
       bedrockUsage: usage
     })
-
-    // Verify what was saved
-    const savedReview = await this.getReview(reviewId)
-    logger.info(
-      `DEBUG saveReviewResult: Verified saved - ${JSON.stringify({ reviewId, savedResult: savedReview?.result }).substring(0, 1000)}`
-    )
 
     logger.info({ reviewId, hasResult: !!result, hasUsage: !!usage })
   }
