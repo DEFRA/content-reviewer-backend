@@ -156,11 +156,6 @@ async function getResultHandler(request, h) {
       metadata
     )
 
-    // 🔍 DEBUG: Log exact response being sent to frontend
-    logger.info(
-      `DEBUG Response to frontend: ${JSON.stringify(responseData).substring(0, 1000)}`
-    )
-
     return h.response(responseData)
   } catch (error) {
     logger.error(
