@@ -100,7 +100,6 @@ class SQSClientHelper {
 
     try {
       const result = await this.sqsClient.send(command)
-      const duration = Math.round(performance.now() - startTime)
 
       return {
         success: true,
