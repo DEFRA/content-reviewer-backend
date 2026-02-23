@@ -33,7 +33,6 @@ jobs:
         continue-on-error: true # makes tests optional
         run: |
           npm ci
-          npm run build:frontend
           npm run format:check
           npm run lint
           npm test
