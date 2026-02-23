@@ -116,17 +116,6 @@ class ReviewRepositoryS3 {
       bedrockUsage: null
     }
 
-    logger.info(
-      {
-        reviewId: review.id,
-        fileName: review.fileName,
-        createdAt: review.createdAt,
-        s3Key: review.s3Key,
-        sourceType: review.sourceType
-      },
-      'Creating review'
-    )
-
     await this.saveReview(review)
 
     // Trigger async cleanup to keep only recent 100 reviews (don't wait for it)
@@ -182,12 +171,6 @@ class ReviewRepositoryS3 {
 
     try {
       await this.s3Client.send(command)
-      logger.info({
-        reviewId: review.id,
-        key,
-        fileName: review.fileName,
-        createdAt: review.createdAt
-      })
     } catch (error) {
       logger.error(
         { error: error.message, reviewId: review.id },
@@ -349,8 +332,6 @@ class ReviewRepositoryS3 {
       result,
       bedrockUsage: usage
     })
-
-    logger.info({ reviewId, hasResult: !!result, hasUsage: !!usage })
   }
 
   /**
@@ -437,14 +418,7 @@ class ReviewRepositoryS3 {
       // Get more than needed to handle skip
       const fetchLimit = limit + skip
       const { reviews } = await this.getRecentReviews({ limit: fetchLimit })
-      logger.info(
-        {
-          count: reviews.length,
-          reviewIds: reviews.map((r) => r.id),
-          statuses: reviews.map((r) => r.status)
-        },
-        'Retrieved reviews from S3'
-      )
+
       // Apply skip and limit
       return reviews.slice(skip, skip + limit)
     } catch (error) {
