@@ -102,15 +102,6 @@ class SQSClientHelper {
       const result = await this.sqsClient.send(command)
       const duration = Math.round(performance.now() - startTime)
 
-      logger.info({
-        messageId: result.MessageId,
-        uploadId: messageData.uploadId,
-        reviewId: messageData.reviewId,
-        queueUrl: this.queueUrl,
-        queueName: this.queueName,
-        durationMs: duration
-      })
-
       return {
         success: true,
         messageId: result.MessageId,
