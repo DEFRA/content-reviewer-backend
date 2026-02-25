@@ -35,7 +35,7 @@ jobs:
           npm run format:check
           npm run lint
           npm run build:backend
-          npx vitest run --coverage
+          npm test
 
       - name: Build and Publish
         uses: DEFRA/cdp-build-action/build@main
