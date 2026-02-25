@@ -9,7 +9,10 @@ const logger = createLogger()
  * S3 Client for file uploads
  */
 class S3Uploader {
-  static TEXT_CONTENT_TYPE = 'text/plain'
+  // Use static getter for compatibility with older JS/ESLint parsers
+  static get TEXT_CONTENT_TYPE() {
+    return 'text/plain'
+  }
 
   constructor() {
     this.mockMode = config.get('mockMode.s3Upload')
