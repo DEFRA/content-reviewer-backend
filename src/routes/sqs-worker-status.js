@@ -1,6 +1,8 @@
 import { sqsWorker } from '../common/helpers/sqs-worker.js'
 import { config } from '../config.js'
 
+const HTTP_OK = 200
+
 /**
  * GET /api/sqs-worker/status
  * Check the status of the SQS worker
@@ -10,11 +12,7 @@ const sqsWorkerStatus = {
   path: '/api/sqs-worker/status',
   handler: (_request, h) => {
     const status = sqsWorker.getStatus()
-
-    // Check if worker should be running based on environment
-    const skipWorker =
-      process.env.MOCK_S3_UPLOAD === 'true' ||
-      process.env.SKIP_SQS_WORKER === 'true'
+    const skipWorker = config.get('mockMode.skipSqsWorker')
 
     return h
       .response({
@@ -23,13 +21,12 @@ const sqsWorkerStatus = {
           ...status,
           expectedToRun: !skipWorker,
           environment: {
-            mockMode: process.env.MOCK_S3_UPLOAD === 'true',
-            skipWorker: process.env.SKIP_SQS_WORKER === 'true',
-            awsEndpoint: config.get('aws.endpoint') || 'default'
+            mockMode: config.get('mockMode.s3Upload'),
+            skipWorker
           }
         }
       })
-      .code(200)
+      .code(HTTP_OK)
   }
 }
 

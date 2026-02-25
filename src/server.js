@@ -68,14 +68,11 @@ async function createServer() {
 
   await server.register(plugins)
 
-  // Start SQS worker to process messages
-  // Only start if not in MOCK mode and AWS credentials are available
-  const skipWorker =
-    process.env.MOCK_S3_UPLOAD === 'true' ||
-    process.env.SKIP_SQS_WORKER === 'true' ||
-    process.env.DISABLE_SQS_WORKER === 'true'
+  const skipWorker = config.get('mockMode.skipSqsWorker')
 
-  if (!skipWorker) {
+  if (skipWorker) {
+    server.logger.info('SQS worker not started (SKIP_SQS_WORKER=true)')
+  } else {
     server.logger.info('Starting SQS worker for content review queue')
     sqsWorker.start().catch((error) => {
       server.logger.error(
@@ -89,10 +86,6 @@ async function createServer() {
       server.logger.info('Stopping SQS worker')
       sqsWorker.stop()
     })
-  } else {
-    server.logger.info(
-      'SQS worker not started (MOCK mode or SKIP_SQS_WORKER=true or DISABLE_SQS_WORKER=true)'
-    )
   }
 
   return server

@@ -1,4 +1,4 @@
-import { createRequire } from 'module'
+import { createRequire } from 'node:module'
 import mammoth from 'mammoth'
 import { createLogger } from './logging/logger.js'
 
@@ -115,12 +115,14 @@ class TextExtractor {
    * @returns {string} Cleaned text
    */
   cleanText(text) {
-    if (!text) return ''
+    if (!text) {
+      return ''
+    }
 
     // Remove excessive whitespace
-    text = text.replace(/\r\n/g, '\n') // Normalize line endings
-    text = text.replace(/\n{3,}/g, '\n\n') // Max 2 consecutive newlines
-    text = text.replace(/[ \t]+/g, ' ') // Normalize spaces
+    text = text.replaceAll('\r\n', '\n') // Normalize line endings
+    text = text.replaceAll(/\n{3,}/g, '\n\n') // Max 2 consecutive newlines
+    text = text.replaceAll(/[ \t]+/g, ' ') // Normalize spaces
     text = text.trim()
 
     return text
@@ -146,7 +148,9 @@ class TextExtractor {
    * @returns {number} Word count
    */
   countWords(text) {
-    if (!text) return 0
+    if (!text) {
+      return 0
+    }
 
     // Split by whitespace and filter empty strings
     const words = text.trim().split(/\s+/).filter(Boolean)
