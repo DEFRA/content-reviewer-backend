@@ -1,5 +1,7 @@
 import { describe, test, expect, beforeEach, vi } from 'vitest'
 
+import { ReviewProcessor } from './review-processor.js'
+
 // Test constants - IDs and handles
 const TEST_UPLOAD_ID = 'upload-123'
 const TEST_REVIEW_ID = 'review-123'
@@ -74,8 +76,6 @@ vi.mock('./error-handler.js', () => ({
 vi.mock('./message-handler.js', () => ({
   truncateReceiptHandle: (...args) => mockTruncateReceiptHandle(...args)
 }))
-
-import { ReviewProcessor } from './review-processor.js'
 
 describe('ReviewProcessor - Constructor', () => {
   let processor

@@ -14,8 +14,8 @@
     "format": "npx prettier --write \"**/*.{cjs,js,json,md}\"",
     "format:check": "npx prettier --check \"**/*.{cjs,js,json,md}\"",
     "git:pre-commit-hook": "npm run security-audit && npm run format:check",
-    "lint": "npx eslint --cache --cache-strategy content \"**/*.{cjs,js}\"",
-    "lint:fix": "npx eslint --cache --cache-strategy content \"**/*.{cjs,js}\" --fix",
+    "lint": "npx eslint \"**/*.{cjs,js}\"",
+    "lint:fix": "npx eslint \"**/*.{cjs,js}\" --fix",
     "postinstall": "npm run setup:husky",
     "security-audit": "npm audit --production --audit-level=high",
     "server:debug": "nodemon --inspect-brk=0.0.0.0 --ext js,json --legacy-watch ./src",
@@ -61,7 +61,6 @@
   },
   "overrides": {
     "fast-xml-parser": ">=5.3.6",
-    "ajv": ">=8.18.0",
     "minimatch": ">=10.2.1"
   },
   "devDependencies": {
@@ -70,9 +69,8 @@
     "@vitest/coverage-v8": "4.0.16",
     "autoprefixer": "10.4.23",
     "cross-env": "10.1.0",
-    "eslint": "9.39.2",
+    "eslint": "^8.57.0",
     "husky": "9.1.7",
-    "neostandard": "0.12.2",
     "nodemon": "3.1.11",
     "npm-run-all": "4.1.5",
     "prettier": "3.7.4",
