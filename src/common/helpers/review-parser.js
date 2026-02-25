@@ -288,7 +288,6 @@ function parseScoreLine(trimmedLine, colonIndex) {
 function parsePlainTextReview(bedrockResponse) {
   const scores = {}
   const improvements = []
-  let fullText = ''
 
   const lines = bedrockResponse.split('\n')
 
@@ -309,8 +308,6 @@ function parsePlainTextReview(bedrockResponse) {
         }
       }
     }
-
-    fullText += line + '\n'
   }
 
   logger.info(
@@ -390,11 +387,8 @@ function parseMarkerBasedReview(bedrockResponse) {
 }
 
 const SCORES_TAG = '[SCORES]'
-const SCORES_END_TAG = '[/SCORES]'
 const REVIEWED_CONTENT_TAG = '[REVIEWED_CONTENT]'
-const REVIEWED_CONTENT_END_TAG = '[/REVIEWED_CONTENT]'
 const IMPROVEMENTS_TAG = '[IMPROVEMENTS]'
-const IMPROVEMENTS_END_TAG = '[/IMPROVEMENTS]'
 const FALLBACK_PREVIEW_LENGTH = 200
 
 /**
