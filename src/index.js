@@ -4,14 +4,11 @@ import process from 'node:process'
 import { createLogger } from './common/helpers/logging/logger.js'
 import { startServer } from './common/helpers/start-server.js'
 
-// Use async IIFE for compatibility with environments that do not support top-level await
-;(async () => {
-  await startServer()
+await startServer()
 
-  process.on('unhandledRejection', (error) => {
-    const logger = createLogger()
-    logger.info('Unhandled rejection')
-    logger.error(error)
-    process.exitCode = 1
-  })
-})()
+process.on('unhandledRejection', (error) => {
+  const logger = createLogger()
+  logger.info('Unhandled rejection')
+  logger.error(error)
+  process.exitCode = 1
+})
