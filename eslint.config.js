@@ -1,19 +1,16 @@
-import neostandard from 'neostandard'
-
 export default [
-  ...neostandard({
-    env: ['node', 'vitest'],
-    noJsx: true,
-    noStyle: true
-  }),
   {
-    ignores: [
-      'coverage/**',
-      'node_modules/**',
-      '.husky/**',
-      'dist/**',
-      'build/**',
-      '*.config.js'
-    ]
+    files: ['**/*.js', '**/*.cjs'],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: 'module',
+      globals: {
+        process: 'readonly',
+        __dirname: 'readonly',
+        module: 'readonly',
+        require: 'readonly'
+      }
+    },
+    ignores: ['node_modules/**', 'coverage/**']
   }
 ]

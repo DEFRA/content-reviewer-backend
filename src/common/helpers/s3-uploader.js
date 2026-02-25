@@ -9,7 +9,10 @@ const logger = createLogger()
  * S3 Client for file uploads
  */
 class S3Uploader {
-  static TEXT_CONTENT_TYPE = 'text/plain'
+  // Renamed to match ^[_a-z][a-zA-Z0-9]*$
+  static get textContentType() {
+    return 'text/plain'
+  }
 
   constructor() {
     this.mockMode = config.get('mockMode.s3Upload')
