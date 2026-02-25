@@ -1,5 +1,7 @@
 import { describe, test, expect, beforeEach, vi } from 'vitest'
 
+import { BedrockReviewProcessor } from './bedrock-processor.js'
+
 // Test constants to avoid magic strings and numbers
 const TEST_REVIEW_ID = 'review-123'
 const TEST_SYSTEM_PROMPT = 'System prompt'
@@ -35,8 +37,6 @@ vi.mock('../prompt-manager.js', () => ({
 vi.mock('../review-parser.js', () => ({
   parseBedrockResponse: (...args) => mockParseBedrockResponse(...args)
 }))
-
-import { BedrockReviewProcessor } from './bedrock-processor.js'
 
 describe('BedrockReviewProcessor - loadSystemPrompt', () => {
   let processor
