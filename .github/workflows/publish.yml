@@ -30,12 +30,12 @@ jobs:
           cache: npm
 
       - name: Test code and Create Test Coverage Reports
-        continue-on-error: true # makes tests optional
         run: |
           npm ci
           npm run format:check
           npm run lint
-          npm test
+          npm run build:backend
+          npx vitest run --coverage
 
       - name: Build and Publish
         uses: DEFRA/cdp-build-action/build@main
