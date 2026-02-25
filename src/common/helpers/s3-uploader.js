@@ -9,8 +9,8 @@ const logger = createLogger()
  * S3 Client for file uploads
  */
 class S3Uploader {
-  // Use static getter for compatibility with older JS/ESLint parsers
-  static get TEXT_CONTENT_TYPE() {
+  // Renamed to match ^[_a-z][a-zA-Z0-9]*$
+  static get textContentType() {
     return 'text/plain'
   }
 

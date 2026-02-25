@@ -4,7 +4,7 @@ import process from 'node:process'
 import { createLogger } from './common/helpers/logging/logger.js'
 import { startServer } from './common/helpers/start-server.js'
 
-// Wrap top-level await in an async IIFE for compatibility
+// Use async IIFE for compatibility with environments that do not support top-level await
 ;(async () => {
   await startServer()
 
