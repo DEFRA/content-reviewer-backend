@@ -143,7 +143,7 @@ const config = convict({
     origin: {
       doc: 'CORS allowed origins',
       format: Array,
-      default: ['http://localhost:3000'],
+      default: ['https://content-reviewer-frontend.dev.cdp-int.defra.cloud'],
       env: 'CORS_ORIGIN'
     },
     credentials: {
@@ -183,6 +183,12 @@ const config = convict({
       format: String,
       default: 'prompts/system-prompt.md',
       env: 'S3_PROMPT_KEY'
+    },
+    s3Path: {
+      doc: 'S3 path for the storage',
+      format: String,
+      default: 'reviews',
+      env: 'S3_PATH'
     }
   },
   aws: {
@@ -220,12 +226,6 @@ const config = convict({
       default: 'content_review_status',
       env: 'SQS_QUEUE_NAME'
     },
-    region: {
-      doc: 'AWS region for SQS',
-      format: String,
-      default: 'eu-west-2',
-      env: 'SQS_REGION'
-    },
     maxMessages: {
       doc: 'Maximum number of messages to receive at once',
       format: Number,
@@ -243,6 +243,12 @@ const config = convict({
       format: Number,
       default: 300,
       env: 'SQS_VISIBILITY_TIMEOUT'
+    },
+    maxConcurrentRequests: {
+      doc: 'Maximum concurrent Bedrock API requests (to prevent rate limiting). Set to 2-3 for dev, 5-10 for prod.',
+      format: Number,
+      default: 5,
+      env: 'SQS_MAX_CONCURRENT_REQUESTS'
     }
   },
   bedrock: {
@@ -271,12 +277,6 @@ const config = convict({
       default: '1',
       env: 'BEDROCK_GUARDRAIL_VERSION'
     },
-    region: {
-      doc: 'AWS region for Bedrock (must match inference profile)',
-      format: String,
-      default: 'eu-west-2',
-      env: 'BEDROCK_REGION'
-    },
     modelName: {
       doc: 'Bedrock model name (for reference)',
       format: String,
@@ -292,8 +292,36 @@ const config = convict({
     temperature: {
       doc: 'AI temperature (0.0-1.0, lower is more focused)',
       format: Number,
-      default: 0.7,
+      default: 0.2,
       env: 'BEDROCK_TEMPERATURE'
+    },
+    topP: {
+      doc: 'Top-P nucleus sampling (0.0-1.0, lower is more deterministic)',
+      format: Number,
+      default: 0.9,
+      env: 'BEDROCK_TOP_P'
+    }
+  },
+  mockMode: {
+    s3Upload: {
+      doc: 'Mock S3 uploads for local dev without AWS',
+      format: Boolean,
+      default: false,
+      env: 'MOCK_S3_UPLOAD'
+    },
+    skipSqsWorker: {
+      doc: 'Skip starting SQS worker',
+      format: Boolean,
+      default: false,
+      env: 'SKIP_SQS_WORKER'
+    }
+  },
+  contentReview: {
+    maxCharLength: {
+      doc: 'Maximum character length for content review (set in cdp-app-config)',
+      format: Number,
+      default: 50000,
+      env: 'CONTENT_REVIEW_MAX_CHAR_LEN'
     }
   }
 })

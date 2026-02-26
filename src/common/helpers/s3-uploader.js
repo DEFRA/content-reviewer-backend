@@ -1,6 +1,7 @@
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3'
 import { config } from '../../config.js'
 import { createLogger } from './logging/logger.js'
+import { piiRedactor } from './pii-redactor.js'
 
 const logger = createLogger()
 
@@ -8,13 +9,13 @@ const logger = createLogger()
  * S3 Client for file uploads
  */
 class S3Uploader {
+  // Renamed to match ^[_a-z][a-zA-Z0-9]*$
+  static get textContentType() {
+    return 'text/plain'
+  }
+
   constructor() {
-    // Check if we should use mock mode (when LocalStack/AWS is not available)
-    // Default to mock mode in development if no AWS endpoint is configured
-    const awsEndpoint = config.get('aws.endpoint')
-    this.mockMode =
-      process.env.MOCK_S3_UPLOAD === 'true' ||
-      (!awsEndpoint && process.env.NODE_ENV === 'development')
+    this.mockMode = config.get('mockMode.s3Upload')
 
     if (this.mockMode) {
       logger.info(
@@ -46,7 +47,7 @@ class S3Uploader {
    * @param {string} uploadId - Unique upload ID
    * @returns {Promise<Object>} Upload result
    */
-  async uploadFile(file, uploadId) {
+  /*async uploadFile(file, uploadId) {
     const key = `${this.pathPrefix}/${uploadId}/${file.originalname}`
 
     logger.info(
@@ -147,6 +148,159 @@ class S3Uploader {
 
       throw new Error(`S3 upload failed: ${error.message}`)
     }
+  }*/
+
+  /**
+   * Create mock upload response
+   * @private
+   */
+  _createMockUploadResponse(
+    uploadId,
+    filename,
+    contentToUpload,
+    key,
+    redactionResult
+  ) {
+    logger.warn(
+      {
+        uploadId,
+        filename,
+        contentLength: contentToUpload.length,
+        hasPII: redactionResult.hasPII
+      },
+      '[MOCK MODE] Simulating S3 text upload - not actually uploading'
+    )
+
+    return {
+      success: true,
+      bucket: this.bucket,
+      key,
+      location: `s3://${this.bucket}/${key}`,
+      size: contentToUpload.length,
+      contentType: S3Uploader.TEXT_CONTENT_TYPE,
+      piiRedacted: redactionResult.hasPII,
+      piiRedactionCount: redactionResult.redactionCount
+    }
+  }
+
+  /**
+   * Create S3 put object command
+   * @private
+   */
+  _createPutCommand(key, contentToUpload, filename, uploadId, redactionResult) {
+    return new PutObjectCommand({
+      Bucket: this.bucket,
+      Key: key,
+      Body: Buffer.from(contentToUpload, 'utf-8'),
+      ContentType: S3Uploader.TEXT_CONTENT_TYPE,
+      Metadata: {
+        originalName: filename,
+        uploadId,
+        uploadedAt: new Date().toISOString(),
+        contentLength: contentToUpload.length.toString(),
+        piiRedacted: redactionResult.hasPII ? 'true' : 'false',
+        piiRedactionCount: redactionResult.redactionCount.toString()
+      }
+    })
+  }
+
+  /**
+   * Create successful upload response
+   * @private
+   */
+  _createUploadResponse(
+    uploadId,
+    filename,
+    contentToUpload,
+    key,
+    redactionResult
+  ) {
+    return {
+      success: true,
+      bucket: this.bucket,
+      key,
+      location: `s3://${this.bucket}/${key}`,
+      fileId: uploadId,
+      filename,
+      size: contentToUpload.length,
+      contentType: 'text/plain',
+      piiRedacted: redactionResult.hasPII,
+      piiRedactionCount: redactionResult.redactionCount
+    }
+  }
+
+  /**
+   * Log upload start information
+   * @private
+   */
+  _logUploadStart(
+    uploadId,
+    filename,
+    textContent,
+    contentToUpload,
+    redactionResult,
+    key
+  ) {
+    logger.info(
+      {
+        uploadId,
+        filename,
+        originalLength: textContent.length,
+        redactedLength: contentToUpload.length,
+        hasPII: redactionResult.hasPII,
+        piiRedactionCount: redactionResult.redactionCount,
+        bucket: this.bucket,
+        key
+      },
+      redactionResult.hasPII
+        ? `S3 text upload started - PII REDACTED (${redactionResult.redactionCount} instances)`
+        : 'S3 text content upload started'
+    )
+  }
+
+  /**
+   * Log successful upload
+   * @private
+   */
+  _logUploadSuccess(
+    uploadId,
+    filename,
+    contentToUpload,
+    key,
+    duration,
+    redactionResult
+  ) {
+    logger.info({
+      uploadId,
+      filename,
+      contentLength: contentToUpload.length,
+      bucket: this.bucket,
+      key,
+      s3Location: `s3://${this.bucket}/${key}`,
+      durationMs: duration,
+      piiRedacted: redactionResult.hasPII,
+      piiRedactionCount: redactionResult.redactionCount
+    })
+  }
+
+  /**
+   * Log upload error
+   * @private
+   */
+  _logUploadError(uploadId, filename, key, error, duration) {
+    logger.error(
+      {
+        uploadId,
+        filename,
+        bucket: this.bucket,
+        key,
+        error: error.message,
+        errorName: error.name,
+        errorCode: error.Code,
+        durationMs: duration
+      },
+      `S3 text upload failed after ${duration}ms: ${error.message}`
+    )
   }
 
   /**
@@ -157,105 +311,66 @@ class S3Uploader {
    * @returns {Promise<Object>} Upload result
    */
   async uploadTextContent(textContent, uploadId, title = 'Text Content') {
-    const filename = `${title.replace(/[^a-zA-Z0-9-_]/g, '_')}.txt`
+    const filename = `${title.replaceAll(/[^a-zA-Z0-9-_]/g, '_')}.txt`
     const key = `${this.pathPrefix}/${uploadId}/${filename}`
 
-    logger.info(
-      {
-        uploadId,
-        filename,
-        contentLength: textContent.length,
-        bucket: this.bucket,
-        key
-      },
-      'S3 text content upload started'
+    // Redact PII from content before uploading to S3
+    const redactionResult = piiRedactor.redactUserContent(textContent)
+    const contentToUpload = redactionResult.redactedText
+
+    this._logUploadStart(
+      uploadId,
+      filename,
+      textContent,
+      contentToUpload,
+      redactionResult,
+      key
     )
 
     const startTime = performance.now()
 
     // Mock mode - simulate successful upload without actually uploading
     if (this.mockMode) {
-      logger.warn(
-        {
-          uploadId,
-          filename,
-          contentLength: textContent.length
-        },
-        '[MOCK MODE] Simulating S3 text upload - not actually uploading'
-      )
-
-      return {
-        success: true,
-        bucket: this.bucket,
-        key,
-        location: `s3://${this.bucket}/${key}`,
-        fileId: uploadId,
+      return this._createMockUploadResponse(
+        uploadId,
         filename,
-        size: textContent.length,
-        contentType: 'text/plain'
-      }
+        contentToUpload,
+        key,
+        redactionResult
+      )
     }
 
-    const command = new PutObjectCommand({
-      Bucket: this.bucket,
-      Key: key,
-      Body: Buffer.from(textContent, 'utf-8'),
-      ContentType: 'text/plain',
-      Metadata: {
-        originalName: filename,
-        uploadId,
-        uploadedAt: new Date().toISOString(),
-        contentLength: textContent.length.toString()
-      }
-    })
+    const command = this._createPutCommand(
+      key,
+      contentToUpload,
+      filename,
+      uploadId,
+      redactionResult
+    )
 
     try {
       await this.s3Client.send(command)
 
-      const endTime = performance.now()
-      const duration = Math.round(endTime - startTime)
-
-      logger.info(
-        {
-          uploadId,
-          filename,
-          contentLength: textContent.length,
-          bucket: this.bucket,
-          key,
-          s3Location: `s3://${this.bucket}/${key}`,
-          durationMs: duration
-        },
-        `S3 text upload completed in ${duration}ms`
-      )
-
-      return {
-        success: true,
-        bucket: this.bucket,
-        key,
-        location: `s3://${this.bucket}/${key}`,
-        fileId: uploadId,
+      const duration = Math.round(performance.now() - startTime)
+      this._logUploadSuccess(
+        uploadId,
         filename,
-        size: textContent.length,
-        contentType: 'text/plain'
-      }
-    } catch (error) {
-      const endTime = performance.now()
-      const duration = Math.round(endTime - startTime)
-
-      logger.error(
-        {
-          uploadId,
-          filename,
-          bucket: this.bucket,
-          key,
-          error: error.message,
-          errorName: error.name,
-          errorCode: error.Code,
-          durationMs: duration
-        },
-        `S3 text upload failed after ${duration}ms: ${error.message}`
+        contentToUpload,
+        key,
+        duration,
+        redactionResult
       )
 
+      return this._createUploadResponse(
+        uploadId,
+        filename,
+        contentToUpload,
+        key,
+        redactionResult
+      )
+    } catch (error) {
+      const duration = Math.round(performance.now() - startTime)
+      this._logUploadError(uploadId, filename, key, error, duration)
       throw new Error(`S3 text upload failed: ${error.message}`)
     }
   }
