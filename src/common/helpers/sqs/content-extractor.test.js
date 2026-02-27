@@ -1,5 +1,7 @@
 import { describe, test, expect, beforeEach, vi } from 'vitest'
 
+import { ContentExtractor } from './content-extractor.js'
+
 // Test constants to avoid magic strings/numbers
 const TEST_REVIEW_ID = 'review-123'
 const TEST_BUCKET = 'test-bucket'
@@ -10,15 +12,12 @@ const TEST_S3_KEY_TXT = 'uploads/document.txt'
 const TEST_CONTENT_TYPE_PDF = 'application/pdf'
 const TEST_CONTENT_TYPE_DOCX =
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-const TEST_CONTENT_TYPE_TEXT = 'text/plain'
 const TEST_FILENAME_PDF = 'test.pdf'
 const TEST_FILENAME_DOCX = 'test.docx'
-const TEST_FILENAME_TXT = 'test.txt'
 const TEST_TEXT_CONTENT = 'This is test content'
 const TEST_TEXT_EXTRACTED = 'Extracted text content'
 const TEST_TEXT_HELLO = 'Hello World Test'
 const TEST_WORD_COUNT_THREE = 3
-const TEST_WORD_COUNT_FOUR = 4
 const TEST_WORD_COUNT_TWENTY = 20
 const TEST_AWS_REGION = 'us-east-1'
 const TEST_AWS_ENDPOINT = 'http://localhost:4566'
@@ -66,8 +65,6 @@ vi.mock('../text-extractor.js', () => ({
     countWords: (...args) => mockCountWords(...args)
   }
 }))
-
-import { ContentExtractor } from './content-extractor.js'
 
 function createMockAsyncBody(chunks) {
   return {

@@ -1,5 +1,7 @@
 import { describe, test, expect, beforeEach, vi } from 'vitest'
 
+import { SQSMessageHandler, truncateReceiptHandle } from './message-handler.js'
+
 // Test constants
 const TEST_QUEUE_URL = 'http://localhost:4566/000000000000/test-queue'
 const TEST_REGION = 'us-east-1'
@@ -74,8 +76,6 @@ vi.mock('../logging/logger.js', () => ({
     debug: (...args) => mockLoggerDebug(...args)
   })
 }))
-
-import { SQSMessageHandler, truncateReceiptHandle } from './message-handler.js'
 
 describe('truncateReceiptHandle', () => {
   test('Should truncate long receipt handle', () => {

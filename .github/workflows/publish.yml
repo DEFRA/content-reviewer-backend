@@ -34,7 +34,6 @@ jobs:
           npm ci
           npm run format:check
           npm run lint
-          npm run build:backend
           npm test
 
       - name: Build and Publish

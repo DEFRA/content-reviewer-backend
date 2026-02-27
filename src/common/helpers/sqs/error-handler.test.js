@@ -1,5 +1,7 @@
 import { describe, test, expect, beforeEach, vi } from 'vitest'
 
+import { ErrorHandler } from './error-handler.js'
+
 // Test constants for review IDs
 const TEST_REVIEW_ID_123 = 'review-123'
 const TEST_REVIEW_ID_456 = 'review-456'
@@ -30,7 +32,6 @@ const VERY_LONG_MESSAGE_LENGTH = 500
 
 // Test constants for error messages
 const ERROR_PLACEHOLDER = 'Error placeholder for testing'
-const EMPTY_STRING = ''
 const ELLIPSIS = '...'
 
 const mockLoggerError = vi.fn()
@@ -42,8 +43,6 @@ vi.mock('../logging/logger.js', () => ({
     warn: (...args) => mockLoggerWarn(...args)
   })
 }))
-
-import { ErrorHandler } from './error-handler.js'
 
 describe('ErrorHandler - Initialization', () => {
   let handler
