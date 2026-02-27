@@ -176,7 +176,8 @@ export async function createReviewRecord(
   s3Result,
   title,
   contentLength,
-  logger
+  logger,
+  userId = null
 ) {
   const dbCreateStart = performance.now()
   await reviewRepository.createReview({
@@ -185,7 +186,8 @@ export async function createReviewRecord(
     fileName: title || CONTENT_DEFAULTS.TITLE,
     fileSize: contentLength,
     mimeType: CONTENT_TYPES.TEXT_PLAIN,
-    s3Key: s3Result.key
+    s3Key: s3Result.key,
+    userId: userId || null
   })
   const dbCreateDuration = Math.round(performance.now() - dbCreateStart)
 
@@ -293,12 +295,14 @@ export async function processTextReviewSubmission(payload, headers, logger) {
   const { content, title } = payload
 
   const reviewId = `review_${randomUUID()}`
+  const userId = headers['x-user-id'] || null
 
   logger.info(
     {
       reviewId,
       contentLength: content.length,
-      title: title || CONTENT_DEFAULTS.TITLE
+      title: title || CONTENT_DEFAULTS.TITLE,
+      userId: userId || 'anonymous'
     },
     '[STEP 1/6] Processing text review request - START'
   )
@@ -311,13 +315,14 @@ export async function processTextReviewSubmission(payload, headers, logger) {
     logger
   )
 
-  // Create review record in database
+  // Create review record in database (includes userId for per-user filtering)
   const dbCreateDuration = await createReviewRecord(
     reviewId,
     s3Result,
     title,
     content.length,
-    logger
+    logger,
+    userId
   )
 
   // Queue review job in SQS
