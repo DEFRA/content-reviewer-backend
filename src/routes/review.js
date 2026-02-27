@@ -188,6 +188,7 @@ const handleGetReview = async (request, h) => {
 
 /**
  * GET /api/reviews - Get all reviews (history)
+ * Supports optional ?userId= query param to filter to a specific user's reviews.
  */
 const handleGetAllReviews = async (request, h) => {
   request.logger.info(
@@ -200,10 +201,14 @@ const handleGetAllReviews = async (request, h) => {
       Number.parseInt(request.query.limit, 10) || PAGINATION_DEFAULTS.LIMIT
     const skip =
       Number.parseInt(request.query.skip, 10) || PAGINATION_DEFAULTS.SKIP
+    const userId = request.query.userId || null
 
-    request.logger.info({ limit, skip }, 'Fetching reviews from S3 repository')
+    request.logger.info(
+      { limit, skip, userId: userId || 'all' },
+      'Fetching reviews from S3 repository'
+    )
 
-    const reviews = await reviewRepository.getAllReviews(limit, skip)
+    const reviews = await reviewRepository.getAllReviews(limit, skip, userId)
     request.logger.info(
       {
         count: reviews.length,
@@ -213,7 +218,7 @@ const handleGetAllReviews = async (request, h) => {
       `Retrieved ${reviews.length} reviews from S3`
     )
 
-    const totalCount = await reviewRepository.getReviewCount()
+    const totalCount = await reviewRepository.getReviewCount(userId)
     request.logger.info({ totalCount }, 'Retrieved total review count from S3')
 
     // Format reviews for response

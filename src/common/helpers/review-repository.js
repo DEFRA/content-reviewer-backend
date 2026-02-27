@@ -109,6 +109,7 @@ class ReviewRepositoryS3 {
       fileSize: reviewData.fileSize || null,
       mimeType: reviewData.mimeType || null,
       s3Key: reviewData.s3Key || null, // S3 reference for both files AND text content
+      userId: reviewData.userId || null, // Authenticated user ID for per-user filtering
       result: null,
       error: null,
       processingStartedAt: null,
@@ -408,19 +409,24 @@ class ReviewRepositoryS3 {
   }
 
   /**
-   * Get all reviews (paginated)
+   * Get all reviews (paginated), optionally filtered by userId
    * @param {number} limit - Maximum number of reviews to return
    * @param {number} skip - Number of reviews to skip (for pagination)
+   * @param {string|null} userId - If provided, only return reviews owned by this user
    * @returns {Promise<Array>} Array of reviews
    */
-  async getAllReviews(limit = 50, skip = 0) {
+  async getAllReviews(limit = 50, skip = 0, userId = null) {
     try {
-      // Get more than needed to handle skip
-      const fetchLimit = limit + skip
+      // Fetch a larger window so we can apply userId filter before skip/limit
+      const fetchLimit = userId ? limit * 10 + skip : limit + skip
       const { reviews } = await this.getRecentReviews({ limit: fetchLimit })
 
-      // Apply skip and limit
-      return reviews.slice(skip, skip + limit)
+      const filtered = userId
+        ? reviews.filter((r) => r.userId === userId)
+        : reviews
+
+      // Apply skip and limit after filtering
+      return filtered.slice(skip, skip + limit)
     } catch (error) {
       logger.error({ error: error.message }, 'Failed to get all reviews')
       throw error
@@ -428,11 +434,25 @@ class ReviewRepositoryS3 {
   }
 
   /**
-   * Get total count of reviews
+   * Get total count of reviews, optionally filtered by userId
+   * @param {string|null} userId - If provided, count only this user's reviews
    * @returns {Promise<number>} Total number of reviews
    */
-  async getReviewCount() {
-    return getReviewCountHelper(this.s3Client, this.bucket, this.prefix)
+  async getReviewCount(userId = null) {
+    if (!userId) {
+      return getReviewCountHelper(this.s3Client, this.bucket, this.prefix)
+    }
+    // For per-user counts, fetch all and filter (S3 has no server-side filter)
+    try {
+      const { reviews } = await this.getRecentReviews({ limit: 10000 })
+      return reviews.filter((r) => r.userId === userId).length
+    } catch (error) {
+      logger.error(
+        { error: error.message, userId },
+        'Failed to get review count for user'
+      )
+      throw error
+    }
   }
 
   /**
