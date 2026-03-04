@@ -443,8 +443,6 @@ class PromptManager {
         'System prompt loaded from S3 and cached'
       )
 
-      logger.info({ promptText }, 'Print System prompt loaded from S3')
-
       return promptText
     } catch (error) {
       logger.warn(
