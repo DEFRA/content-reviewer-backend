@@ -136,12 +136,12 @@ export async function deleteSingleOldReview(s3Client, bucket, prefix, review) {
 }
 
 /**
- * Delete old reviews to maintain storage limits
+ * Delete reviews older than a specified age
  * @param {Object} s3Client - S3 client instance
  * @param {string} bucket - S3 bucket name
  * @param {string} prefix - Reviews prefix
  * @param {Function} getRecentReviewsFn - Function to get recent reviews
- * @param {number} keepCount - Number of most recent reviews to keep
+ * @param {number} maxAgeInDays - Maximum age of reviews to keep (default 30 days / 1 month)
  * @returns {Promise<number>} Number of reviews deleted
  */
 export async function deleteOldReviews(
@@ -149,35 +149,55 @@ export async function deleteOldReviews(
   bucket,
   prefix,
   getRecentReviewsFn,
-  keepCount = 100
+  maxAgeInDays = 30
 ) {
   try {
     logger.info(
-      { maxReviews: keepCount },
-      'Checking if review cleanup is needed'
+      { maxAgeInDays },
+      'Checking if review cleanup is needed (by age)'
     )
 
-    // Get all reviews sorted by most recent first (max 100 reviews in system)
-    const { reviews } = await getRecentReviewsFn({ limit: 100 })
+    // Get all reviews (fetch up to 1000 to check all old ones)
+    const { reviews } = await getRecentReviewsFn({ limit: 1000 })
 
-    if (reviews.length <= keepCount) {
+    // Calculate cutoff date (reviews older than this will be deleted)
+    const cutoffDate = new Date()
+    cutoffDate.setDate(cutoffDate.getDate() - maxAgeInDays)
+    const cutoffTimestamp = cutoffDate.getTime()
+
+    logger.info(
+      {
+        maxAgeInDays,
+        cutoffDate: cutoffDate.toISOString(),
+        cutoffTimestamp
+      },
+      `Reviews older than ${cutoffDate.toISOString()} will be deleted`
+    )
+
+    // Filter reviews older than cutoff date
+    const reviewsToDelete = reviews.filter((review) => {
+      // Use createdAt or uploadedAt timestamp
+      const reviewDate = new Date(review.createdAt || review.uploadedAt)
+      const reviewTimestamp = reviewDate.getTime()
+      return reviewTimestamp < cutoffTimestamp
+    })
+
+    if (reviewsToDelete.length === 0) {
       logger.info(
-        { currentCount: reviews.length, maxReviews: keepCount },
-        'No cleanup needed - review count within limit'
+        { totalReviews: reviews.length, maxAgeInDays },
+        'No cleanup needed - no reviews older than cutoff date'
       )
       return 0
     }
 
-    // Get reviews to delete (everything after the first maxReviews)
-    const reviewsToDelete = reviews.slice(keepCount)
-
     logger.info(
       {
         totalReviews: reviews.length,
-        keepCount,
+        maxAgeInDays,
+        cutoffDate: cutoffDate.toISOString(),
         deleteCount: reviewsToDelete.length
       },
-      'Starting cleanup of old reviews'
+      `Starting cleanup of reviews older than ${maxAgeInDays} days`
     )
 
     let deletedCount = 0

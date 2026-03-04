@@ -29,6 +29,8 @@ const logger = createLogger()
  * S3-based repository for content reviews
  * Stores review data as JSON files in S3
  */
+const DEFAULT_REVIEW_RETENTION_DAYS = 30
+
 class ReviewRepositoryS3 {
   constructor() {
     const s3Config = {
@@ -116,11 +118,10 @@ class ReviewRepositoryS3 {
       processingCompletedAt: null,
       bedrockUsage: null
     }
-
     await this.saveReview(review)
 
-    // Trigger async cleanup to keep only recent 100 reviews (don't wait for it)
-    this.deleteOldReviews(100).catch((error) => {
+    // Trigger async cleanup to delete reviews older than the default retention period (don't wait for it)
+    this.deleteOldReviews(DEFAULT_REVIEW_RETENTION_DAYS).catch((error) => {
       logger.error(
         { error: error.message },
         'Background cleanup failed (non-critical)'
@@ -525,17 +526,17 @@ class ReviewRepositoryS3 {
   }
 
   /**
-   * Delete old reviews to maintain storage limits
-   * @param {number} keepCount - Number of most recent reviews to keep
+   * Delete reviews older than specified number of days
+   * @param {number} maxAgeInDays - Maximum age of reviews to keep (default 30 days / 1 month)
    * @returns {Promise<number>} Number of reviews deleted
    */
-  async deleteOldReviews(keepCount = 100) {
+  async deleteOldReviews(maxAgeInDays = 30) {
     return deleteOldReviewsHelper(
       this.s3Client,
       this.bucket,
       this.prefix,
       this.getRecentReviews.bind(this),
-      keepCount
+      maxAgeInDays
     )
   }
 
