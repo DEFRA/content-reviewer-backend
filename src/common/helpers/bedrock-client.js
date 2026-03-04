@@ -29,6 +29,7 @@ class BedrockClient {
     }
 
     this.enabled = true
+    this.modelName = config.get('bedrock.modelName')
     this.inferenceProfileArn = config.get('bedrock.inferenceProfileArn')
     this.guardrailArn = config.get('bedrock.guardrailArn')
     this.guardrailVersion = config.get('bedrock.guardrailVersion')
@@ -43,6 +44,12 @@ class BedrockClient {
       requestHandler: {
         requestTimeout: this.timeout
       }
+    })
+
+    //Log model name
+    logger.info(`Bedrock client initialized with model: ${this.modelName}`, {
+      inferenceProfileArn: this.inferenceProfileArn,
+      guardrailArn: this.guardrailArn
     })
 
     // Log temperature to validate environment variable configuration
