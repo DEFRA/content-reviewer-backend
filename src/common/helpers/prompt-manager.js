@@ -34,6 +34,7 @@ To ensure consistent, reliable reviews:
 4. **Order improvements by severity** - most critical issues first, consistently
 5. **Use precise, factual language** - avoid subjective or creative phrasing
 6. **Be deterministic** - given the same input, produce the same output
+7. **Every [ISSUE] marker MUST have a corresponding [/PRIORITY] [/IMPROVEMENTS] entry
 
 Your output must be **predictable and structured** so that automated systems can reliably parse and display your reviews.
 
