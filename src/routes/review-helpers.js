@@ -209,14 +209,12 @@ export async function createReviewRecord(
 // ============ SQS QUEUE HELPERS ============
 
 /**
- * Sends review message to SQS queue
- * @param {string} reviewId - Review ID
- * @param {Object} s3Result - S3 upload result
- * @param {string} title - Content title
- * @param {number} contentLength - Content length in bytes
- * @param {Object} headers - Request headers
- * @param {Object} logger - Request logger
- * @returns {Promise<number>} SQS send duration in ms
+ * Sends review message to SQS queue.
+ *
+ * Performance optimisation: `textContent` is embedded directly in the
+ * message body so the worker can skip the extra S3 GetObject call.
+ * The field is omitted for large payloads (>200 KB) to stay within the
+ * 256 KB SQS message size limit.
  */
 export async function queueReviewJob(
   reviewId,
@@ -224,9 +222,16 @@ export async function queueReviewJob(
   title,
   contentLength,
   headers,
-  logger
+  logger,
+  textContent = null
 ) {
   const sqsSendStart = performance.now()
+
+  // Embed content inline only when it fits comfortably within the SQS 256 KB limit.
+  // 200,000 characters ≈ 200 KB UTF-8 which is safely under the limit.
+  const MAX_INLINE_CHARS = 200000
+  const inlineContent =
+    textContent && textContent.length <= MAX_INLINE_CHARS ? textContent : null
 
   try {
     await sqsClient.sendMessage({
@@ -240,7 +245,9 @@ export async function queueReviewJob(
       contentType: CONTENT_TYPES.TEXT_PLAIN,
       fileSize: contentLength,
       userId: headers['x-user-id'] || 'anonymous',
-      sessionId: headers['x-session-id'] || null
+      sessionId: headers['x-session-id'] || null,
+      // Inline content: worker uses this directly, skipping an S3 GetObject call
+      ...(inlineContent ? { textContent: inlineContent } : {})
     })
 
     const sqsSendDuration = Math.round(performance.now() - sqsSendStart)
@@ -325,14 +332,15 @@ export async function processTextReviewSubmission(payload, headers, logger) {
     userId
   )
 
-  // Queue review job in SQS
+  // Queue review job in SQS, passing content inline to skip worker S3 read
   const sqsSendDuration = await queueReviewJob(
     reviewId,
     s3Result,
     title,
     content.length,
     headers,
-    logger
+    logger,
+    content // inline text – worker will use this directly
   )
 
   return {

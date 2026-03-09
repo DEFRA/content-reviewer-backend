@@ -284,21 +284,21 @@ const config = convict({
       env: 'BEDROCK_MODEL_NAME'
     },
     maxTokens: {
-      doc: 'Maximum tokens in AI response',
+      doc: 'Maximum tokens in AI response. 4000 is sufficient for a full structured review of 10,000 chars; keeping this low is the single biggest speed lever.',
       format: Number,
-      default: 100000,
+      default: 4000,
       env: 'BEDROCK_MAX_TOKENS'
     },
     temperature: {
-      doc: 'AI temperature (0.0-1.0, lower is more focused)',
+      doc: 'AI temperature (0.0-1.0). 0.1 keeps output tightly structured and deterministic, reducing variability in response length.',
       format: Number,
-      default: 0.2,
+      default: 0.1,
       env: 'BEDROCK_TEMPERATURE'
     },
     topP: {
-      doc: 'Top-P nucleus sampling (0.0-1.0, lower is more deterministic)',
+      doc: 'Top-P nucleus sampling (0.0-1.0). 0.8 with low temperature keeps output focused.',
       format: Number,
-      default: 0.9,
+      default: 0.8,
       env: 'BEDROCK_TOP_P'
     }
   },

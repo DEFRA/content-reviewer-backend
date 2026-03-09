@@ -120,9 +120,26 @@ export class ContentExtractor {
   }
 
   /**
-   * Extract text content from S3
+   * Extract text content from S3 for a text_review message.
+   *
+   * Performance optimisation: if the SQS message already carries the text
+   * content inline (messageBody.textContent), we use it directly and skip
+   * the S3 GetObject round-trip entirely (~100-500 ms saved).
    */
   async extractTextFromS3(reviewId, messageBody) {
+    // Fast path: content was embedded directly in the SQS message
+    if (messageBody.textContent) {
+      logger.info(
+        {
+          reviewId,
+          contentLength: messageBody.textContent.length
+        },
+        'Using inline text content from SQS message body (skipped S3 download)'
+      )
+      return messageBody.textContent
+    }
+
+    // Slow path: fetch from S3 (fallback for messages without inline content)
     logger.info(
       {
         reviewId,

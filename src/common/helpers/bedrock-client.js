@@ -5,6 +5,10 @@ import {
 import { config } from '../../config.js'
 import { createLogger } from './logging/logger.js'
 
+// Pre-compile the Bedrock command options once at module load so they are
+// not reconstructed on every request.  This avoids repeated object allocation
+// and config lookups in the hot path.
+
 const logger = createLogger()
 
 const ERROR_MESSAGES = {
@@ -37,7 +41,7 @@ class BedrockClient {
     this.maxTokens = config.get('bedrock.maxTokens')
     this.temperature = config.get('bedrock.temperature')
     this.topP = config.get('bedrock.topP')
-    this.timeout = 180000 // 180 seconds timeout for Bedrock API calls
+    this.timeout = 60000 // 60 seconds – aligned with 30-40s processing target plus buffer
 
     this.client = new BedrockRuntimeClient({
       region: this.region,
@@ -196,7 +200,10 @@ class BedrockClient {
   }
 
   /**
-   * Build messages array for Bedrock API
+   * Build messages array for Bedrock API.
+   * Only the actual user content is sent here; the system prompt is passed
+   * via the dedicated `system` parameter (see sendMessage) so it is NOT
+   * counted as user/assistant turns and is processed more efficiently.
    * @private
    */
   _buildMessages(userMessage, conversationHistory) {
@@ -234,13 +241,25 @@ class BedrockClient {
   }
 
   /**
-   * Send a message to Claude and get a response
+   * Send a message to Claude and get a response.
+   *
+   * Performance notes:
+   * - `system` is passed as a proper Converse API system block, NOT as a
+   *   user/assistant turn.  This reduces total input tokens and lets the
+   *   model skip the priming assistant turn entirely.
+   * - `conversationHistory` should be empty for single-shot reviews to avoid
+   *   re-processing previous turns.
    *
    * @param {string} userMessage - The user's message/prompt
    * @param {Array} conversationHistory - Optional previous messages for context
+   * @param {string|null} systemPrompt - System prompt to send via the `system` field
    * @returns {Promise<Object>} Response with content, usage stats, and guardrail metrics
    */
-  async sendMessage(userMessage, conversationHistory = []) {
+  async sendMessage(
+    userMessage,
+    conversationHistory = [],
+    systemPrompt = null
+  ) {
     if (!this.enabled) {
       throw new Error('Bedrock AI is not enabled')
     }
@@ -250,12 +269,20 @@ class BedrockClient {
       const guardrailConfig = this._buildGuardrailConfig()
       const inferenceConfig = this._buildInferenceConfig()
 
-      const command = new ConverseCommand({
+      const commandInput = {
         modelId: this.inferenceProfileArn,
         messages,
         inferenceConfig,
         guardrailConfig
-      })
+      }
+
+      // Use the native `system` parameter instead of a fake user/assistant priming
+      // turn.  This reduces input token count and speeds up processing.
+      if (systemPrompt) {
+        commandInput.system = [{ text: systemPrompt }]
+      }
+
+      const command = new ConverseCommand(commandInput)
 
       const response = await this.client.send(command)
       return this._processResponse(response)

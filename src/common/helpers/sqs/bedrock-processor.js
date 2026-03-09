@@ -32,7 +32,12 @@ export class BedrockReviewProcessor {
   }
 
   /**
-   * Send request to Bedrock AI
+   * Send request to Bedrock AI.
+   *
+   * Performance improvement: the system prompt is now passed via the native
+   * Converse API `system` field instead of as fake user/assistant turns.
+   * This eliminates the ~2-turn overhead and reduces input token count.
+   * An empty conversationHistory is used for single-shot reviews.
    */
   async sendBedrockRequest(reviewId, userPrompt, systemPrompt) {
     const bedrockStartTime = performance.now()
@@ -46,20 +51,12 @@ export class BedrockReviewProcessor {
       '[BEDROCK] Sending request to Bedrock AI - START'
     )
 
-    const bedrockResponse = await bedrockClient.sendMessage(userPrompt, [
-      {
-        role: 'user',
-        content: [{ text: systemPrompt }]
-      },
-      {
-        role: 'assistant',
-        content: [
-          {
-            text: 'I understand. I will review content according to GOV.UK standards and provide structured feedback as specified.'
-          }
-        ]
-      }
-    ])
+    // Pass systemPrompt via the dedicated parameter; no fake conversation turns.
+    const bedrockResponse = await bedrockClient.sendMessage(
+      userPrompt,
+      [], // empty history – single-shot review
+      systemPrompt
+    )
 
     const bedrockDuration = Math.round(performance.now() - bedrockStartTime)
 
@@ -97,16 +94,25 @@ export class BedrockReviewProcessor {
   }
 
   /**
-   * Perform Bedrock AI review
+   * Perform Bedrock AI review.
+   *
+   * Performance: the user prompt is kept concise – verbose preamble text
+   * ('Please review the following content...') adds input tokens without
+   * improving output quality.  The system prompt already instructs the model
+   * on exactly what to do, so the user turn only needs to supply the content.
    */
   async performBedrockReview(reviewId, textContent) {
-    const userPrompt = `Please review the following content:\n\n---\n${textContent}\n---\n\nProvide a comprehensive content review following the guidelines in your system prompt.`
+    // Trim whitespace to avoid wasting tokens on leading/trailing blank lines
+    const trimmedContent = textContent.trim()
+
+    // Concise user prompt – the system prompt carries all the instructions
+    const userPrompt = `Review the following content:\n\n${trimmedContent}`
 
     logger.info(
       {
         reviewId,
         promptLength: userPrompt.length,
-        textContentLength: textContent.length
+        textContentLength: trimmedContent.length
       },
       `User prompt prepared for Bedrock AI review | ReviewId: ${reviewId} | Length: ${userPrompt.length} chars`
     )

@@ -31,6 +31,11 @@ const logger = createLogger()
  */
 const DEFAULT_REVIEW_RETENTION_DAYS = 30
 
+// Cleanup runs at most once every 30 minutes to avoid listing thousands of S3
+// objects on every review submission.  The timestamp is stored at module level.
+let lastCleanupTime = 0
+const CLEANUP_INTERVAL_MS = 30 * 60 * 1000 // 30 minutes
+
 class ReviewRepositoryS3 {
   constructor() {
     const s3Config = {
@@ -120,13 +125,18 @@ class ReviewRepositoryS3 {
     }
     await this.saveReview(review)
 
-    // Trigger async cleanup to delete reviews older than the default retention period (don't wait for it)
-    this.deleteOldReviews(DEFAULT_REVIEW_RETENTION_DAYS).catch((error) => {
-      logger.error(
-        { error: error.message },
-        'Background cleanup failed (non-critical)'
-      )
-    })
+    // Rate-limited background cleanup: only runs once every 30 minutes so that
+    // every review creation does NOT trigger a 1,000-object S3 list scan.
+    const now = Date.now()
+    if (now - lastCleanupTime > CLEANUP_INTERVAL_MS) {
+      lastCleanupTime = now
+      this.deleteOldReviews(DEFAULT_REVIEW_RETENTION_DAYS).catch((error) => {
+        logger.error(
+          { error: error.message },
+          'Background cleanup failed (non-critical)'
+        )
+      })
+    }
 
     return review
   }
