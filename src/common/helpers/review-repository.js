@@ -29,7 +29,7 @@ const logger = createLogger()
  * S3-based repository for content reviews
  * Stores review data as JSON files in S3
  */
-const DEFAULT_REVIEW_RETENTION_DAYS = 30
+const DEFAULT_REVIEW_RETENTION_DAYS = 5
 
 class ReviewRepositoryS3 {
   constructor() {
@@ -527,10 +527,10 @@ class ReviewRepositoryS3 {
 
   /**
    * Delete reviews older than specified number of days
-   * @param {number} maxAgeInDays - Maximum age of reviews to keep (default 30 days / 1 month)
+   * @param {number} maxAgeInDays - Maximum age of reviews to keep (default 5 days)
    * @returns {Promise<number>} Number of reviews deleted
    */
-  async deleteOldReviews(maxAgeInDays = 30) {
+  async deleteOldReviews(maxAgeInDays = 5) {
     return deleteOldReviewsHelper(
       this.s3Client,
       this.bucket,
