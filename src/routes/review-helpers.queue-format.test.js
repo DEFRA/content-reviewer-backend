@@ -52,9 +52,20 @@ vi.mock('node:crypto', () => ({
   randomUUID: vi.fn(() => 'test-uuid-1234')
 }))
 
+vi.mock('../common/helpers/canonical-document.js', () => ({
+  canonicalDocumentStore: {
+    createFromText: vi.fn()
+  },
+  SOURCE_TYPES: {
+    TEXT: 'text',
+    FILE: 'file'
+  }
+}))
+
 import { config } from '../config.js'
 import { reviewRepository } from '../common/helpers/review-repository.js'
 import { sqsClient } from '../common/helpers/sqs-client.js'
+import { canonicalDocumentStore } from '../common/helpers/canonical-document.js'
 import {
   REVIEW_STATUSES,
   HTTP_STATUS,
@@ -177,12 +188,24 @@ describe('queueReviewJob', () => {
 // ============ processTextReviewSubmission ============
 
 describe('processTextReviewSubmission', () => {
+  const CANONICAL_MOCK_RESULT = {
+    s3: {
+      key: 'documents/test-uuid-1234.json',
+      bucket: 'bucket',
+      location: 's3://...'
+    },
+    document: { documentId: 'test-uuid-1234', charCount: 100, tokenEst: 25 }
+  }
+
   it('returns reviewId and correct shape on success', async () => {
     const { s3Uploader } = await import('../common/helpers/s3-uploader.js')
     s3Uploader.uploadTextContent.mockResolvedValueOnce({
       key: 's3-key',
       bucket: 'bucket'
     })
+    canonicalDocumentStore.createFromText.mockResolvedValueOnce(
+      CANONICAL_MOCK_RESULT
+    )
     reviewRepository.createReview.mockResolvedValueOnce({})
     sqsClient.sendMessage.mockResolvedValueOnce({})
 
@@ -218,6 +241,9 @@ describe('processTextReviewSubmission', () => {
       key: 'k',
       bucket: 'b'
     })
+    canonicalDocumentStore.createFromText.mockResolvedValueOnce(
+      CANONICAL_MOCK_RESULT
+    )
     reviewRepository.createReview.mockResolvedValueOnce({})
     sqsClient.sendMessage.mockRejectedValueOnce(new Error(SQS_ERROR_MSG))
     reviewRepository.updateReviewStatus.mockResolvedValueOnce({})

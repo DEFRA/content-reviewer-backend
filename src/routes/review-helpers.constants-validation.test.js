@@ -50,6 +50,16 @@ vi.mock('node:crypto', () => ({
   randomUUID: vi.fn(() => 'test-uuid-1234')
 }))
 
+vi.mock('../common/helpers/canonical-document.js', () => ({
+  canonicalDocumentStore: {
+    createFromText: vi.fn()
+  },
+  SOURCE_TYPES: {
+    TEXT: 'text',
+    FILE: 'file'
+  }
+}))
+
 import { config } from '../config.js'
 import { reviewRepository } from '../common/helpers/review-repository.js'
 import { s3Uploader } from '../common/helpers/s3-uploader.js'
