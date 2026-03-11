@@ -141,7 +141,7 @@ export async function deleteSingleOldReview(s3Client, bucket, prefix, review) {
  * @param {string} bucket - S3 bucket name
  * @param {string} prefix - Reviews prefix
  * @param {Function} getRecentReviewsFn - Function to get recent reviews
- * @param {number} maxAgeInDays - Maximum age of reviews to keep (default 30 days / 1 month)
+ * @param {number} maxAgeInDays - Maximum age of reviews to keep (default 5 days)
  * @returns {Promise<number>} Number of reviews deleted
  */
 export async function deleteOldReviews(
@@ -149,7 +149,7 @@ export async function deleteOldReviews(
   bucket,
   prefix,
   getRecentReviewsFn,
-  maxAgeInDays = 30
+  maxAgeInDays = 5
 ) {
   try {
     logger.info(
