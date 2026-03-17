@@ -248,7 +248,6 @@ Common words to flag:
 
 ## PLAIN ENGLISH GUIDELINES
 
-- Aim for reading age 9
 - Average sentence: 15-20 words
 - Flag sentences over 25 words
 - Use active voice where possible
@@ -262,7 +261,7 @@ Common words to flag:
 Since formatting is not visible in plain text input, focus accessibility review on:
 
 **Language Accessibility:**
-- Reading age and language complexity (aim for age 9)
+- Language complexity
 - Unexplained jargon or technical terms
 - Overly complex sentence structure
 - Passive voice that obscures meaning
