@@ -316,6 +316,26 @@ const config = convict({
       env: 'SKIP_SQS_WORKER'
     }
   },
+  cleanup: {
+    enabled: {
+      doc: 'Enable automatic cleanup of old reviews',
+      format: Boolean,
+      default: true,
+      env: 'CLEANUP_ENABLED'
+    },
+    intervalHours: {
+      doc: 'Interval in hours between cleanup runs',
+      format: Number,
+      default: 1,
+      env: 'CLEANUP_INTERVAL_HOURS'
+    },
+    retentionDays: {
+      doc: 'Number of days to retain reviews before deletion',
+      format: Number,
+      default: 5,
+      env: 'CLEANUP_RETENTION_DAYS'
+    }
+  },
   contentReview: {
     maxCharLength: {
       doc: 'Maximum character length for content review (set in cdp-app-config)',

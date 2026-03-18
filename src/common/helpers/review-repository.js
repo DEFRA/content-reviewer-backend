@@ -120,14 +120,6 @@ class ReviewRepositoryS3 {
     }
     await this.saveReview(review)
 
-    // Trigger async cleanup to delete reviews older than the default retention period (don't wait for it)
-    this.deleteOldReviews(DEFAULT_REVIEW_RETENTION_DAYS).catch((error) => {
-      logger.error(
-        { error: error.message },
-        'Background cleanup failed (non-critical)'
-      )
-    })
-
     return review
   }
 
