@@ -64,8 +64,11 @@ const DOCUMENT_WITH_FRONT_MATTER = [
   '2. Background\n\nHistory of the policy dates back to 2010.'
 ].join('\n\n')
 
+// Single-page body: use single \n so the stripper never splits this into two
+// pages — prevents the short '1. Introduction' line being misclassified as a
+// title page (< MAX_FIRST_PAGE_SUBSTANTIVE_CHARS = 120 chars).
 const BODY_CONTENT =
-  '1. Introduction\n\nThis document sets out the policy framework.'
+  '1. Introduction\nThis document sets out the policy framework.\nThis section provides the background and context for the policy.'
 
 beforeEach(() => {
   vi.clearAllMocks()

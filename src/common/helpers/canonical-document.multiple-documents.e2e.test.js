@@ -57,8 +57,10 @@ beforeEach(() => {
 const DOC_ID_1 = 'review_e2e-multi-doc-00000001'
 const DOC_ID_2 = 'review_e2e-multi-doc-00000002'
 
+// Deliberately different lengths so the charCount assertion (not.toBe) passes.
 const text1 = 'This is the content for document one.'
-const text2 = 'This is the content for document two.'
+const text2 =
+  'This is the content for document two, which is intentionally longer than the first.'
 
 describe('multiple documents — independent creation', () => {
   it('creates two documents with different IDs independently', async () => {
@@ -118,18 +120,6 @@ describe('multiple documents — charCount and S3 storage', () => {
     expect(doc1.charCount).toBe(doc1.canonicalText.length)
     expect(doc2.charCount).toBe(doc2.canonicalText.length)
     expect(doc1.charCount).not.toBe(doc2.charCount)
-
-    await canonicalDocumentStore.createCanonicalDocument({
-      documentId: DOC_ID_1,
-      text: 'First document.',
-      sourceType: SOURCE_TYPES.TEXT
-    })
-
-    await canonicalDocumentStore.createCanonicalDocument({
-      documentId: DOC_ID_2,
-      text: 'Second document.',
-      sourceType: SOURCE_TYPES.TEXT
-    })
 
     expect(MOCK_S3_SEND).toHaveBeenCalledTimes(2)
 
