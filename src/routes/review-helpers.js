@@ -7,6 +7,7 @@ import {
   canonicalDocumentStore,
   SOURCE_TYPES as CANONICAL_SOURCE_TYPES
 } from '../common/helpers/canonical-document.js'
+import { resultEnvelopeStore } from '../common/helpers/result-envelope.js'
 
 // ============ CONSTANTS ============
 
@@ -286,31 +287,38 @@ export async function queueReviewJob(
   }
 }
 
-// ============ TEXT REVIEW HANDLER HELPERS ============
+// ============ CANONICAL DOCUMENT HELPERS ============
 
 /**
- * Creates a canonical document in S3 under documents/{reviewId}.json
- * and returns the canonical document S3 result for use in SQS.
+ * Creates a canonical document in S3 under documents/{reviewId}.json.
  *
- * @param {string} content   - Raw text content
- * @param {string} reviewId  - Review ID (used as documentId)
- * @param {string} title     - Content title / filename hint
- * @param {Object} logger    - Request logger
+ * Works for ALL source types — text paste, extracted file text, URL body.
+ * Pipeline: raw text → PII redaction → normalisation → S3 persist.
+ *
+ * @param {string} content      - Raw text content (plain text OR extracted file text)
+ * @param {string} reviewId     - Review ID (used as documentId)
+ * @param {string} title        - Content title / filename hint
+ * @param {Object} logger       - Request logger
+ * @param {string} [sourceType] - SOURCE_TYPES value (default: 'text')
+ * @param {string} [rawS3Key]   - S3 key of the raw upload for audit trail linkage
  * @returns {Promise<{canonicalResult: Object, canonicalDuration: number}>}
  */
 export async function createCanonicalDocument(
   content,
   reviewId,
   title,
-  logger
+  logger,
+  sourceType = CANONICAL_SOURCE_TYPES.TEXT,
+  rawS3Key = null
 ) {
   const canonicalStart = performance.now()
 
-  const canonicalResult = await canonicalDocumentStore.createFromText({
+  const canonicalResult = await canonicalDocumentStore.createCanonicalDocument({
     documentId: reviewId,
     text: content,
     title: title || CONTENT_DEFAULTS.TITLE,
-    sourceType: CANONICAL_SOURCE_TYPES.TEXT
+    sourceType,
+    rawS3Key
   })
 
   const canonicalDuration = Math.round(performance.now() - canonicalStart)
@@ -318,9 +326,11 @@ export async function createCanonicalDocument(
   logger.info(
     {
       reviewId,
+      sourceType,
       canonicalKey: canonicalResult.s3.key,
       charCount: canonicalResult.document.charCount,
       tokenEst: canonicalResult.document.tokenEst,
+      rawS3Key: rawS3Key || null,
       durationMs: canonicalDuration
     },
     `[STEP 3/6] Canonical document created in S3 (documents/${reviewId}.json) - COMPLETED in ${canonicalDuration}ms`
@@ -386,6 +396,15 @@ export async function processTextReviewSubmission(payload, headers, logger) {
     logger,
     userId
   )
+
+  // Write a pending stub to result/{reviewId}.json immediately so the status
+  // endpoint can return "pending" before Bedrock processing begins
+  resultEnvelopeStore.saveStatus(reviewId, 'pending').catch((err) => {
+    logger.warn(
+      { reviewId, error: err.message },
+      '[result-envelope] Failed to write pending stub (non-critical)'
+    )
+  })
 
   // STEP 5: Queue SQS job pointing to canonical document so the processor reads canonicalText
   const sqsSendDuration = await queueReviewJob(

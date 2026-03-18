@@ -2,13 +2,14 @@ import { health } from '../routes/health.js'
 import { reviewRoutes } from '../routes/review.js'
 import { results } from '../routes/results.js'
 import { sqsWorkerStatus } from '../routes/sqs-worker-status.js'
+import { resultEnvelope } from '../routes/result-envelope.js'
 
 const router = {
   plugin: {
     name: 'router',
     register: async (server, _options) => {
       server.route([health, sqsWorkerStatus])
-      await server.register([reviewRoutes, results])
+      await server.register([reviewRoutes, results, resultEnvelope])
     }
   }
 }

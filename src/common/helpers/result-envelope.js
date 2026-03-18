@@ -1,0 +1,562 @@
+import {
+  S3Client,
+  PutObjectCommand,
+  GetObjectCommand
+} from '@aws-sdk/client-s3'
+import { randomUUID } from 'node:crypto'
+import { config } from '../../config.js'
+import { createLogger } from './logging/logger.js'
+
+const logger = createLogger()
+
+// Bedrock scores are 0-5; spec requires 0-100
+const SCORE_SCALE_FACTOR = 20
+
+/**
+ * Derive the evidence text for an issue: prefer slicing canonicalText by offset,
+ * fall back to the raw issue's text field.
+ * @param {number} start
+ * @param {number} end
+ * @param {string} canonicalText
+ * @param {string} fallbackText
+ * @returns {string}
+ */
+function deriveEvidence(start, end, canonicalText, fallbackText) {
+  if (canonicalText && start < end) {
+    return canonicalText.slice(start, end)
+  }
+  return fallbackText || ''
+}
+
+/**
+ * Derive the category for an issue from the raw issue type or improvement category.
+ * @param {Object} rawIssue
+ * @param {Object|null} improvement
+ * @returns {string}
+ */
+function deriveCategory(rawIssue, improvement) {
+  return (rawIssue.type || improvement?.category || 'general').toLowerCase()
+}
+
+/**
+ * Builds and persists the spec-compliant result envelope to S3 at
+ * result/{reviewId}.json
+ *
+ * Schema (per API Technical Requirements):
+ * {
+ *   documentId:        string   - same as reviewId
+ *   status:            string   - "pending" | "processing" | "completed" | "failed"
+ *   processedAt:       string   - ISO 8601
+ *   tokenUsed:         number   - total tokens consumed by Bedrock
+ *   issueCount:        number   - total issues found
+ *   canonicalText:     string   - full normalised text (user content)
+ *   annotatedSections: Array    - the canonical text split into plain/highlighted spans:
+ *     [{ text: string, issueIdx: number|null, category: string|null }]
+ *     issueIdx is the 0-based index into issues[] for highlighted spans, null for plain text.
+ *   issues: [
+ *     {
+ *       issueId:   string  - uuid
+ *       absStart:  number  - char offset in canonicalText
+ *       absEnd:    number  - char offset in canonicalText
+ *       category:  string  - e.g. "clarity"
+ *       severity:  string  - e.g. "medium"
+ *       why:       string  - explanation
+ *       suggested: string  - replacement text
+ *       evidence:  string  - the exact problematic span (slice of canonicalText)
+ *       chunkIdx:  number  - 0-based index
+ *     }
+ *   ],
+ *   improvements: [
+ *     {
+ *       issueId:   string  - matches issues[i].issueId
+ *       severity:  string
+ *       category:  string
+ *       issue:     string  - short title
+ *       why:       string  - explanation
+ *       current:   string  - problematic text
+ *       suggested: string  - replacement text
+ *     }
+ *   ],
+ *   scores: {
+ *     accessibility: number,   (0-100)
+ *     style:         number,
+ *     tone:          number,
+ *     overall:       number
+ *   }
+ * }
+ */
+class ResultEnvelopeStore {
+  constructor() {
+    const s3Config = { region: config.get('aws.region') }
+
+    const awsEndpoint = config.get('aws.endpoint')
+    if (awsEndpoint) {
+      s3Config.endpoint = awsEndpoint
+      s3Config.forcePathStyle = true
+    }
+
+    this.s3Client = new S3Client(s3Config)
+    this.bucket = config.get('s3.bucket')
+    this.prefix = 'result'
+  }
+
+  /**
+   * Return the S3 key for a result envelope.
+   * @param {string} reviewId
+   * @returns {string} e.g. "result/review_<uuid>.json"
+   */
+  getResultKey(reviewId) {
+    return `${this.prefix}/${reviewId}.json`
+  }
+
+  // ─── Private helpers ───────────────────────────────────────────────────────
+
+  /**
+   * Map a parsed issue + its paired improvement into the spec issue object.
+   *
+   * The `evidence` field is always taken from the canonical text slice
+   * (canonicalText.slice(start, end)) so it is guaranteed to match the
+   * annotatedSections, regardless of what the model returned in its text field.
+   *
+   * @param {Object} rawIssue     - { start, end, type, text } from ISSUE_POSITIONS
+   * @param {Object} improvement  - { severity, category, issue, why, current, suggested }
+   * @param {number} idx
+   * @param {string} canonicalText
+   * @returns {Object}
+   */
+  _mapIssue(rawIssue, improvement, idx, canonicalText) {
+    const start = rawIssue.start ?? 0
+    const end = rawIssue.end ?? 0
+
+    return {
+      issueId: `issue-${randomUUID()}`,
+      absStart: start,
+      absEnd: end,
+      category: deriveCategory(rawIssue, improvement),
+      severity: improvement?.severity || 'medium',
+      why: improvement?.why || improvement?.issue || '',
+      suggested: improvement?.suggested || '',
+      evidence: deriveEvidence(start, end, canonicalText, rawIssue.text),
+      chunkIdx: idx
+    }
+  }
+
+  /**
+   * Build an improvement object that mirrors its paired issue.
+   *
+   * @param {Object} parsedImprovement  - from parseBedrockResponse improvements[]
+   * @param {string} issueId            - the issueId of the matching issue
+   * @returns {Object}
+   */
+  _mapImprovement(parsedImprovement, issueId) {
+    return {
+      issueId,
+      severity: parsedImprovement?.severity || 'medium',
+      category: parsedImprovement?.category || '',
+      issue: parsedImprovement?.issue || '',
+      why: parsedImprovement?.why || '',
+      current: parsedImprovement?.current || '',
+      suggested: parsedImprovement?.suggested || ''
+    }
+  }
+
+  /**
+   * Split the canonical text into a sequence of plain and highlighted spans
+   * based on the issue offsets.  The result is ordered by position and
+   * non-overlapping (overlapping issues are skipped with a warning).
+   *
+   * Each span:
+   *   { text: string, issueIdx: number|null, category: string|null }
+   *
+   * issueIdx is the 0-based index into the issues[] array for highlighted
+   * spans, null for plain text runs between issues.
+   *
+   * @param {string} canonicalText
+   * @param {Array}  issues  - spec issue objects (already built by _mapIssue)
+   * @returns {Array}
+   */
+  _buildAnnotatedSections(canonicalText, issues) {
+    if (!canonicalText) {
+      return []
+    }
+
+    // Sort issues by absStart; skip any with invalid or out-of-range offsets
+    const sorted = issues
+      .map((issue, idx) => ({ ...issue, _idx: idx }))
+      .filter(
+        (issue) =>
+          typeof issue.absStart === 'number' &&
+          typeof issue.absEnd === 'number' &&
+          issue.absStart >= 0 &&
+          issue.absEnd > issue.absStart &&
+          issue.absEnd <= canonicalText.length
+      )
+      .sort((a, b) => a.absStart - b.absStart)
+
+    const sections = []
+    let cursor = 0
+
+    for (const issue of sorted) {
+      const { absStart, absEnd, _idx, category } = issue
+
+      // Skip if this issue overlaps the previous one
+      if (absStart < cursor) {
+        logger.warn(
+          { absStart, absEnd, cursor },
+          '[result-envelope] Skipping overlapping issue span'
+        )
+        continue
+      }
+
+      // Plain text before this issue
+      if (absStart > cursor) {
+        sections.push({
+          text: canonicalText.slice(cursor, absStart),
+          issueIdx: null,
+          category: null
+        })
+      }
+
+      // Highlighted span
+      sections.push({
+        text: canonicalText.slice(absStart, absEnd),
+        issueIdx: _idx,
+        category
+      })
+
+      cursor = absEnd
+    }
+
+    // Remaining plain text after the last issue
+    if (cursor < canonicalText.length) {
+      sections.push({
+        text: canonicalText.slice(cursor),
+        issueIdx: null,
+        category: null
+      })
+    }
+
+    return sections
+  }
+
+  /**
+   * Derive the flat 0-100 scores object from Bedrock's scored map.
+   *
+   * Maps all five Bedrock scoring categories into the four canonical score
+   * keys stored in the envelope.  Notes are preserved so the frontend
+   * scorecard can display the model's brief explanation alongside each score.
+   *
+   * Bedrock categories → envelope keys:
+   *   "plain english"              → plainEnglish
+   *   "clarity & structure"        → clarity
+   *   "accessibility"              → accessibility
+   *   "govuk style compliance"     → govukStyle
+   *   "content completeness"       → completeness
+   *
+   * The legacy three-key schema (accessibility / style / tone) is also
+   * populated for backwards compatibility with older frontend builds.
+   *
+   * @param {Object} rawScores  e.g. { "Plain English": { score: 3, note: "..." } }
+   * @returns {Object}
+   */
+  _mapScores(rawScores) {
+    const scoreMap = {} // lowercase key → { value: 0-100, note: string }
+
+    for (const [key, val] of Object.entries(rawScores || {})) {
+      const lk = key.toLowerCase()
+      scoreMap[lk] = {
+        value: Math.round((val.score || 0) * SCORE_SCALE_FACTOR),
+        note: val.note || ''
+      }
+    }
+
+    const pick = (keys) => {
+      for (const k of keys) {
+        if (scoreMap[k] !== undefined) {
+          return scoreMap[k]
+        }
+      }
+      return { value: 0, note: '' }
+    }
+
+    const plainEnglish = pick(['plain english', 'plain-english'])
+    const clarity = pick(['clarity & structure', 'clarity', 'structure'])
+    const accessibility = pick(['accessibility', 'accessible'])
+    const govukStyle = pick([
+      'govuk style compliance',
+      'govuk style',
+      'style',
+      'formatting'
+    ])
+    const completeness = pick(['content completeness', 'completeness'])
+
+    // Compute overall from the five categories (average of non-zero values)
+    const all = [plainEnglish, clarity, accessibility, govukStyle, completeness]
+    const nonZero = all.filter((s) => s.value > 0)
+    const overallValue =
+      nonZero.length > 0
+        ? Math.round(
+            nonZero.reduce((sum, s) => sum + s.value, 0) / nonZero.length
+          )
+        : 0
+
+    return {
+      // Canonical five-category schema
+      plainEnglish: plainEnglish.value,
+      plainEnglishNote: plainEnglish.note,
+      clarity: clarity.value,
+      clarityNote: clarity.note,
+      accessibility: accessibility.value,
+      accessibilityNote: accessibility.note,
+      govukStyle: govukStyle.value,
+      govukStyleNote: govukStyle.note,
+      completeness: completeness.value,
+      completenessNote: completeness.note,
+      overall: overallValue,
+      // Legacy three-key schema (backwards compatibility)
+      style: govukStyle.value,
+      tone: clarity.value
+    }
+  }
+
+  // ─── Public API ────────────────────────────────────────────────────────────
+
+  /**
+   * Build the full result envelope from the parsed Bedrock output.
+   *
+   * This is the definitive merge of:
+   *   canonicalText        (from documents/{reviewId}.json)
+   *   positions offsets    (from positions/{reviewId}.json, already merged into
+   *                         parsedReview.reviewedContent.issues)
+   *   improvements         (from parsedReview.improvements)
+   *   scores               (from parsedReview.scores)
+   *
+   * @param {string} reviewId
+   * @param {Object} parsedReview   - { scores, reviewedContent, improvements }
+   * @param {Object} bedrockUsage   - { totalTokens, inputTokens, outputTokens }
+   * @param {string} canonicalText  - normalised full text from documents/{reviewId}.json
+   * @param {string} [status]       - defaults to "completed"
+   * @returns {Object} spec-compliant envelope
+   */
+  buildEnvelope(
+    reviewId,
+    parsedReview,
+    bedrockUsage,
+    canonicalText,
+    status = 'completed'
+  ) {
+    const {
+      scores = {},
+      reviewedContent = {},
+      improvements: parsedImprovements = []
+    } = parsedReview
+
+    const rawIssues = reviewedContent.issues || []
+
+    // Build spec issues, always deriving evidence from canonicalText.
+    // Each issue is paired with its corresponding improvement by array index.
+    // If there are more issues than improvements (or vice versa) we handle
+    // the mismatch gracefully: extra issues get a stub improvement and extra
+    // improvements without a paired issue are appended as issue-less entries.
+    const issues = rawIssues.map((rawIssue, idx) =>
+      this._mapIssue(
+        rawIssue,
+        parsedImprovements[idx] || null,
+        idx,
+        canonicalText
+      )
+    )
+
+    // Build spec improvements paired to their issue by issueId.
+    // Covers all parsedImprovements — those beyond rawIssues.length are kept
+    // so no model-suggested improvement is silently dropped.
+    const improvements = parsedImprovements.map((parsedImprovement, idx) => {
+      const pairedIssue = issues[idx]
+      const issueId = pairedIssue?.issueId || `issue-orphan-${idx}`
+      return this._mapImprovement(parsedImprovement, issueId)
+    })
+
+    // Build annotated sections — canonical text split into plain/highlighted spans
+    const annotatedSections = this._buildAnnotatedSections(
+      canonicalText,
+      issues
+    )
+
+    const mappedScores = this._mapScores(scores)
+
+    logger.info(
+      {
+        reviewId,
+        issueCount: issues.length,
+        improvementCount: improvements.length,
+        sectionCount: annotatedSections.length,
+        scoreKeys: Object.keys(scores)
+      },
+      '[result-envelope] Envelope built'
+    )
+
+    return {
+      documentId: reviewId,
+      status,
+      processedAt: new Date().toISOString(),
+      tokenUsed: bedrockUsage?.totalTokens ?? 0,
+      issueCount: issues.length,
+      canonicalText: canonicalText || '',
+      annotatedSections,
+      issues,
+      improvements,
+      scores: mappedScores
+    }
+  }
+
+  /**
+   * Build an in-progress stub envelope.
+   *
+   * @param {string} reviewId
+   * @param {string} status  - "pending" | "processing" | "failed"
+   * @returns {Object}
+   */
+  buildStubEnvelope(reviewId, status) {
+    return {
+      documentId: reviewId,
+      status,
+      processedAt: null,
+      tokenUsed: 0,
+      issueCount: 0,
+      canonicalText: '',
+      annotatedSections: [],
+      issues: [],
+      improvements: [],
+      scores: {
+        plainEnglish: 0,
+        plainEnglishNote: '',
+        clarity: 0,
+        clarityNote: '',
+        accessibility: 0,
+        accessibilityNote: '',
+        govukStyle: 0,
+        govukStyleNote: '',
+        completeness: 0,
+        completenessNote: '',
+        overall: 0,
+        style: 0,
+        tone: 0
+      }
+    }
+  }
+
+  /**
+   * Persist an envelope to S3 at result/{reviewId}.json.
+   *
+   * @param {string} reviewId
+   * @param {Object} envelope
+   * @returns {Promise<void>}
+   */
+  async save(reviewId, envelope) {
+    const key = this.getResultKey(reviewId)
+
+    logger.info(
+      {
+        reviewId,
+        s3Key: key,
+        status: envelope.status,
+        issueCount: envelope.issueCount
+      },
+      `[result-envelope] Saving to S3 at ${key}`
+    )
+
+    const command = new PutObjectCommand({
+      Bucket: this.bucket,
+      Key: key,
+      Body: JSON.stringify(envelope, null, 2),
+      ContentType: 'application/json',
+      Metadata: {
+        documentId: reviewId,
+        status: envelope.status,
+        issueCount: String(envelope.issueCount)
+      }
+    })
+
+    try {
+      await this.s3Client.send(command)
+      logger.info(
+        { reviewId, s3Key: key },
+        '[result-envelope] Saved successfully'
+      )
+    } catch (error) {
+      logger.error(
+        { reviewId, s3Key: key, error: error.message },
+        '[result-envelope] Failed to save'
+      )
+      throw error
+    }
+  }
+
+  /**
+   * Read and return the result envelope from S3.
+   * Returns null if the file does not exist.
+   *
+   * @param {string} reviewId
+   * @returns {Promise<Object|null>}
+   */
+  async get(reviewId) {
+    const key = this.getResultKey(reviewId)
+
+    try {
+      const response = await this.s3Client.send(
+        new GetObjectCommand({ Bucket: this.bucket, Key: key })
+      )
+
+      const chunks = []
+      for await (const chunk of response.Body) {
+        chunks.push(chunk)
+      }
+      return JSON.parse(Buffer.concat(chunks).toString('utf-8'))
+    } catch (error) {
+      if (error.name === 'NoSuchKey') {
+        return null
+      }
+      logger.error(
+        { reviewId, s3Key: key, error: error.message },
+        '[result-envelope] Failed to read'
+      )
+      throw error
+    }
+  }
+
+  /**
+   * Build the completed envelope and persist it.
+   *
+   * @param {string} reviewId
+   * @param {Object} parsedReview
+   * @param {Object} bedrockUsage
+   * @param {string} canonicalText  - full normalised text from the canonical document
+   * @returns {Promise<Object>} The saved envelope
+   */
+  async saveCompleted(reviewId, parsedReview, bedrockUsage, canonicalText) {
+    const envelope = this.buildEnvelope(
+      reviewId,
+      parsedReview,
+      bedrockUsage,
+      canonicalText,
+      'completed'
+    )
+    await this.save(reviewId, envelope)
+    return envelope
+  }
+
+  /**
+   * Persist a stub envelope for a given status.
+   *
+   * @param {string} reviewId
+   * @param {string} status  - "pending" | "processing" | "failed"
+   * @returns {Promise<Object>}
+   */
+  async saveStatus(reviewId, status) {
+    const envelope = this.buildStubEnvelope(reviewId, status)
+    await this.save(reviewId, envelope)
+    return envelope
+  }
+}
+
+export const resultEnvelopeStore = new ResultEnvelopeStore()
