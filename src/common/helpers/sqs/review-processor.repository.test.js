@@ -35,7 +35,8 @@ const mockTruncateReceiptHandle = vi.fn()
 vi.mock('../logging/logger.js', () => ({
   createLogger: () => ({
     info: (...args) => mockLoggerInfo(...args),
-    error: (...args) => mockLoggerError(...args)
+    error: (...args) => mockLoggerError(...args),
+    warn: vi.fn()
   })
 }))
 
@@ -43,7 +44,15 @@ vi.mock('../review-repository.js', () => ({
   reviewRepository: {
     updateReviewStatus: (...args) => mockUpdateReviewStatus(...args),
     saveReviewResult: (...args) => mockSaveReviewResult(...args),
-    saveReviewError: (...args) => mockSaveReviewError(...args)
+    saveReviewError: (...args) => mockSaveReviewError(...args),
+    savePositions: vi.fn().mockResolvedValue()
+  }
+}))
+
+vi.mock('../result-envelope.js', () => ({
+  resultEnvelopeStore: {
+    saveStatus: vi.fn().mockResolvedValue(),
+    saveCompleted: vi.fn().mockResolvedValue()
   }
 }))
 

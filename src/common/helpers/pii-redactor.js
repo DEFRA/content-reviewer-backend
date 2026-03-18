@@ -49,6 +49,13 @@ class PIIRedactor {
         replacement: '[IP_ADDRESS_REDACTED]'
       },
 
+      // Sort codes (UK, format: 12-34-56) — must run BEFORE dateOfBirth so that
+      // a 2-2-2 digit pattern is recognised as a sort code, not a date.
+      sortCode: {
+        regex: /\b\d{2}-\d{2}-\d{2}\b/g,
+        replacement: '[SORT_CODE_REDACTED]'
+      },
+
       // Dates that might be DOB (various formats)
       dateOfBirth: {
         regex:
@@ -78,12 +85,6 @@ class PIIRedactor {
       bankAccount: {
         regex: /\b\d{8}\b/g,
         replacement: '[ACCOUNT_NUMBER_REDACTED]'
-      },
-
-      // Sort codes (UK, format: 12-34-56)
-      sortCode: {
-        regex: /\b\d{2}-\d{2}-\d{2}\b/g,
-        replacement: '[SORT_CODE_REDACTED]'
       }
     }
 

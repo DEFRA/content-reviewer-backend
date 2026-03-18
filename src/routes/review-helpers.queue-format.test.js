@@ -54,7 +54,8 @@ vi.mock('node:crypto', () => ({
 
 vi.mock('../common/helpers/canonical-document.js', () => ({
   canonicalDocumentStore: {
-    createFromText: vi.fn()
+    createFromText: vi.fn(),
+    createCanonicalDocument: vi.fn()
   },
   SOURCE_TYPES: {
     TEXT: 'text',
@@ -62,10 +63,27 @@ vi.mock('../common/helpers/canonical-document.js', () => ({
   }
 }))
 
+vi.mock('../common/helpers/result-envelope.js', () => ({
+  resultEnvelopeStore: {
+    saveStatus: vi.fn().mockResolvedValue(undefined),
+    saveResult: vi.fn().mockResolvedValue(undefined)
+  }
+}))
+
+vi.mock('../common/helpers/logging/logger.js', () => ({
+  createLogger: vi.fn(() => ({
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    debug: vi.fn()
+  }))
+}))
+
 import { config } from '../config.js'
 import { reviewRepository } from '../common/helpers/review-repository.js'
 import { sqsClient } from '../common/helpers/sqs-client.js'
 import { canonicalDocumentStore } from '../common/helpers/canonical-document.js'
+import { resultEnvelopeStore } from '../common/helpers/result-envelope.js'
 import {
   REVIEW_STATUSES,
   HTTP_STATUS,
@@ -93,6 +111,10 @@ function buildDefaultConfigMock() {
 beforeEach(() => {
   vi.resetAllMocks()
   config.get.mockImplementation(buildDefaultConfigMock())
+  // vi.resetAllMocks() strips return values, so restore the Promise return
+  // that review-helpers.js relies on (.catch() is called on the result)
+  resultEnvelopeStore.saveStatus.mockResolvedValue(undefined)
+  resultEnvelopeStore.saveResult.mockResolvedValue(undefined)
 })
 
 // ============ queueReviewJob ============
@@ -203,7 +225,7 @@ describe('processTextReviewSubmission', () => {
       key: 's3-key',
       bucket: 'bucket'
     })
-    canonicalDocumentStore.createFromText.mockResolvedValueOnce(
+    canonicalDocumentStore.createCanonicalDocument.mockResolvedValueOnce(
       CANONICAL_MOCK_RESULT
     )
     reviewRepository.createReview.mockResolvedValueOnce({})
@@ -241,7 +263,7 @@ describe('processTextReviewSubmission', () => {
       key: 'k',
       bucket: 'b'
     })
-    canonicalDocumentStore.createFromText.mockResolvedValueOnce(
+    canonicalDocumentStore.createCanonicalDocument.mockResolvedValueOnce(
       CANONICAL_MOCK_RESULT
     )
     reviewRepository.createReview.mockResolvedValueOnce({})
