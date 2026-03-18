@@ -11,6 +11,7 @@ import { pulse } from './common/helpers/pulse.js'
 import { requestTracing } from './common/helpers/request-tracing.js'
 import { setupProxy } from './common/helpers/proxy/setup-proxy.js'
 import { sqsWorker } from './common/helpers/sqs-worker.js'
+import { cleanupScheduler } from './common/helpers/cleanup-scheduler.js'
 
 async function createServer() {
   setupProxy()
@@ -87,6 +88,16 @@ async function createServer() {
       sqsWorker.stop()
     })
   }
+
+  // Start cleanup scheduler for automatic deletion of old reviews
+  server.logger.info('Starting cleanup scheduler for old review deletion')
+  cleanupScheduler.start()
+
+  // Stop cleanup scheduler on server stop
+  server.events.on('stop', () => {
+    server.logger.info('Stopping cleanup scheduler')
+    cleanupScheduler.stop()
+  })
 
   return server
 }
