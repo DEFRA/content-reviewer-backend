@@ -45,7 +45,12 @@ export class ContentExtractor {
   }
 
   /**
-   * Extract text content based on message type
+   * Extract text content based on message type.
+   *
+   * For text_review messages the SQS key now points to a canonical document
+   * (documents/{reviewId}.json).  We read `canonicalText` from that JSON.
+   * If the key still points to a legacy plain-text file (content-uploads/…)
+   * we fall back to reading the buffer as UTF-8 so old messages keep working.
    */
   async extractTextContent(reviewId, messageBody) {
     if (messageBody.messageType === 'file_review') {
@@ -53,7 +58,7 @@ export class ContentExtractor {
     }
 
     if (messageBody.messageType === 'text_review') {
-      return this.extractTextFromS3(reviewId, messageBody)
+      return this.extractTextFromCanonicalDocument(reviewId, messageBody)
     }
 
     throw new Error(`Unknown message type: ${messageBody.messageType}`)
@@ -120,7 +125,96 @@ export class ContentExtractor {
   }
 
   /**
-   * Extract text content from S3
+   * Extract text from a canonical document stored in S3 as
+   * documents/{reviewId}.json.
+   *
+   * Reads the JSON and returns the `canonicalText` field.
+   * Falls back to treating the body as plain text for legacy keys
+   * (content-uploads/…/Title.txt) so old SQS messages keep working.
+   */
+  async extractTextFromCanonicalDocument(reviewId, messageBody) {
+    logger.info(
+      {
+        reviewId,
+        s3Bucket: messageBody.s3Bucket,
+        s3Key: messageBody.s3Key
+      },
+      'Canonical document download started'
+    )
+
+    const s3StartTime = performance.now()
+    const buffer = await this.downloadFromS3(
+      messageBody.s3Bucket,
+      messageBody.s3Key
+    )
+    const s3Duration = Math.round(performance.now() - s3StartTime)
+    const rawString = buffer.toString('utf-8')
+
+    // Detect whether this is a canonical document (JSON) or legacy plain-text
+    const isCanonicalDocument =
+      messageBody.s3Key.startsWith('documents/') &&
+      messageBody.s3Key.endsWith('.json')
+
+    if (isCanonicalDocument) {
+      let canonicalDoc
+      try {
+        canonicalDoc = JSON.parse(rawString)
+      } catch (parseError) {
+        logger.error(
+          { reviewId, s3Key: messageBody.s3Key, error: parseError.message },
+          'Failed to parse canonical document JSON — falling back to raw text'
+        )
+        return rawString
+      }
+
+      const canonicalText = canonicalDoc.canonicalText
+
+      if (!canonicalText || typeof canonicalText !== 'string') {
+        logger.error(
+          {
+            reviewId,
+            s3Key: messageBody.s3Key,
+            documentId: canonicalDoc.documentId,
+            status: canonicalDoc.status
+          },
+          'Canonical document missing canonicalText field — falling back to raw document JSON'
+        )
+        return rawString
+      }
+
+      logger.info(
+        {
+          reviewId,
+          s3Key: messageBody.s3Key,
+          documentId: canonicalDoc.documentId,
+          charCount: canonicalDoc.charCount,
+          tokenEst: canonicalDoc.tokenEst,
+          sourceType: canonicalDoc.sourceType,
+          durationMs: s3Duration
+        },
+        `Canonical document read successfully in ${s3Duration}ms — using canonicalText (${canonicalDoc.charCount} chars)`
+      )
+
+      return canonicalText
+    }
+
+    // Legacy plain-text fallback (content-uploads/…/Title.txt)
+    logger.info(
+      {
+        reviewId,
+        s3Key: messageBody.s3Key,
+        contentLength: rawString.length,
+        durationMs: s3Duration
+      },
+      `Legacy plain-text S3 content read in ${s3Duration}ms`
+    )
+
+    return rawString
+  }
+
+  /**
+   * @deprecated Use extractTextFromCanonicalDocument for text_review messages.
+   * Kept for direct calls in tests / legacy paths only.
    */
   async extractTextFromS3(reviewId, messageBody) {
     logger.info(
@@ -129,7 +223,7 @@ export class ContentExtractor {
         s3Bucket: messageBody.s3Bucket,
         s3Key: messageBody.s3Key
       },
-      'S3 text content download started'
+      'S3 text content download started (legacy)'
     )
 
     const s3StartTime = performance.now()

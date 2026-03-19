@@ -24,15 +24,25 @@ const mockParseBedrockResponseData = vi.fn()
 vi.mock('../logging/logger.js', () => ({
   createLogger: () => ({
     info: (...args) => mockLoggerInfo(...args),
-    error: (...args) => mockLoggerError(...args)
+    error: (...args) => mockLoggerError(...args),
+    warn: vi.fn(),
+    debug: vi.fn()
   })
+}))
+
+vi.mock('../result-envelope.js', () => ({
+  resultEnvelopeStore: {
+    saveStatus: vi.fn().mockResolvedValue(),
+    saveCompleted: vi.fn().mockResolvedValue()
+  }
 }))
 
 vi.mock('../review-repository.js', () => ({
   reviewRepository: {
     updateReviewStatus: (...args) => mockUpdateReviewStatus(...args),
     saveReviewResult: (...args) => mockSaveReviewResult(...args),
-    saveReviewError: vi.fn()
+    saveReviewError: vi.fn(),
+    savePositions: vi.fn().mockResolvedValue()
   }
 }))
 

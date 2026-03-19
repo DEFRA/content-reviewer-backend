@@ -30,7 +30,8 @@ const mockFormatErrorForUI = vi.fn()
 vi.mock('../logging/logger.js', () => ({
   createLogger: () => ({
     info: (...args) => mockLoggerInfo(...args),
-    error: vi.fn()
+    error: vi.fn(),
+    warn: vi.fn()
   })
 }))
 
@@ -38,7 +39,15 @@ vi.mock('../review-repository.js', () => ({
   reviewRepository: {
     updateReviewStatus: (...args) => mockUpdateReviewStatus(...args),
     saveReviewResult: (...args) => mockSaveReviewResult(...args),
-    saveReviewError: (...args) => mockSaveReviewError(...args)
+    saveReviewError: (...args) => mockSaveReviewError(...args),
+    savePositions: vi.fn().mockResolvedValue()
+  }
+}))
+
+vi.mock('../result-envelope.js', () => ({
+  resultEnvelopeStore: {
+    saveStatus: vi.fn().mockResolvedValue(),
+    saveCompleted: vi.fn().mockResolvedValue()
   }
 }))
 

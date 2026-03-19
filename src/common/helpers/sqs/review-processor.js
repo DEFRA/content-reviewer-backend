@@ -1,5 +1,6 @@
 import { createLogger } from '../logging/logger.js'
 import { reviewRepository } from '../review-repository.js'
+import { resultEnvelopeStore } from '../result-envelope.js'
 import { ContentExtractor } from './content-extractor.js'
 import { BedrockReviewProcessor } from './bedrock-processor.js'
 import { ErrorHandler } from './error-handler.js'
@@ -146,9 +147,17 @@ export class ReviewProcessor {
       )
       const parseResult = await this.bedrockProcessor.parseBedrockResponseData(
         reviewId,
-        bedrockResult
+        bedrockResult,
+        textContent
       )
-      await this.saveReviewToRepository(reviewId, parseResult, bedrockResult)
+      // Pass textContent (canonicalText) so the result envelope can build
+      // annotated sections by comparing positions against the normalised text
+      await this.saveReviewToRepository(
+        reviewId,
+        parseResult,
+        bedrockResult,
+        textContent
+      )
 
       this.logReviewCompletion(
         reviewId,
@@ -204,6 +213,14 @@ export class ReviewProcessor {
         { reviewId, durationMs: statusUpdateDuration },
         `Review status updated to processing in ${statusUpdateDuration}ms`
       )
+
+      // Write processing stub to result/{reviewId}.json so the UI can show "Processing"
+      resultEnvelopeStore.saveStatus(reviewId, 'processing').catch((err) => {
+        logger.warn(
+          { reviewId, error: err.message },
+          '[result-envelope] Failed to write processing stub (non-critical)'
+        )
+      })
     } catch (statusError) {
       logger.error(
         {
@@ -218,8 +235,18 @@ export class ReviewProcessor {
 
   /**
    * Save review to repository
+   * @param {string} reviewId
+   * @param {Object} parseResult       - { parsedReview, parseDuration, finalReviewContent }
+   * @param {Object} bedrockResult     - { bedrockResponse, bedrockDuration }
+   * @param {string} canonicalText     - the normalised text from the canonical document;
+   *                                     used to derive annotated sections in result envelope
    */
-  async saveReviewToRepository(reviewId, parseResult, bedrockResult) {
+  async saveReviewToRepository(
+    reviewId,
+    parseResult,
+    bedrockResult,
+    canonicalText = ''
+  ) {
     const saveStart = performance.now()
     await reviewRepository.saveReviewResult(
       reviewId,
@@ -238,6 +265,36 @@ export class ReviewProcessor {
       { reviewId, durationMs: saveDuration },
       `Review result saved to S3 in ${saveDuration}ms`
     )
+
+    // Save the position-based review data as a separate S3 object: positions/{reviewId}.json
+    const reviewedContent = parseResult.parsedReview?.reviewedContent
+    if (reviewedContent) {
+      try {
+        await reviewRepository.savePositions(reviewId, reviewedContent)
+      } catch (positionsError) {
+        logger.error(
+          { reviewId, error: positionsError.message },
+          'Failed to save positions file - review result still saved successfully'
+        )
+      }
+    }
+
+    // Save the spec-compliant result envelope: result/{reviewId}.json
+    // This merges canonicalText + position offsets + improvements + scores
+    // into the single file the frontend results page reads.
+    try {
+      await resultEnvelopeStore.saveCompleted(
+        reviewId,
+        parseResult.parsedReview,
+        bedrockResult.bedrockResponse.usage,
+        canonicalText
+      )
+    } catch (envelopeError) {
+      logger.error(
+        { reviewId, error: envelopeError.message },
+        '[result-envelope] Failed to save completed envelope (non-critical)'
+      )
+    }
   }
 
   /**
@@ -302,5 +359,13 @@ export class ReviewProcessor {
         reviewRepository
       )
     }
+
+    // Write failed envelope to result/{reviewId}.json
+    resultEnvelopeStore.saveStatus(reviewId, 'failed').catch((err) => {
+      logger.warn(
+        { reviewId, error: err.message },
+        '[result-envelope] Failed to write failed envelope (non-critical)'
+      )
+    })
   }
 }

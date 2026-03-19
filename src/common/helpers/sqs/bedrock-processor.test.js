@@ -120,20 +120,11 @@ describe('BedrockReviewProcessor - sendBedrockRequest - Success Cases', () => {
 
     expect(result.bedrockResponse).toEqual(mockResponse)
     expect(result.bedrockDuration).toBeGreaterThanOrEqual(0)
-    expect(mockSendMessage).toHaveBeenCalledWith('User prompt content', [
-      {
-        role: 'user',
-        content: [{ text: 'System prompt content' }]
-      },
-      {
-        role: 'assistant',
-        content: [
-          {
-            text: 'I understand. I will review content according to GOV.UK standards and provide structured feedback as specified.'
-          }
-        ]
-      }
-    ])
+    expect(mockSendMessage).toHaveBeenCalledWith(
+      'User prompt content',
+      [],
+      'System prompt content'
+    )
   })
 
   test('Should handle response without usage data', async () => {
@@ -267,7 +258,8 @@ describe('BedrockReviewProcessor - performBedrockReview', () => {
 
       expect(mockSendMessage).toHaveBeenCalledWith(
         expect.stringContaining('Please review the following content:'),
-        expect.any(Array)
+        expect.any(Array),
+        expect.any(String)
       )
     })
 

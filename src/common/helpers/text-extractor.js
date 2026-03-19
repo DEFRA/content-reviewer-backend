@@ -1,22 +1,165 @@
 import { createRequire } from 'node:module'
+import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs'
 import mammoth from 'mammoth'
 import { createLogger } from './logging/logger.js'
+import { textNormaliser } from './text-normaliser.js'
+
+// pdfjs-dist must run without a DOM Worker in Node.js
+pdfjsLib.GlobalWorkerOptions.workerSrc = ''
 
 const require = createRequire(import.meta.url)
-const pdfParse = require('pdf-parse')
 
 const logger = createLogger()
 
+// ─────────────────────────────────────────────────────────────────────────────
+// PDF link extraction helpers (pdfjs-dist)
+// ─────────────────────────────────────────────────────────────────────────────
+
 /**
- * Extract text from various file formats
+ * Check whether two axis-aligned rectangles overlap.
+ * PDF rectangles are [x1, y1, x2, y2] in bottom-left origin coordinates.
+ *
+ * @param {number[]} rect - annotation rectangle [x1,y1,x2,y2]
+ * @param {number[]} bbox - text-item transform bounding box [x, y, w, h]
+ *                          where x,y is the bottom-left corner of the glyph.
+ * @returns {boolean}
+ */
+function rectsOverlap(rect, bbox) {
+  const [rx1, ry1, rx2, ry2] = rect
+  const [tx, ty] = bbox
+  // Treat each text item as a point (its baseline anchor) for matching —
+  // sufficient because PDF annotation rects are drawn tightly around the
+  // visible link text.
+  return tx >= rx1 && tx <= rx2 && ty >= ry1 && ty <= ry2
+}
+
+/**
+ * Extract text from a single PDF page, weaving in hyperlink URLs wherever
+ * link annotations spatially overlap with text items.
+ *
+ * Result format for linked spans:  anchorText [url]
+ * This is then post-processed by reassemblePdfText() into proper Markdown.
+ *
+ * @param {import('pdfjs-dist').PDFPageProxy} page
+ * @returns {Promise<string>} Plain text for the page, links as [anchor](url)
+ */
+async function extractPageTextWithLinks(page) {
+  const [textContent, annotations] = await Promise.all([
+    page.getTextContent(),
+    page.getAnnotations()
+  ])
+
+  // Build lookup: only URI-type link annotations with a real URL
+  const linkAnnotations = annotations.filter(
+    (ann) => ann.subtype === 'Link' && ann.url?.startsWith('http')
+  )
+
+  if (linkAnnotations.length === 0) {
+    // Fast path: no links on this page — join text items as normal
+    return textContent.items.map((item) => item.str).join('')
+  }
+
+  // For each text item, check if it falls inside a link annotation rect.
+  // pdfjs transform = [scaleX, skewY, skewX, scaleY, tx, ty]
+  // Index 4 = tx (horizontal position), index 5 = ty (vertical position)
+  const TX_INDEX = 4
+  const TY_INDEX = 5
+  const parts = []
+  // Track which annotation is currently "open" so multi-item links are grouped
+  let currentLink = null
+  let currentAnchor = []
+
+  const flush = (nextLink) => {
+    if (currentLink && currentAnchor.length > 0) {
+      const anchorText = currentAnchor.join('').trim()
+      if (anchorText) {
+        parts.push(`[${anchorText}](${currentLink})`)
+      }
+      currentAnchor = []
+    }
+    currentLink = nextLink
+  }
+
+  for (const item of textContent.items) {
+    const tx = item.transform[TX_INDEX]
+    const ty = item.transform[TY_INDEX]
+
+    // Find which link annotation (if any) this item's anchor point falls in
+    const matchedLink = linkAnnotations.find((ann) =>
+      rectsOverlap(ann.rect, [tx, ty])
+    )
+    const matchedUrl = matchedLink ? matchedLink.url : null
+
+    if (matchedUrl !== currentLink) {
+      flush(matchedUrl)
+    }
+
+    if (matchedUrl) {
+      currentAnchor.push(item.str)
+    } else {
+      parts.push(item.str)
+    }
+  }
+
+  flush(null) // close any trailing link
+
+  return parts.join('')
+}
+
+/**
+ * Extract all text from a PDF buffer, preserving hyperlinks as
+ * Markdown [anchor text](url) inline syntax.
+ *
+ * @param {Buffer} buffer
+ * @returns {Promise<string>}
+ */
+async function extractPdfWithLinks(buffer) {
+  const data = new Uint8Array(buffer)
+  const loadingTask = pdfjsLib.getDocument({
+    data,
+    // Suppress pdfjs console noise about missing CMap / standard fonts
+    verbosity: 0
+  })
+
+  const doc = await loadingTask.promise
+  const pageTexts = []
+
+  for (let i = 1; i <= doc.numPages; i++) {
+    const page = await doc.getPage(i)
+    const pageText = await extractPageTextWithLinks(page)
+    pageTexts.push(pageText)
+    page.cleanup()
+  }
+
+  await doc.cleanup()
+
+  return pageTexts.join('\n\n')
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TextExtractor class
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Extract structured plain text (with Markdown hyperlinks) from
+ * PDF, DOCX and plain-text files.
+ *
+ * Hyperlink handling:
+ *   • PDF  — pdfjs-dist annotation layer; links become [anchor](url)
+ *   • DOCX — mammoth convertToMarkdown(); links already [anchor](url)
+ *   • TXT  — raw text, no hyperlink extraction needed
+ *
+ * The output is passed to textNormaliser.normalise() which explicitly
+ * preserves [anchor](url) tokens verbatim so URLs are never mangled.
  */
 class TextExtractor {
   /**
-   * Extract text from a buffer based on MIME type
-   * @param {Buffer} buffer - File buffer
+   * Extract text (with embedded Markdown hyperlinks) from a file buffer.
+   *
+   * @param {Buffer} buffer   - File content
    * @param {string} mimeType - MIME type of the file
-   * @param {string} fileName - Original file name
-   * @returns {Promise<string>} Extracted text
+   * @param {string} [fileName='unknown']
+   * @returns {Promise<string>} Normalised text with links as [anchor](url)
    */
   async extractText(buffer, mimeType, fileName = 'unknown') {
     logger.info(
@@ -49,7 +192,8 @@ class TextExtractor {
           throw new Error(`Unsupported file type: ${mimeType}`)
       }
 
-      // Clean up extracted text
+      // Pass through the normaliser: cleans artefacts while preserving
+      // all [anchor](url) tokens, headings, bullets and paragraph breaks.
       text = this.cleanText(text)
 
       logger.info(
@@ -72,14 +216,28 @@ class TextExtractor {
   }
 
   /**
-   * Extract text from PDF buffer
-   * @param {Buffer} buffer - PDF file buffer
-   * @returns {Promise<string>} Extracted text
+   * Extract text from a PDF buffer.
+   *
+   * Uses pdfjs-dist to read both the text content layer and the annotation
+   * layer.  Any URI link annotation whose rectangle overlaps a text-item
+   * anchor point is rendered as inline Markdown: [anchor text](url).
+   *
+   * This ensures the LLM sees the actual destination URL and does NOT treat
+   * hyperlinked anchor text as a missing reference.
+   *
+   * @param {Buffer} buffer
+   * @returns {Promise<string>}
    */
   async extractFromPDF(buffer) {
     try {
-      const data = await pdfParse(buffer)
-      return data.text
+      const text = await extractPdfWithLinks(buffer)
+
+      logger.info(
+        { length: text.length },
+        'PDF text + hyperlinks extracted via pdfjs-dist'
+      )
+
+      return text
     } catch (error) {
       logger.error({ error: error.message }, 'PDF extraction failed')
       throw new Error(`Failed to extract text from PDF: ${error.message}`)
@@ -87,13 +245,19 @@ class TextExtractor {
   }
 
   /**
-   * Extract text from DOCX buffer
-   * @param {Buffer} buffer - DOCX file buffer
-   * @returns {Promise<string>} Extracted text
+   * Extract text from a DOCX buffer.
+   *
+   * Uses mammoth.convertToMarkdown() (instead of extractRawText) so that
+   * hyperlinks are emitted as [anchor text](url) Markdown inline syntax,
+   * and headings/bullets are rendered as ATX Markdown (#, -, *).
+   *
+   * @param {Buffer} buffer
+   * @returns {Promise<string>}
    */
   async extractFromDocx(buffer) {
     try {
-      const result = await mammoth.extractRawText({ buffer })
+      // convertToMarkdown preserves: headings, bullets, bold, links
+      const result = await mammoth.convertToMarkdown({ buffer })
 
       if (result.messages && result.messages.length > 0) {
         logger.warn(
@@ -110,81 +274,62 @@ class TextExtractor {
   }
 
   /**
-   * Clean extracted text
-   * @param {string} text - Raw extracted text
-   * @returns {string} Cleaned text
+   * Normalise raw extracted text through the full TextNormaliser pipeline.
+   *
+   * TextNormaliser preserves [anchor](url) tokens verbatim — URLs are never
+   * altered by whitespace collapse, dash substitution or quote substitution.
+   *
+   * @param {string} text
+   * @returns {string}
    */
   cleanText(text) {
     if (!text) {
       return ''
     }
-
-    // Remove excessive whitespace
-    text = text.replaceAll('\r\n', '\n') // Normalize line endings
-    text = text.replaceAll(/\n{3,}/g, '\n\n') // Max 2 consecutive newlines
-    text = text.replaceAll(/[ \t]+/g, ' ') // Normalize spaces
-    text = text.trim()
-
-    return text
+    return textNormaliser.normalise(text).normalisedText
   }
 
   /**
-   * Get text preview (first N characters)
-   * @param {string} text - Full text
-   * @param {number} maxLength - Maximum length for preview
-   * @returns {string} Preview text
+   * Get text preview (first N characters).
+   * @param {string} text
+   * @param {number} [maxLength=500]
+   * @returns {string}
    */
   getPreview(text, maxLength = 500) {
     if (!text || text.length <= maxLength) {
       return text
     }
-
     return text.substring(0, maxLength) + '...'
   }
 
   /**
-   * Count words in text
-   * @param {string} text - Text to count
-   * @returns {number} Word count
+   * Count words in text.
+   * @param {string} text
+   * @returns {number}
    */
   countWords(text) {
     if (!text) {
       return 0
     }
-
-    // Split by whitespace and filter empty strings
-    const words = text.trim().split(/\s+/).filter(Boolean)
-    return words.length
+    return text.trim().split(/\s+/).filter(Boolean).length
   }
 
   /**
-   * Get text statistics
-   * @param {string} text - Text to analyze
-   * @returns {Object} Text statistics
+   * Get text statistics.
+   * @param {string} text
+   * @returns {{ characters: number, words: number, lines: number, paragraphs: number }}
    */
   getStatistics(text) {
     if (!text) {
-      return {
-        characters: 0,
-        words: 0,
-        lines: 0,
-        paragraphs: 0
-      }
+      return { characters: 0, words: 0, lines: 0, paragraphs: 0 }
     }
-
-    const lines = text.split('\n').length
-    const paragraphs = text.split(/\n\n+/).filter(Boolean).length
-    const words = this.countWords(text)
-    const characters = text.length
-
     return {
-      characters,
-      words,
-      lines,
-      paragraphs
+      characters: text.length,
+      words: this.countWords(text),
+      lines: text.split('\n').length,
+      paragraphs: text.split(/\n\n+/).filter(Boolean).length
     }
   }
 }
 
-// Export singleton instance
 export const textExtractor = new TextExtractor()

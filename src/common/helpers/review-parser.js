@@ -2,6 +2,134 @@ import { createLogger } from './logging/logger.js'
 
 const logger = createLogger()
 
+// ─── Shared constants ────────────────────────────────────────────────────────
+const FALLBACK_PREVIEW_LENGTH = 200
+const SCORES_TAG = '[SCORES]'
+const REVIEWED_CONTENT_TAG = '[REVIEWED_CONTENT]'
+const ISSUE_POSITIONS_TAG = '[ISSUE_POSITIONS]'
+const ISSUE_POSITIONS_CLOSE_TAG = '[/ISSUE_POSITIONS]'
+const IMPROVEMENTS_TAG = '[IMPROVEMENTS]'
+
+/**
+ * Parse the [ISSUE_POSITIONS] section.
+ * Expects a single-line JSON: {"issues":[{"start":N,"end":M,"type":"...","text":"..."},...]}
+ * Falls back to resolving text from originalText using start/end offsets if text field is missing.
+ * @param {string} issuePositionsText - Raw content between [ISSUE_POSITIONS] and [/ISSUE_POSITIONS]
+ * @param {string} [originalText=''] - The original input text sent to Bedrock (used to resolve text from offsets)
+ * @returns {{ plainText: string, issues: Array<{start:number,end:number,type:string,text:string}> }}
+ */
+/**
+ * Resolve the text span from either the raw text field or by slicing originalText.
+ * Extracted to reduce cyclomatic complexity of mapRawIssue.
+ * @param {string} rawText
+ * @param {number} start
+ * @param {number} end
+ * @param {string} originalText
+ * @returns {string}
+ */
+function resolveIssueText(rawText, start, end, originalText) {
+  if (rawText) {
+    return rawText
+  }
+  if (!originalText) {
+    return ''
+  }
+  return end <= originalText.length
+    ? originalText.slice(start, end)
+    : originalText.slice(start)
+}
+
+/**
+ * Map a raw issue entry from the JSON to a validated issue object.
+ * Returns null if the issue has no resolvable text or has invalid offsets.
+ */
+function mapRawIssue(raw, originalText) {
+  const start = Number(raw.start)
+  const end = Number(raw.end)
+  const type = raw.type || 'plain-english'
+
+  // Reject entries with non-numeric or out-of-order offsets
+  if (Number.isNaN(start) || Number.isNaN(end) || end <= start || start < 0) {
+    logger.warn(
+      { start: raw.start, end: raw.end, type },
+      '[review-parser] Skipping issue with invalid offsets'
+    )
+    return null
+  }
+
+  const text = resolveIssueText(raw.text || '', start, end, originalText)
+
+  if (!text) {
+    return null
+  }
+
+  return { start, end, type, text }
+}
+
+/**
+ * Parse a JSON string extracted from the [ISSUE_POSITIONS] section.
+ * Returns validated issues or an empty array on error.
+ */
+function parseIssuePositionsJson(jsonStr, originalText) {
+  const parsed = JSON.parse(jsonStr)
+
+  if (!Array.isArray(parsed.issues)) {
+    logger.warn({ parsed }, '[ISSUE_POSITIONS] JSON missing "issues" array')
+    return []
+  }
+
+  return parsed.issues
+    .map((raw) => mapRawIssue(raw, originalText))
+    .filter(Boolean)
+}
+
+/**
+ * Parse the [ISSUE_POSITIONS] section.
+ * Expects a single-line JSON: {"issues":[{"start":N,"end":M,"type":"...","text":"..."},...]}
+ * Falls back to resolving text from originalText using start/end offsets if text field is missing.
+ * @param {string} issuePositionsText - Raw content between [ISSUE_POSITIONS] and [/ISSUE_POSITIONS]
+ * @param {string} [originalText=''] - The original input text sent to Bedrock
+ * @returns {{ plainText: string, issues: Array<{start:number,end:number,type:string,text:string}> }}
+ */
+function parseIssuePositions(issuePositionsText, originalText = '') {
+  const trimmed = issuePositionsText.trim()
+  if (!trimmed) {
+    return { plainText: originalText, issues: [] }
+  }
+
+  const jsonStart = trimmed.indexOf('{')
+  const jsonEnd = trimmed.lastIndexOf('}')
+  if (jsonStart === -1 || jsonEnd === -1 || jsonEnd <= jsonStart) {
+    logger.warn(
+      { trimmed },
+      'Could not locate JSON object in [ISSUE_POSITIONS]'
+    )
+    return { plainText: originalText, issues: [] }
+  }
+
+  try {
+    const issues = parseIssuePositionsJson(
+      trimmed.substring(jsonStart, jsonEnd + 1),
+      originalText
+    )
+
+    logger.info(
+      { issueCount: issues.length },
+      'Parsed [ISSUE_POSITIONS] successfully'
+    )
+    return { plainText: originalText, issues }
+  } catch (error) {
+    logger.warn(
+      {
+        error: error.message,
+        issuePositionsText: trimmed.substring(0, FALLBACK_PREVIEW_LENGTH)
+      },
+      'Failed to parse [ISSUE_POSITIONS] JSON'
+    )
+    return { plainText: originalText, issues: [] }
+  }
+}
+
 /**
  * Try to parse a score from a line
  */
@@ -326,141 +454,147 @@ function parsePlainTextReview(bedrockResponse) {
 }
 
 /**
- * Parse marker-based review format
+ * Extract and parse the [SCORES] section from a Bedrock response
  */
-function parseMarkerBasedReview(bedrockResponse) {
-  const result = {
-    scores: {},
-    reviewedContent: {
-      plainText: '',
-      issues: []
-    },
-    improvements: []
-  }
-
-  // Extract [SCORES] section using indexOf
-  const scoresStart = bedrockResponse.indexOf('[SCORES]')
+function extractScores(bedrockResponse) {
+  const SCORES_TAG_LENGTH = SCORES_TAG.length
+  const scoresStart = bedrockResponse.indexOf(SCORES_TAG)
   const scoresEnd = bedrockResponse.indexOf('[/SCORES]')
   if (scoresStart !== -1 && scoresEnd !== -1 && scoresEnd > scoresStart) {
-    const scoresText = bedrockResponse.substring(scoresStart + 8, scoresEnd)
-    result.scores = parseScores(scoresText)
+    return parseScores(
+      bedrockResponse.substring(scoresStart + SCORES_TAG_LENGTH, scoresEnd)
+    )
+  }
+  return {}
+}
+
+/**
+ * Extract and parse the reviewed content ([ISSUE_POSITIONS] or legacy [REVIEWED_CONTENT])
+ */
+function extractReviewedContent(bedrockResponse, originalText) {
+  const issuePositionsStart = bedrockResponse.indexOf(ISSUE_POSITIONS_TAG)
+  const issuePositionsEnd = bedrockResponse.indexOf(ISSUE_POSITIONS_CLOSE_TAG)
+  if (
+    issuePositionsStart !== -1 &&
+    issuePositionsEnd !== -1 &&
+    issuePositionsEnd > issuePositionsStart
+  ) {
+    const issuePositionsText = bedrockResponse.substring(
+      issuePositionsStart + ISSUE_POSITIONS_TAG.length,
+      issuePositionsEnd
+    )
+    return parseIssuePositions(issuePositionsText, originalText)
   }
 
-  // Extract [REVIEWED_CONTENT] section using indexOf
-  const contentStart = bedrockResponse.indexOf('[REVIEWED_CONTENT]')
+  // Fall back to legacy [REVIEWED_CONTENT] section if present
+  const contentStart = bedrockResponse.indexOf(REVIEWED_CONTENT_TAG)
   const contentEnd = bedrockResponse.indexOf('[/REVIEWED_CONTENT]')
   if (contentStart !== -1 && contentEnd !== -1 && contentEnd > contentStart) {
-    const REVIEWED_CONTENT_TAG_LENGTH = '[REVIEWED_CONTENT]'.length
-    const contentText = bedrockResponse.substring(
-      contentStart + REVIEWED_CONTENT_TAG_LENGTH,
-      contentEnd
+    return parseReviewedContent(
+      bedrockResponse.substring(
+        contentStart + REVIEWED_CONTENT_TAG.length,
+        contentEnd
+      )
     )
-    result.reviewedContent = parseReviewedContent(contentText)
   }
 
-  // Extract [IMPROVEMENTS] section using indexOf
-  const improvementsStart = bedrockResponse.indexOf('[IMPROVEMENTS]')
+  return { plainText: originalText, issues: [] }
+}
+
+/**
+ * Extract and parse the [IMPROVEMENTS] section from a Bedrock response
+ */
+function extractImprovements(bedrockResponse) {
+  const improvementsStart = bedrockResponse.indexOf(IMPROVEMENTS_TAG)
   const improvementsEnd = bedrockResponse.indexOf('[/IMPROVEMENTS]')
   if (
     improvementsStart !== -1 &&
     improvementsEnd !== -1 &&
     improvementsEnd > improvementsStart
   ) {
-    const IMPROVEMENTS_TAG_LENGTH = '[IMPROVEMENTS]'.length
-    const improvementsText = bedrockResponse.substring(
-      improvementsStart + IMPROVEMENTS_TAG_LENGTH,
-      improvementsEnd
+    return parseImprovements(
+      bedrockResponse.substring(
+        improvementsStart + IMPROVEMENTS_TAG.length,
+        improvementsEnd
+      )
     )
-    result.improvements = parseImprovements(improvementsText)
   }
+  return []
+}
+
+/**
+ * Parse marker-based review format
+ */
+function parseMarkerBasedReview(bedrockResponse, originalText = '') {
+  const scores = extractScores(bedrockResponse)
+  const reviewedContent = extractReviewedContent(bedrockResponse, originalText)
+  const improvements = extractImprovements(bedrockResponse)
 
   logger.info(
     {
-      scoreCount: Object.keys(result.scores).length,
-      issueCount: result.reviewedContent.issues.length,
-      improvementCount: result.improvements.length
+      scoreCount: Object.keys(scores).length,
+      issueCount: reviewedContent.issues.length,
+      improvementCount: improvements.length
     },
     'Parsed Bedrock response with markers'
   )
 
-  return result
-}
-
-const SCORES_TAG = '[SCORES]'
-const REVIEWED_CONTENT_TAG = '[REVIEWED_CONTENT]'
-const IMPROVEMENTS_TAG = '[IMPROVEMENTS]'
-const FALLBACK_PREVIEW_LENGTH = 200
-
-/**
- * Helper to check if fallback is needed
- */
-function isFallbackNeeded(parsedResult, fallbackRawResponse) {
-  const scoresEmpty =
-    !parsedResult.scores || Object.keys(parsedResult.scores).length === 0
-  const issuesEmpty =
-    !parsedResult.reviewedContent?.issues ||
-    parsedResult.reviewedContent.issues.length === 0
-  const improvementsEmpty =
-    !parsedResult.improvements || parsedResult.improvements.length === 0
-  return (
-    scoresEmpty &&
-    issuesEmpty &&
-    improvementsEmpty &&
-    typeof fallbackRawResponse === 'string' &&
-    fallbackRawResponse.length > 0
-  )
+  return { scores, reviewedContent, improvements }
 }
 
 /**
- * Check if parsed result is empty and apply fallback if needed
+ * Determine which response string to actually parse.
+ * If the primary response has no parseable content, fall back to
+ * fallbackRawResponse (kept for backwards compatibility).
+ * @param {string} primary
+ * @param {string} fallback
+ * @returns {string}
  */
-function applyFallbackIfNeeded(parsedResult, fallbackRawResponse) {
-  if (isFallbackNeeded(parsedResult, fallbackRawResponse)) {
-    logger.warn(
-      {
-        fallbackRawResponsePreview: fallbackRawResponse.substring(
-          0,
-          FALLBACK_PREVIEW_LENGTH
-        )
-      },
-      'Fallback: reparsing reviewContent for missing sections'
-    )
-    const fallbackHasMarkers =
-      fallbackRawResponse.includes(SCORES_TAG) ||
-      fallbackRawResponse.includes(REVIEWED_CONTENT_TAG) ||
-      fallbackRawResponse.includes(IMPROVEMENTS_TAG)
-    return fallbackHasMarkers
-      ? parseMarkerBasedReview(fallbackRawResponse)
-      : parsePlainTextReview(fallbackRawResponse)
+function resolveResponseToParse(primary, fallback) {
+  if (primary?.trim()) {
+    return primary
   }
-
-  return parsedResult
+  return fallback || ''
 }
 
 /**
  * Main parser function - converts Bedrock's plain text to structured JSON
+ *
+ * @param {string} bedrockResponse       - Raw structured text response from Bedrock
+ * @param {string} [fallbackRawResponse] - Optional fallback response used when
+ *   bedrockResponse is empty or blank (backwards compatibility).
+ * @param {string} [originalText='']     - The original document text sent to Bedrock.
+ *   Used to: (1) populate reviewedContent.plainText, and (2) resolve issue text
+ *   from char offsets when the model omits the 'text' field in [ISSUE_POSITIONS].
  */
-export function parseBedrockResponse(bedrockResponse, fallbackRawResponse) {
+export function parseBedrockResponse(
+  bedrockResponse,
+  fallbackRawResponse,
+  originalText = ''
+) {
   try {
-    const hasMarkers =
-      bedrockResponse.includes(SCORES_TAG) ||
-      bedrockResponse.includes(REVIEWED_CONTENT_TAG) ||
-      bedrockResponse.includes(IMPROVEMENTS_TAG)
+    const responseToParse = resolveResponseToParse(
+      bedrockResponse,
+      fallbackRawResponse
+    )
 
-    let parsedResult
+    const hasMarkers =
+      responseToParse.includes(SCORES_TAG) ||
+      responseToParse.includes(REVIEWED_CONTENT_TAG) ||
+      responseToParse.includes(ISSUE_POSITIONS_TAG) ||
+      responseToParse.includes(IMPROVEMENTS_TAG)
+
     if (hasMarkers) {
-      parsedResult = parseMarkerBasedReview(bedrockResponse)
-    } else {
-      parsedResult = parsePlainTextReview(bedrockResponse)
+      return parseMarkerBasedReview(responseToParse, originalText)
     }
 
-    return applyFallbackIfNeeded(parsedResult, fallbackRawResponse)
+    return parsePlainTextReview(responseToParse)
   } catch (error) {
     logger.error({ error: error.message }, 'Failed to parse Bedrock response')
     return {
       scores: {},
       reviewedContent: {
-        plainText: bedrockResponse,
+        plainText: originalText || bedrockResponse || '',
         issues: []
       },
       improvements: []
