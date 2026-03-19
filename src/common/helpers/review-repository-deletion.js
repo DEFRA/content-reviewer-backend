@@ -1,4 +1,4 @@
-import { DeleteObjectCommand, ListObjectsV2Command } from '@aws-sdk/client-s3'
+import { DeleteObjectCommand } from '@aws-sdk/client-s3'
 import { createLogger } from './logging/logger.js'
 
 const logger = createLogger()
@@ -94,38 +94,24 @@ export async function deleteSingleOldReview(s3Client, bucket, prefix, review) {
       return false
     }
 
-    // List all objects for this review
-    const listCommand = new ListObjectsV2Command({
+    // Delete the review JSON file directly using its known flat key
+    const reviewKey = `${prefix}${reviewId}.json`
+    const deleteCommand = new DeleteObjectCommand({
       Bucket: bucket,
-      Prefix: `${prefix}${reviewId}/`
+      Key: reviewKey
     })
 
-    const listResponse = await s3Client.send(listCommand)
+    await s3Client.send(deleteCommand)
 
-    if (listResponse.Contents && listResponse.Contents.length > 0) {
-      // Delete all objects for this review
-      const deletePromises = listResponse.Contents.map((obj) => {
-        const deleteCommand = new DeleteObjectCommand({
-          Bucket: bucket,
-          Key: obj.Key
-        })
-        return s3Client.send(deleteCommand)
-      })
-
-      await Promise.all(deletePromises)
-
-      logger.info(
-        {
-          reviewId,
-          filesDeleted: listResponse.Contents.length,
-          createdAt: review.createdAt
-        },
-        'Deleted old review'
-      )
-      return true
-    }
-
-    return false
+    logger.info(
+      {
+        reviewId,
+        reviewKey,
+        createdAt: review.createdAt
+      },
+      'Deleted old review'
+    )
+    return true
   } catch (deleteError) {
     logger.error(
       { error: deleteError.message, reviewId: review.id },
