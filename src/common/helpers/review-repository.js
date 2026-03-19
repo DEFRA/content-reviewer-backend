@@ -329,6 +329,59 @@ class ReviewRepositoryS3 {
   }
 
   /**
+   * Save the position-based review data (issue positions) as a separate S3 object.
+   * Stored at: positions/{reviewId}.json
+   * @param {string} reviewId - Review ID
+   * @param {Object} reviewedContent - The reviewedContent object from the parsed Bedrock response
+   *   e.g. { plainText: string, issues: Array<{start, end, type, text}> }
+   * @returns {Promise<void>}
+   */
+  async savePositions(reviewId, reviewedContent) {
+    const key = `positions/${reviewId}.json`
+
+    const payload = {
+      reviewId,
+      savedAt: new Date().toISOString(),
+      plainText: reviewedContent.plainText || '',
+      issues: reviewedContent.issues || []
+    }
+
+    logger.info(
+      {
+        reviewId,
+        s3Key: key,
+        issueCount: payload.issues.length
+      },
+      `Saving position-based review data to S3 at ${key}`
+    )
+
+    const command = new PutObjectCommand({
+      Bucket: this.bucket,
+      Key: key,
+      Body: JSON.stringify(payload, null, 2),
+      ContentType: 'application/json',
+      Metadata: {
+        reviewId,
+        issueCount: String(payload.issues.length)
+      }
+    })
+
+    try {
+      await this.s3Client.send(command)
+      logger.info(
+        { reviewId, s3Key: key },
+        'Position-based review data saved to S3'
+      )
+    } catch (error) {
+      logger.error(
+        { error: error.message, reviewId, s3Key: key },
+        'Failed to save position-based review data to S3'
+      )
+      throw error
+    }
+  }
+
+  /**
    * Save review error
    * @param {string} reviewId - Review ID
    * @param {string|Error} error - Error message or Error object

@@ -276,7 +276,7 @@ describe('PromptManager - Default System Prompt', () => {
   })
   test('Should contain required prompt sections', () => {
     expect(DEFAULT_SYSTEM_PROMPT).toContain('[SCORES]')
-    expect(DEFAULT_SYSTEM_PROMPT).toContain('[REVIEWED_CONTENT]')
+    expect(DEFAULT_SYSTEM_PROMPT).toContain('[ISSUE_POSITIONS]')
     expect(DEFAULT_SYSTEM_PROMPT).toContain('[IMPROVEMENTS]')
   })
   test('Should contain scoring guidelines', () => {

@@ -316,7 +316,7 @@ describe('ContentExtractor - extractTextContent', () => {
       expect.objectContaining({
         reviewId: TEST_REVIEW_ID
       }),
-      expect.stringContaining('S3 text content')
+      expect.stringContaining('download started')
     )
   })
 
@@ -378,7 +378,7 @@ describe('ContentExtractor - extractTextFromS3', () => {
         s3Bucket: TEST_BUCKET,
         s3Key: TEST_S3_KEY_TXT
       }),
-      'S3 text content download started'
+      'S3 text content download started (legacy)'
     )
     expect(mockLoggerInfo).toHaveBeenCalledWith(
       expect.objectContaining({

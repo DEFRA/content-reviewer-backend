@@ -46,14 +46,13 @@ function makeMockS3(overrides = {}) {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+//
 // deleteUploadedContent
-// ─────────────────────────────────────────────────────────────────────────────
+//
 describe('deleteUploadedContent', () => {
   it('sends a DeleteObjectCommand and pushes the key to deletedKeys', async () => {
     const s3Client = makeMockS3()
     const deletedKeys = []
-
     await deleteUploadedContent(
       s3Client,
       BUCKET,
@@ -86,9 +85,9 @@ describe('deleteUploadedContent', () => {
   })
 })
 
-// ─────────────────────────────────────────────────────────────────────────────
+//
 // deleteReviewMetadataFile
-// ─────────────────────────────────────────────────────────────────────────────
+//
 describe('deleteReviewMetadataFile', () => {
   it('sends a DeleteObjectCommand and pushes the review key', async () => {
     const s3Client = makeMockS3()
@@ -107,9 +106,9 @@ describe('deleteReviewMetadataFile', () => {
   })
 })
 
-// ─────────────────────────────────────────────────────────────────────────────
+//
 // deleteSingleOldReview
-// ─────────────────────────────────────────────────────────────────────────────
+//
 describe('deleteSingleOldReview', () => {
   it('returns false when review has no id or reviewId', async () => {
     const s3Client = makeMockS3()
@@ -170,7 +169,6 @@ describe('deleteSingleOldReview', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 describe('deleteOldReviews - default behaviour', () => {
   it('uses 5 days as the default retention period', async () => {
-    // No reviews at all — just confirm it runs without error and returns 0
     const getReviews = makeGetReviews([])
     const s3Client = makeMockS3()
 
@@ -268,7 +266,9 @@ describe('deleteOldReviews - deletion behaviour', () => {
 
     expect(deleted).toBe(1)
   })
+})
 
+describe('deleteOldReviews - error handling', () => {
   it('rethrows when getRecentReviews fails', async () => {
     const getReviews = vi
       .fn()
