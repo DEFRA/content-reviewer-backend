@@ -1,17 +1,5 @@
-/**
- * canonical-document.test.js
- *
- * Self-contained test suite for CanonicalDocumentStore covering:
- *  - Exported constants (SOURCE_TYPES, CANONICAL_STATUS)
- *  - Internal methods (_redactAndNormalise, _buildSourceMap, _composeDocument)
- *  - Integration: createCanonicalDocument (S3 persistence, pipeline, shape)
- *  - Integration: getDocument (S3 retrieval)
- *
- * Mocks: @aws-sdk/client-s3, config, logger, piiRedactor, textNormaliser,
- *        documentSectionStripper.
- * The sub-files (*.constants/methods/integration/e2e.test.js) are run
- * independently by vitest and do NOT need to be imported here.
- */
+// canonical-document.constants.test.js
+// Contains tests for exported constants (SOURCE_TYPES, CANONICAL_STATUS)
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
@@ -134,6 +122,8 @@ beforeEach(() => {
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
+const SOURCE_TYPES_KEY_COUNT = 3
+
 describe('SOURCE_TYPES', () => {
   it('exports FILE = "file"', () => {
     expect(SOURCE_TYPES.FILE).toBe('file')
@@ -144,8 +134,8 @@ describe('SOURCE_TYPES', () => {
   it('exports TEXT = "text"', () => {
     expect(SOURCE_TYPES.TEXT).toBe('text')
   })
-  it('has exactly 3 keys', () => {
-    expect(Object.keys(SOURCE_TYPES)).toHaveLength(3)
+  it(`has exactly ${SOURCE_TYPES_KEY_COUNT} keys`, () => {
+    expect(Object.keys(SOURCE_TYPES)).toHaveLength(SOURCE_TYPES_KEY_COUNT)
   })
 })
 
@@ -277,7 +267,7 @@ describe('_redactAndNormalise normalisation', () => {
 
 // ── _redactAndNormalise – return values ───────────────────────────────────────
 
-describe('_redactAndNormalise return values', () => {
+describe('_redactAndNormalise return values - basic return fields', () => {
   it('returns canonicalText from normaliser output', () => {
     MOCK_NORMALISE.mockReturnValueOnce(makeNormResult('Normalised text.'))
     const result = canonicalDocumentStore._redactAndNormalise({
@@ -314,7 +304,9 @@ describe('_redactAndNormalise return values', () => {
     })
     expect(result.createdAt).toMatch(/^\d{4}-\d{2}-\d{2}T/)
   })
+})
 
+describe('_redactAndNormalise return values - originType field', () => {
   it('sets originType to "textarea" for TEXT source', () => {
     const result = canonicalDocumentStore._redactAndNormalise({
       text: 'Hi.',
@@ -338,7 +330,9 @@ describe('_redactAndNormalise return values', () => {
     })
     expect(result.originType).toBe('url')
   })
+})
 
+describe('_redactAndNormalise return values - sectionStripStats field', () => {
   it('returns sectionStripStats = null for TEXT source', () => {
     const result = canonicalDocumentStore._redactAndNormalise({
       text: 'Hi.',
@@ -709,22 +703,22 @@ describe('createCanonicalDocument - sourceType defaults', () => {
 
 // ── getDocument ───────────────────────────────────────────────────────────────
 
-describe('getDocument', () => {
-  function makeStoredDoc(overrides = {}) {
-    return {
-      documentId: DOCUMENT_ID,
-      sourceType: SOURCE_TYPES.FILE,
-      rawS3Key: RAW_S3_KEY,
-      canonicalText: 'Sample canonical text.',
-      charCount: 22,
-      tokenEst: 6,
-      sourceMap: [],
-      createdAt: '2026-03-13T10:00:00.000Z',
-      status: CANONICAL_STATUS.PENDING,
-      ...overrides
-    }
+function makeStoredDoc(overrides = {}) {
+  return {
+    documentId: DOCUMENT_ID,
+    sourceType: SOURCE_TYPES.FILE,
+    rawS3Key: RAW_S3_KEY,
+    canonicalText: 'Sample canonical text.',
+    charCount: 22,
+    tokenEst: 6,
+    sourceMap: [],
+    createdAt: '2026-03-13T10:00:00.000Z',
+    status: CANONICAL_STATUS.PENDING,
+    ...overrides
   }
+}
 
+describe('getDocument', () => {
   it('reads from S3 using the correct key', async () => {
     const stored = makeStoredDoc()
     MOCK_S3_SEND.mockResolvedValueOnce({ Body: makeS3Body(stored) })

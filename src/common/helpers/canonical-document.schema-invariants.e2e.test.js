@@ -157,11 +157,13 @@ describe('schema invariants — URL source', () => {
   })
 })
 
+const TEST_TEXT = 'Test text.'
+
 describe('schema invariants — optional fields', () => {
   it('title is a string when provided', async () => {
     const { document } = await canonicalDocumentStore.createCanonicalDocument({
       documentId: DOC_ID,
-      text: 'Test text.',
+      text: TEST_TEXT,
       sourceType: SOURCE_TYPES.TEXT,
       title: 'My Document Title'
     })
@@ -172,7 +174,7 @@ describe('schema invariants — optional fields', () => {
   it('title is absent (not null/undefined) when not provided', async () => {
     const { document } = await canonicalDocumentStore.createCanonicalDocument({
       documentId: DOC_ID,
-      text: 'Test text.',
+      text: TEST_TEXT,
       sourceType: SOURCE_TYPES.TEXT
     })
     expect(document).not.toHaveProperty('title')
@@ -181,7 +183,7 @@ describe('schema invariants — optional fields', () => {
   it('rawS3Key is a string when provided', async () => {
     const { document } = await canonicalDocumentStore.createCanonicalDocument({
       documentId: DOC_ID,
-      text: 'Test text.',
+      text: TEST_TEXT,
       sourceType: SOURCE_TYPES.FILE,
       rawS3Key: 'uploads/review_abc/original.pdf'
     })
@@ -192,7 +194,7 @@ describe('schema invariants — optional fields', () => {
   it('rawS3Key is absent when not provided', async () => {
     const { document } = await canonicalDocumentStore.createCanonicalDocument({
       documentId: DOC_ID,
-      text: 'Test text.',
+      text: TEST_TEXT,
       sourceType: SOURCE_TYPES.TEXT
     })
     expect(document).not.toHaveProperty('rawS3Key')

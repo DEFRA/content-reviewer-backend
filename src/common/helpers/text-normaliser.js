@@ -18,8 +18,19 @@ const URL_TOKEN_RE =
 /**
  * Detects a Markdown-style link: [anchor text](url)
  * Captures group 1 = anchor, group 2 = url.
+ *
+ * Security — ReDoS hardening:
+ *   Original /\[([^\]]*)\]\(([^)]*)\)/g used unbounded * quantifiers on
+ *   negated character classes. On malformed input such as a lone '[' followed
+ *   by thousands of chars with no closing ']', some engines exhibit
+ *   super-linear backtracking.
+ *
+ *   Fix: replace unbounded * with explicit upper-bound quantifiers:
+ *     - Anchor text capped at 2 000 chars  (govuk link text never exceeds this)
+ *     - URL capped at 2 048 chars          (standard URL max length)
+ *   The engine fails fast once the cap is hit — no backtracking explosion.
  */
-const MARKDOWN_LINK_RE = /\[([^\]]*)\]\(([^)]*)\)/g
+const MARKDOWN_LINK_RE = /\[([^\]]{0,2000})\]\(([^)\s]{0,2048})\)/g
 
 /**
  * Heading patterns — Markdown ATX (#, ##, …) and SETEXT underlines (=== / ---).
@@ -61,8 +72,21 @@ const PAGE_NUMBER_LINE_RE = /^[-\s]*(?:page\s*|p\.\s*)?\d+[-\s]*$/i
 //   U+FFFD  replacement character
 // NOTE: Using alternation instead of a character class to avoid linter warnings
 // about control characters inside character classes.
-const CONTROL_CHAR_RE =
-  /\uFEFF|\u0000|\u000B|\u000C|\u200B|\u200C|\u200D|\u2060|\uFFFC|\uFFFD/g
+const CONTROL_CHAR_RE = new RegExp(
+  [
+    '\uFEFF', // BOM
+    '\u0000', // null byte
+    '\u000B', // vertical tab
+    '\u000C', // form feed
+    '\u200B', // zero-width space
+    '\u200C', // zero-width non-joiner
+    '\u200D', // zero-width joiner
+    '\u2060', // word joiner
+    '\uFFFC', // object replacement character
+    '\uFFFD' // replacement character
+  ].join('|'),
+  'g'
+)
 
 /**
  * URL placeholder sentinel pattern (used internally during per-line processing).

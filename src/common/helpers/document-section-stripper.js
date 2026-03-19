@@ -54,8 +54,26 @@ const ISBN_RE = /^\s*ISBN\s+[\d\-X]+/i
  * A line consisting only of whitespace or a short standalone number
  * (PDF page-number artefact already handled by text-normaliser, kept here
  * as an additional guard during section detection).
+ *
+ * Security — ReDoS hardening:
+ *   Original /^\s*\d{0,3}\s*$/ had two \s* quantifiers wrapping an optional
+ *   \d{0,3}. On a long whitespace-only string with no newline terminator the
+ *   engine must try every combination of how to distribute spaces between the
+ *   leading and trailing \s*, causing catastrophic backtracking (O(2^n)).
+ *
+ *   Fix: replace with explicit alternation — each branch is O(n) linear and
+ *   mutually exclusive so the engine never retries across branches:
+ *     Branch 1  ^\s+$          — line is entirely whitespace (1+ chars)
+ *     Branch 2  ^\s{0,10}\d{1,3}\s{0,10}$
+ *                              — optional surrounding spaces (hard-capped at
+ *                                10 each) around 1–3 digits; matches "  42  "
+ *     Branch 3  ^$             — completely empty line
+ *
+ *   NOTE: \d{0,3} in the original allowed zero digits, making it equivalent
+ *   to /^\s*$/ which is already covered by branch 1/3. We tighten to \d{1,3}
+ *   (at least one digit) so the branches do not overlap.
  */
-const BLANK_OR_PAGENUM_RE = /^\s*\d{0,3}\s*$/
+const BLANK_OR_PAGENUM_RE = /^(?:\s+|\s{0,10}\d{1,3}\s{0,10}|)$/
 
 // ─────────────────────────────────────────────────────────────────────────────
 

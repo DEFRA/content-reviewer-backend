@@ -55,7 +55,7 @@ beforeEach(() => {
   MOCK_S3_SEND.mockResolvedValue({})
 })
 
-describe('text normalisation — real textNormaliser runs in pipeline', () => {
+describe('text normalisation — ligatures and quotes', () => {
   it('normalises unicode ligatures (fi → fi)', async () => {
     const { document } = await canonicalDocumentStore.createCanonicalDocument({
       documentId: DOC_ID,
@@ -76,7 +76,9 @@ describe('text normalisation — real textNormaliser runs in pipeline', () => {
     expect(document.canonicalText).not.toContain('\u2018')
     expect(document.canonicalText).not.toContain('\u2019')
   })
+})
 
+describe('text normalisation — stripping and preservation', () => {
   it('strips standalone page-number lines', async () => {
     const { document } = await canonicalDocumentStore.createCanonicalDocument({
       documentId: DOC_ID,
@@ -99,7 +101,9 @@ describe('text normalisation — real textNormaliser runs in pipeline', () => {
     expect(document.canonicalText).not.toContain('\u200B')
     expect(document.canonicalText).toContain('Hello')
   })
+})
 
+describe('text normalisation — markdown and lists', () => {
   it('preserves Markdown ATX heading markers', async () => {
     const { document } = await canonicalDocumentStore.createCanonicalDocument({
       documentId: DOC_ID,
@@ -118,7 +122,9 @@ describe('text normalisation — real textNormaliser runs in pipeline', () => {
     expect(document.canonicalText).toContain('- First item')
     expect(document.canonicalText).toContain('- Second item')
   })
+})
 
+describe('text normalisation — urls and whitespace', () => {
   it('preserves URLs without corruption', async () => {
     const url = 'https://www.gov.uk/guidance/some-policy?ref=abc&q=1'
     const { document } = await canonicalDocumentStore.createCanonicalDocument({
@@ -138,7 +144,9 @@ describe('text normalisation — real textNormaliser runs in pipeline', () => {
     // Should not have more than 2 consecutive newlines
     expect(document.canonicalText).not.toMatch(/\n{3,}/)
   })
+})
 
+describe('text normalisation — char count', () => {
   it('charCount matches canonicalText length after normalisation', async () => {
     const { document } = await canonicalDocumentStore.createCanonicalDocument({
       documentId: DOC_ID,
