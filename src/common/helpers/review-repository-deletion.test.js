@@ -14,20 +14,30 @@ vi.mock('./logging/logger.js', () => ({
   }))
 }))
 
+function makeDeleteObjectCommand(params) {
+  return { type: 'DeleteObject', ...params }
+}
+
 vi.mock('@aws-sdk/client-s3', () => ({
-  // eslint-disable-next-line func-names
-  DeleteObjectCommand: function (params) {
-    return { type: 'DeleteObject', ...params }
-  },
-  // eslint-disable-next-line func-names
-  ListObjectsV2Command: function (params) {
-    return { type: 'ListObjectsV2', ...params }
-  }
+  DeleteObjectCommand: makeDeleteObjectCommand
 }))
 
 const BUCKET = 'test-bucket'
 const PREFIX = 'reviews/'
-const UPLOADED_FILE_KEY = 'uploads/review-1/file.pdf'
+const UPLOAD_S3_KEY = 'uploads/review-1/file.pdf'
+const DAYS_WITHIN_WINDOW = 3
+const DAYS_OUTSIDE_WINDOW = 6
+const RETENTION_DAYS = 5
+
+function daysAgo(n) {
+  const d = new Date()
+  d.setDate(d.getDate() - n)
+  return d.toISOString()
+}
+
+function makeGetReviews(reviews) {
+  return vi.fn().mockResolvedValue({ reviews })
+}
 
 function makeMockS3(overrides = {}) {
   return {
@@ -47,12 +57,12 @@ describe('deleteUploadedContent', () => {
       s3Client,
       BUCKET,
       'review-1',
-      UPLOADED_FILE_KEY,
+      UPLOAD_S3_KEY,
       deletedKeys
     )
 
     expect(s3Client.send).toHaveBeenCalledTimes(1)
-    expect(deletedKeys).toEqual(['uploads/review-1/file.pdf'])
+    expect(deletedKeys).toEqual([UPLOAD_S3_KEY])
   })
 
   it('continues without throwing when S3 delete fails', async () => {
@@ -66,7 +76,7 @@ describe('deleteUploadedContent', () => {
         s3Client,
         BUCKET,
         'review-1',
-        UPLOADED_FILE_KEY,
+        UPLOAD_S3_KEY,
         deletedKeys
       )
     ).resolves.not.toThrow()
@@ -109,16 +119,9 @@ describe('deleteSingleOldReview', () => {
     expect(s3Client.send).not.toHaveBeenCalled()
   })
 
-  it('deletes all S3 objects under the review prefix and returns true', async () => {
+  it('deletes the review JSON file at the flat S3 key and returns true', async () => {
     const s3Client = makeMockS3()
-    s3Client.send
-      .mockResolvedValueOnce({
-        Contents: [
-          { Key: 'reviews/review-1/meta.json' },
-          { Key: 'reviews/review-1/content.txt' }
-        ]
-      })
-      .mockResolvedValue({})
+    s3Client.send.mockResolvedValueOnce({})
 
     const result = await deleteSingleOldReview(s3Client, BUCKET, PREFIX, {
       id: 'review-1',
@@ -126,13 +129,17 @@ describe('deleteSingleOldReview', () => {
     })
 
     expect(result).toBe(true)
-    const TOTAL_EXPECTED_CALLS = 3
-    expect(s3Client.send).toHaveBeenCalledTimes(TOTAL_EXPECTED_CALLS)
+    expect(s3Client.send).toHaveBeenCalledTimes(1)
+    const sentCommand = s3Client.send.mock.calls[0][0]
+    expect(sentCommand).toMatchObject({
+      Bucket: BUCKET,
+      Key: `${PREFIX}review-1.json`
+    })
   })
 
-  it('returns false when no S3 objects are found under the review prefix', async () => {
+  it('returns true even when the S3 key does not exist (S3 delete is idempotent)', async () => {
     const s3Client = makeMockS3({
-      send: vi.fn().mockResolvedValueOnce({ Contents: [] })
+      send: vi.fn().mockResolvedValueOnce({})
     })
 
     const result = await deleteSingleOldReview(s3Client, BUCKET, PREFIX, {
@@ -140,10 +147,10 @@ describe('deleteSingleOldReview', () => {
       createdAt: new Date().toISOString()
     })
 
-    expect(result).toBe(false)
+    expect(result).toBe(true)
   })
 
-  it('returns false and does not throw when S3 list fails', async () => {
+  it('returns false and does not throw when S3 delete fails', async () => {
     const s3Client = makeMockS3({
       send: vi.fn().mockRejectedValue(new Error('S3 list error'))
     })
@@ -157,22 +164,10 @@ describe('deleteSingleOldReview', () => {
   })
 })
 
-//
-// deleteOldReviews  5 day retention
-//
-const RETENTION_DAYS = 5
-
-function daysAgo(n) {
-  const d = new Date()
-  d.setDate(d.getDate() - n)
-  return d.toISOString()
-}
-
-function makeGetReviews(reviews) {
-  return vi.fn().mockResolvedValue({ reviews })
-}
-
-describe('deleteOldReviews - retention and boundary cases', () => {
+// ─────────────────────────────────────────────────────────────────────────────
+// deleteOldReviews — default behaviour
+// ─────────────────────────────────────────────────────────────────────────────
+describe('deleteOldReviews - default behaviour', () => {
   it('uses 5 days as the default retention period', async () => {
     const getReviews = makeGetReviews([])
     const s3Client = makeMockS3()
@@ -186,7 +181,7 @@ describe('deleteOldReviews - retention and boundary cases', () => {
   it('returns 0 when all reviews are within the retention window', async () => {
     const reviews = [
       { id: 'r1', createdAt: daysAgo(1) },
-      { id: 'r2', createdAt: daysAgo(3) },
+      { id: 'r2', createdAt: daysAgo(DAYS_WITHIN_WINDOW) },
       { id: 'r3', createdAt: daysAgo(4) }
     ]
     const getReviews = makeGetReviews(reviews)
@@ -206,6 +201,8 @@ describe('deleteOldReviews - retention and boundary cases', () => {
   })
 
   it('does not delete reviews exactly at the cutoff boundary', async () => {
+    // A review created exactly RETENTION_DAYS days ago should NOT be deleted
+    // because the cutoff is strictly less-than
     const reviews = [{ id: 'boundary', createdAt: daysAgo(RETENTION_DAYS) }]
     const getReviews = makeGetReviews(reviews)
     const s3Client = makeMockS3({
@@ -224,26 +221,23 @@ describe('deleteOldReviews - retention and boundary cases', () => {
   })
 })
 
-describe('deleteOldReviews - deletion logic', () => {
+// ─────────────────────────────────────────────────────────────────────────────
+// deleteOldReviews — deletion behaviour
+// ─────────────────────────────────────────────────────────────────────────────
+describe('deleteOldReviews - deletion behaviour', () => {
   it('deletes reviews older than 5 days and returns correct count', async () => {
     const reviews = [
       { id: 'keep-1', createdAt: daysAgo(2) },
       { id: 'keep-2', createdAt: daysAgo(4) },
-      { id: 'old-1', createdAt: daysAgo(6) },
+      { id: 'old-1', createdAt: daysAgo(DAYS_OUTSIDE_WINDOW) },
       { id: 'old-2', createdAt: daysAgo(10) }
     ]
     const getReviews = makeGetReviews(reviews)
 
     const s3Client = makeMockS3()
     s3Client.send
-      .mockResolvedValueOnce({
-        Contents: [{ Key: 'reviews/old-1/meta.json' }]
-      })
-      .mockResolvedValueOnce({})
-      .mockResolvedValueOnce({
-        Contents: [{ Key: 'reviews/old-2/meta.json' }]
-      })
-      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({}) // delete old-1
+      .mockResolvedValueOnce({}) // delete old-2
 
     const deleted = await deleteOldReviews(
       s3Client,
@@ -259,13 +253,8 @@ describe('deleteOldReviews - deletion logic', () => {
   it('falls back to uploadedAt when createdAt is missing', async () => {
     const reviews = [{ id: 'old-upload', uploadedAt: daysAgo(8) }]
     const getReviews = makeGetReviews(reviews)
-
     const s3Client = makeMockS3()
-    s3Client.send
-      .mockResolvedValueOnce({
-        Contents: [{ Key: 'reviews/old-upload/meta.json' }]
-      })
-      .mockResolvedValueOnce({})
+    s3Client.send.mockResolvedValueOnce({})
 
     const deleted = await deleteOldReviews(
       s3Client,
