@@ -257,7 +257,7 @@ describe('BedrockReviewProcessor - performBedrockReview', () => {
       await processor.performBedrockReview('review-format', textContent)
 
       expect(mockSendMessage).toHaveBeenCalledWith(
-        expect.stringContaining('Please review the following content:'),
+        expect.stringContaining('<content_to_review>'),
         expect.any(Array),
         expect.any(String)
       )
