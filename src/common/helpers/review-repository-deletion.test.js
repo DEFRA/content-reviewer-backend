@@ -15,9 +15,6 @@ vi.mock('./logging/logger.js', () => ({
 }))
 
 vi.mock('@aws-sdk/client-s3', () => ({
-  // PascalCase exports to match named imports in the implementation.
-  // Anonymous function expressions satisfy both `new` (constructor call) and
-  // the linter's camelCase named-function rule (these are not named functions).
   // eslint-disable-next-line func-names
   DeleteObjectCommand: function (params) {
     return { type: 'DeleteObject', ...params }
@@ -39,9 +36,9 @@ function makeMockS3(overrides = {}) {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+//
 // deleteUploadedContent
-// ─────────────────────────────────────────────────────────────────────────────
+//
 describe('deleteUploadedContent', () => {
   it('sends a DeleteObjectCommand and pushes the key to deletedKeys', async () => {
     const s3Client = makeMockS3()
@@ -78,9 +75,9 @@ describe('deleteUploadedContent', () => {
   })
 })
 
-// ─────────────────────────────────────────────────────────────────────────────
+//
 // deleteReviewMetadataFile
-// ─────────────────────────────────────────────────────────────────────────────
+//
 describe('deleteReviewMetadataFile', () => {
   it('sends a DeleteObjectCommand and pushes the review key', async () => {
     const s3Client = makeMockS3()
@@ -99,9 +96,9 @@ describe('deleteReviewMetadataFile', () => {
   })
 })
 
-// ─────────────────────────────────────────────────────────────────────────────
+//
 // deleteSingleOldReview
-// ─────────────────────────────────────────────────────────────────────────────
+//
 describe('deleteSingleOldReview', () => {
   it('returns false when review has no id or reviewId', async () => {
     const s3Client = makeMockS3()
@@ -114,7 +111,6 @@ describe('deleteSingleOldReview', () => {
 
   it('deletes all S3 objects under the review prefix and returns true', async () => {
     const s3Client = makeMockS3()
-    // First call = ListObjectsV2 → return two files under reviews/review-1/
     s3Client.send
       .mockResolvedValueOnce({
         Contents: [
@@ -122,7 +118,6 @@ describe('deleteSingleOldReview', () => {
           { Key: 'reviews/review-1/content.txt' }
         ]
       })
-      // Subsequent calls = DeleteObject for each file
       .mockResolvedValue({})
 
     const result = await deleteSingleOldReview(s3Client, BUCKET, PREFIX, {
@@ -131,7 +126,6 @@ describe('deleteSingleOldReview', () => {
     })
 
     expect(result).toBe(true)
-    // 1 list + 2 deletes = 3 total
     const TOTAL_EXPECTED_CALLS = 3
     expect(s3Client.send).toHaveBeenCalledTimes(TOTAL_EXPECTED_CALLS)
   })
@@ -163,9 +157,9 @@ describe('deleteSingleOldReview', () => {
   })
 })
 
-// ─────────────────────────────────────────────────────────────────────────────
-// deleteOldReviews — 5 day retention
-// ─────────────────────────────────────────────────────────────────────────────
+//
+// deleteOldReviews  5 day retention
+//
 const RETENTION_DAYS = 5
 
 function daysAgo(n) {
@@ -180,7 +174,6 @@ function makeGetReviews(reviews) {
 
 describe('deleteOldReviews - retention and boundary cases', () => {
   it('uses 5 days as the default retention period', async () => {
-    // No reviews at all — just confirm it runs without error and returns 0
     const getReviews = makeGetReviews([])
     const s3Client = makeMockS3()
 
@@ -213,8 +206,6 @@ describe('deleteOldReviews - retention and boundary cases', () => {
   })
 
   it('does not delete reviews exactly at the cutoff boundary', async () => {
-    // A review created exactly RETENTION_DAYS days ago should NOT be deleted
-    // because the cutoff is strictly less-than
     const reviews = [{ id: 'boundary', createdAt: daysAgo(RETENTION_DAYS) }]
     const getReviews = makeGetReviews(reviews)
     const s3Client = makeMockS3({
@@ -244,17 +235,15 @@ describe('deleteOldReviews - deletion logic', () => {
     const getReviews = makeGetReviews(reviews)
 
     const s3Client = makeMockS3()
-    // old-1: list returns 1 file, then delete it
-    // old-2: list returns 1 file, then delete it
     s3Client.send
       .mockResolvedValueOnce({
         Contents: [{ Key: 'reviews/old-1/meta.json' }]
       })
-      .mockResolvedValueOnce({}) // delete old-1/meta.json
+      .mockResolvedValueOnce({})
       .mockResolvedValueOnce({
         Contents: [{ Key: 'reviews/old-2/meta.json' }]
       })
-      .mockResolvedValueOnce({}) // delete old-2/meta.json
+      .mockResolvedValueOnce({})
 
     const deleted = await deleteOldReviews(
       s3Client,
