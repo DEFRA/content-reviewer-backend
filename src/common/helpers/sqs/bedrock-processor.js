@@ -32,7 +32,12 @@ export class BedrockReviewProcessor {
   }
 
   /**
-   * Send request to Bedrock AI
+   * Send request to Bedrock AI.
+   *
+   * The system prompt is now passed via the dedicated `systemPrompt` parameter
+   * of `bedrockClient.sendMessage`, which maps to the Bedrock Converse API
+   * `system` field.  This ensures the model treats it as a true system
+   * instruction rather than a user conversation turn.
    */
   async sendBedrockRequest(reviewId, userPrompt, systemPrompt) {
     const bedrockStartTime = performance.now()
@@ -46,20 +51,14 @@ export class BedrockReviewProcessor {
       '[BEDROCK] Sending request to Bedrock AI - START'
     )
 
-    const bedrockResponse = await bedrockClient.sendMessage(userPrompt, [
-      {
-        role: 'user',
-        content: [{ text: systemPrompt }]
-      },
-      {
-        role: 'assistant',
-        content: [
-          {
-            text: 'I understand. I will review content according to GOV.UK standards and provide structured feedback as specified.'
-          }
-        ]
-      }
-    ])
+    // Pass an empty conversationHistory — the system prompt is supplied via
+    // the dedicated systemPrompt parameter so it reaches the Converse `system`
+    // field rather than being injected as a conversation message.
+    const bedrockResponse = await bedrockClient.sendMessage(
+      userPrompt,
+      [], // no conversation history
+      systemPrompt
+    )
 
     const bedrockDuration = Math.round(performance.now() - bedrockStartTime)
 
@@ -118,15 +117,14 @@ export class BedrockReviewProcessor {
   /**
    * Parse Bedrock response data
    */
-  async parseBedrockResponseData(reviewId, bedrockResult) {
+  async parseBedrockResponseData(reviewId, bedrockResult, originalText = '') {
     const parseStart = performance.now()
     const finalReviewContent = bedrockResult.bedrockResponse.content
-    // If reviewContent is available in bedrockResult, pass as fallback
-    const fallbackRawResponse =
-      bedrockResult.bedrockResponse.reviewContent || finalReviewContent
+    // Pass originalText as the 3rd argument (2nd is fallback, unused in production)
     const parsedReview = parseBedrockResponse(
       finalReviewContent,
-      fallbackRawResponse
+      undefined,
+      originalText
     )
     const parseDuration = Math.round(performance.now() - parseStart)
 

@@ -3,6 +3,11 @@ import { config } from '../config.js'
 import { reviewRepository } from '../common/helpers/review-repository.js'
 import { sqsClient } from '../common/helpers/sqs-client.js'
 import { s3Uploader } from '../common/helpers/s3-uploader.js'
+import {
+  canonicalDocumentStore,
+  SOURCE_TYPES as CANONICAL_SOURCE_TYPES
+} from '../common/helpers/canonical-document.js'
+import { resultEnvelopeStore } from '../common/helpers/result-envelope.js'
 
 // ============ CONSTANTS ============
 
@@ -154,7 +159,7 @@ export async function uploadTextToS3(content, reviewId, title, logger) {
       contentLength: content.length,
       durationMs: s3UploadDuration
     },
-    `[STEP 2/6] Text content uploaded to S3 - COMPLETED in ${s3UploadDuration}ms`
+    `[STEP 2/6] Raw text content uploaded to S3 (content-uploads/${reviewId}) - COMPLETED in ${s3UploadDuration}ms`
   )
 
   return { s3Result, s3UploadDuration }
@@ -200,7 +205,7 @@ export async function createReviewRecord(
       filename: title || CONTENT_DEFAULTS.TITLE,
       durationMs: dbCreateDuration
     },
-    `[STEP 3/6] Review record created in S3 repository - COMPLETED in ${dbCreateDuration}ms`
+    `[STEP 4/6] Review record created in S3 repository - COMPLETED in ${dbCreateDuration}ms`
   )
 
   return dbCreateDuration
@@ -251,7 +256,7 @@ export async function queueReviewJob(
         sqsQueue: 'content_review_queue',
         durationMs: sqsSendDuration
       },
-      `[STEP 4/6] SQS message sent successfully - COMPLETED in ${sqsSendDuration}ms`
+      `[STEP 5/6] SQS message sent successfully (pointing to canonical document) - COMPLETED in ${sqsSendDuration}ms`
     )
 
     return sqsSendDuration
@@ -282,13 +287,72 @@ export async function queueReviewJob(
   }
 }
 
-// ============ TEXT REVIEW HANDLER HELPERS ============
+// ============ CANONICAL DOCUMENT HELPERS ============
 
 /**
- * Processes text review submission
+ * Creates a canonical document in S3 under documents/{reviewId}.json.
+ *
+ * Works for ALL source types — text paste, extracted file text, URL body.
+ * Pipeline: raw text → PII redaction → normalisation → S3 persist.
+ *
+ * @param {string} content      - Raw text content (plain text OR extracted file text)
+ * @param {string} reviewId     - Review ID (used as documentId)
+ * @param {string} title        - Content title / filename hint
+ * @param {Object} logger       - Request logger
+ * @param {string} [sourceType] - SOURCE_TYPES value (default: 'text')
+ * @param {string} [rawS3Key]   - S3 key of the raw upload for audit trail linkage
+ * @returns {Promise<{canonicalResult: Object, canonicalDuration: number}>}
+ */
+export async function createCanonicalDocument(
+  content,
+  reviewId,
+  title,
+  logger,
+  sourceType = CANONICAL_SOURCE_TYPES.TEXT,
+  rawS3Key = null
+) {
+  const canonicalStart = performance.now()
+
+  const canonicalResult = await canonicalDocumentStore.createCanonicalDocument({
+    documentId: reviewId,
+    text: content,
+    title: title || CONTENT_DEFAULTS.TITLE,
+    sourceType,
+    rawS3Key
+  })
+
+  const canonicalDuration = Math.round(performance.now() - canonicalStart)
+
+  logger.info(
+    {
+      reviewId,
+      sourceType,
+      canonicalKey: canonicalResult.s3.key,
+      charCount: canonicalResult.document.charCount,
+      tokenEst: canonicalResult.document.tokenEst,
+      rawS3Key: rawS3Key || null,
+      durationMs: canonicalDuration
+    },
+    `[STEP 3/6] Canonical document created in S3 (documents/${reviewId}.json) - COMPLETED in ${canonicalDuration}ms`
+  )
+
+  return { canonicalResult, canonicalDuration }
+}
+
+/**
+ * Processes text review submission.
+ *
+ * Pipeline (6 steps):
+ *  1. Validate & generate reviewId
+ *  2. Upload raw content to S3  →  content-uploads/{reviewId}/Title.txt   (archive / audit)
+ *  3. Create canonical document →  documents/{reviewId}.json               (normalised, PII-redacted)
+ *  4. Persist review record in database (s3Key = canonical document key)
+ *  5. Send SQS message pointing to canonical document
+ *  6. Return result
+ *
  * @param {Object} payload - Request payload with content and title
  * @param {Object} headers - Request headers
- * @param {Object} logger - Request logger
+ * @param {Object} logger  - Request logger
  * @returns {Promise<Object>} Processing result with reviewId and timings
  */
 export async function processTextReviewSubmission(payload, headers, logger) {
@@ -307,7 +371,7 @@ export async function processTextReviewSubmission(payload, headers, logger) {
     '[STEP 1/6] Processing text review request - START'
   )
 
-  // Upload text content to S3
+  // STEP 2: Upload raw text to S3 as plain-text archive (content-uploads/{reviewId}/Title.txt)
   const { s3Result, s3UploadDuration } = await uploadTextToS3(
     content,
     reviewId,
@@ -315,20 +379,37 @@ export async function processTextReviewSubmission(payload, headers, logger) {
     logger
   )
 
-  // Create review record in database (includes userId for per-user filtering)
+  // STEP 3: Create canonical document (documents/{reviewId}.json) — normalised, PII-redacted JSON
+  const { canonicalResult, canonicalDuration } = await createCanonicalDocument(
+    content,
+    reviewId,
+    title,
+    logger
+  )
+
+  // STEP 4: Create review record in database pointing to the canonical document key
   const dbCreateDuration = await createReviewRecord(
     reviewId,
-    s3Result,
+    canonicalResult.s3, // s3Key stored as documents/{reviewId}.json
     title,
     content.length,
     logger,
     userId
   )
 
-  // Queue review job in SQS
+  // Write a pending stub to result/{reviewId}.json immediately so the status
+  // endpoint can return "pending" before Bedrock processing begins
+  resultEnvelopeStore.saveStatus(reviewId, 'pending').catch((err) => {
+    logger.warn(
+      { reviewId, error: err.message },
+      '[result-envelope] Failed to write pending stub (non-critical)'
+    )
+  })
+
+  // STEP 5: Queue SQS job pointing to canonical document so the processor reads canonicalText
   const sqsSendDuration = await queueReviewJob(
     reviewId,
-    s3Result,
+    canonicalResult.s3, // SQS message carries the canonical document S3 key
     title,
     content.length,
     headers,
@@ -337,9 +418,11 @@ export async function processTextReviewSubmission(payload, headers, logger) {
 
   return {
     reviewId,
-    s3Result,
+    s3Result, // raw txt upload result (archive)
+    canonicalResult, // canonical document result (normalised)
     timings: {
       s3UploadDuration,
+      canonicalDuration,
       dbCreateDuration,
       sqsSendDuration
     }

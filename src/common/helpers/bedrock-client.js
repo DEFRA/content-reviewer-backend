@@ -234,13 +234,20 @@ class BedrockClient {
   }
 
   /**
-   * Send a message to Claude and get a response
+   * Send a message to Claude and get a response.
    *
-   * @param {string} userMessage - The user's message/prompt
-   * @param {Array} conversationHistory - Optional previous messages for context
+   * @param {string} userMessage          - The user's message/prompt
+   * @param {Array}  conversationHistory  - Optional previous messages for context
+   * @param {string} [systemPrompt]       - Optional system prompt passed via the
+   *   Bedrock Converse `system` parameter (preferred over injecting as a message).
+   *   When provided the prompt is NOT injected into the messages array.
    * @returns {Promise<Object>} Response with content, usage stats, and guardrail metrics
    */
-  async sendMessage(userMessage, conversationHistory = []) {
+  async sendMessage(
+    userMessage,
+    conversationHistory = [],
+    systemPrompt = null
+  ) {
     if (!this.enabled) {
       throw new Error('Bedrock AI is not enabled')
     }
@@ -250,12 +257,21 @@ class BedrockClient {
       const guardrailConfig = this._buildGuardrailConfig()
       const inferenceConfig = this._buildInferenceConfig()
 
-      const command = new ConverseCommand({
+      const commandInput = {
         modelId: this.inferenceProfileArn,
         messages,
         inferenceConfig,
         guardrailConfig
-      })
+      }
+
+      // Pass system prompt via the dedicated `system` parameter so it is
+      // treated as a true system instruction by the model rather than a
+      // conversation turn.
+      if (systemPrompt) {
+        commandInput.system = [{ text: systemPrompt }]
+      }
+
+      const command = new ConverseCommand(commandInput)
 
       const response = await this.client.send(command)
       return this._processResponse(response)
