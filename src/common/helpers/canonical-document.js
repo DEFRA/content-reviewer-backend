@@ -13,6 +13,35 @@ import { documentSectionStripper } from './document-section-stripper.js'
 const logger = createLogger()
 
 /**
+ * Strip HTML tags from a string using a linear-time state machine.
+ * Each character is visited exactly once — no backtracking is possible,
+ * making this safe against ReDoS (SonarQube S5852).
+ * Characters inside a tag are replaced with a single space so that words
+ * that were separated only by a tag boundary do not get merged.
+ * @param {string} input
+ * @returns {string}
+ */
+function stripHtmlTags(input) {
+  const out = []
+  let inTag = false
+
+  for (const ch of input) {
+    if (!inTag && ch !== '<') {
+      out.push(ch)
+    } else if (ch === '<') {
+      inTag = true
+    } else if (ch === '>') {
+      inTag = false
+      out.push(' ') // separator where the tag was
+    } else {
+      // character inside a tag — discard
+    }
+  }
+
+  return out.join('')
+}
+
+/**
  * Source types for canonical documents
  */
 export const SOURCE_TYPES = {
@@ -203,12 +232,42 @@ class CanonicalDocumentStore {
    * @private
    */
   _redactAndNormalise({ text, sourceType }) {
-    // ── Step 0: Front-matter stripping (file and URL sources only) ───────────
+    // ── Step 0a: HTML tag stripping (URL sources only) ───────────────────────
+    // URL submissions arrive as a <!DOCTYPE html> document with <section>,
+    // <div>, <p>, <a> etc. tags.  We convert these to plain text before any
+    // further processing so that canonicalText is clean prose that Bedrock can
+    // read and annotate with character offsets.
+    //
+    // <a> tags are special: we keep their text content so link labels are
+    // preserved in the reviewed text (e.g. "read more about planning permission"
+    // rather than losing the link entirely).  The href values are stripped at
+    // this stage because they would pollute the character-offset calculations.
+    // The original HTML (with full href values) is stored in the raw S3 archive
+    // (content-uploads/{reviewId}/title.html) for reference.
+    let workingText = text
+
+    if (sourceType === SOURCE_TYPES.URL) {
+      // Strip HTML tags using a linear-time state machine instead of a regex
+      // so that malformed or adversarial input cannot trigger super-linear
+      // backtracking (SonarQube S5852).  Every character is visited exactly
+      // once: while inside a tag we discard; outside a tag we keep.
+      workingText = stripHtmlTags(workingText)
+        .replaceAll('&nbsp;', ' ')
+        .replaceAll('&amp;', '&')
+        .replaceAll('&lt;', '<')
+        .replaceAll('&gt;', '>')
+        .replaceAll('&quot;', '"')
+        .replaceAll('&#39;', "'")
+        .split(/\s+/u)
+        .join(' ')
+        .trim()
+    }
+
+    // ── Step 0b: Front-matter stripping (file and URL sources only) ──────────
     // Title pages, copyright/imprint pages and tables of contents are structural
     // boilerplate that add noise for the AI without containing reviewable content.
     // We skip this for free-text pastes (SOURCE_TYPES.TEXT) because those are
     // direct user input and we must not silently discard any of their content.
-    let workingText = text
     let sectionStripStats = null
 
     const shouldStrip =
