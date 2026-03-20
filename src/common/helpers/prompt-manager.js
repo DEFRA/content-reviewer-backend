@@ -79,11 +79,11 @@ You **must** return your response as structured plain text using the following f
 
 \`\`\`
 [SCORES]
-Plain English: X/5 - Brief note
-Clarity & Structure: X/5 - Brief note
-Accessibility: X/5 - Brief note
-GOV.UK Style Compliance: X/5 - Brief note
-Content Completeness: X/5 - Brief note
+Plain English: X/5 - Brief generic quality note
+Clarity & Structure: X/5 - Brief generic quality note
+Accessibility: X/5 - Brief generic quality note
+GOV.UK Style Compliance: X/5 - Brief generic quality note
+Content Completeness: X/5 - Brief generic quality note
 [/SCORES]
 
 [ISSUE_POSITIONS]
@@ -136,6 +136,23 @@ For each of the 5 categories, assign a score:
 - **3 (Acceptable)** - Several issues requiring attention
 - **2 (Needs Work)** - Major issues that must be addressed
 - **1 (Poor)** - Significant problems that block publication
+
+**Score notes MUST be generic quality assessments. Do NOT:**
+- Quote, reference, or mention specific words, phrases, acronyms, or terminology from the input content
+- Name any specific term found in the content (e.g. do NOT write "Contains jargon (BAU)" — write "Contains jargon and complex language" instead)
+- Include any verbatim text from the document in the score note
+
+**Score note examples (correct):**
+- ✅ "Generally clear but some complex phrases and passive voice"
+- ✅ "Well-structured but some sections could be more concise"
+- ✅ "Generally accessible but some technical terms need explanation"
+- ✅ "Mostly compliant with minor issues"
+- ✅ "Missing some specific information users might need"
+
+**Score note examples (incorrect — do NOT do this):**
+- ❌ "Contains jargon (BAU) and some complex language"  ← references specific content
+- ❌ "Unexplained acronym 'MMO' creates barrier"  ← references specific content
+- ❌ "Missing context about the BAU process"  ← references specific content
 
 **Categories:**
 
@@ -318,11 +335,13 @@ If you see text patterns that suggest these elements exist (e.g., "1.", "2." for
 3. In [ISSUE_POSITIONS], return a **single-line JSON object** — {"issues":[...]} — where each issue has start, end (0-based char offsets), type, and text (the exact verbatim characters at those offsets)
 4. Each {"start":N,"end":M,"type":"category","text":"exact text"} entry must correspond 1-to-1 with a [PRIORITY] block in [IMPROVEMENTS], in the same order
 5. The CURRENT: field in each [PRIORITY] block must contain the **exact same text** as the corresponding issue's text field in [ISSUE_POSITIONS]
-5. Do **not** echo back or repeat the original input text anywhere in your response
-6. Provide **all identified improvements** in the [IMPROVEMENTS] section
-7. Order improvements by severity - most critical first (critical → high → medium → low)
-8. Be **consistent** - apply the same standards and scoring criteria to every review
-9. Be **deterministic** - given similar content, produce similar structured output
+6. The [SCORES] section must contain **exactly five categories** in this order: Plain English, Clarity & Structure, Accessibility, GOV.UK Style Compliance, Content Completeness. Do NOT add an "Overall" row.
+7. Score notes must be **generic quality assessments only** — do NOT quote, name, or reference specific words, acronyms, phrases, or terminology from the input content
+8. Do **not** echo back or repeat the original input text anywhere in your response
+9. Provide **all identified improvements** in the [IMPROVEMENTS] section
+10. Order improvements by severity - most critical first (critical → high → medium → low)
+11. Be **consistent** - apply the same standards and scoring criteria to every review
+12. Be **deterministic** - given similar content, produce similar structured output
 
 **Output Format Validation:**
 - Your response must start with: [SCORES]
