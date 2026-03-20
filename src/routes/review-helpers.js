@@ -48,7 +48,8 @@ export const PAGINATION_DEFAULTS = {
 
 // Content Types
 const CONTENT_TYPES = {
-  TEXT_PLAIN: 'text/plain'
+  TEXT_PLAIN: 'text/plain',
+  TEXT_HTML: 'text/html'
 }
 
 // Message Types
@@ -58,7 +59,8 @@ const MESSAGE_TYPES = {
 
 // Source Types
 const SOURCE_TYPES = {
-  TEXT: 'text'
+  TEXT: 'text',
+  URL: 'url'
 }
 
 // Review Statuses
@@ -182,7 +184,8 @@ export async function createReviewRecord(
   title,
   contentLength,
   logger,
-  userId = null
+  userId = null,
+  mimeType = CONTENT_TYPES.TEXT_PLAIN
 ) {
   const dbCreateStart = performance.now()
   await reviewRepository.createReview({
@@ -190,7 +193,7 @@ export async function createReviewRecord(
     sourceType: SOURCE_TYPES.TEXT,
     fileName: title || CONTENT_DEFAULTS.TITLE,
     fileSize: contentLength,
-    mimeType: CONTENT_TYPES.TEXT_PLAIN,
+    mimeType,
     s3Key: s3Result.key,
     userId: userId || null
   })
@@ -356,17 +359,30 @@ export async function createCanonicalDocument(
  * @returns {Promise<Object>} Processing result with reviewId and timings
  */
 export async function processTextReviewSubmission(payload, headers, logger) {
-  const { content, title } = payload
+  const { content, title, sourceType: payloadSourceType } = payload
 
   const reviewId = `review_${randomUUID()}`
   const userId = headers['x-user-id'] || null
+
+  // Map the frontend sourceType value to the canonical document source type.
+  // URL submissions send sourceType='url'; plain text pastes omit it (default 'text').
+  const canonicalSourceType =
+    payloadSourceType === SOURCE_TYPES.URL
+      ? CANONICAL_SOURCE_TYPES.URL
+      : CANONICAL_SOURCE_TYPES.TEXT
+
+  // HTML content type is used when the title ends in .html (URL-sourced uploads)
+  const mimeType = title?.toLowerCase().endsWith('.html')
+    ? CONTENT_TYPES.TEXT_HTML
+    : CONTENT_TYPES.TEXT_PLAIN
 
   logger.info(
     {
       reviewId,
       contentLength: content.length,
       title: title || CONTENT_DEFAULTS.TITLE,
-      userId: userId || 'anonymous'
+      userId: userId || 'anonymous',
+      sourceType: canonicalSourceType
     },
     '[STEP 1/6] Processing text review request - START'
   )
@@ -384,7 +400,8 @@ export async function processTextReviewSubmission(payload, headers, logger) {
     content,
     reviewId,
     title,
-    logger
+    logger,
+    canonicalSourceType
   )
 
   // STEP 4: Create review record in database pointing to the canonical document key
@@ -394,7 +411,8 @@ export async function processTextReviewSubmission(payload, headers, logger) {
     title,
     content.length,
     logger,
-    userId
+    userId,
+    mimeType
   )
 
   // Write a pending stub to result/{reviewId}.json immediately so the status

@@ -14,6 +14,10 @@ class S3Uploader {
     return 'text/plain'
   }
 
+  static get htmlContentType() {
+    return 'text/html'
+  }
+
   constructor() {
     this.mockMode = config.get('mockMode.s3Upload')
 
@@ -159,7 +163,8 @@ class S3Uploader {
     filename,
     contentToUpload,
     key,
-    redactionResult
+    redactionResult,
+    contentType
   ) {
     logger.warn(
       {
@@ -177,7 +182,7 @@ class S3Uploader {
       key,
       location: `s3://${this.bucket}/${key}`,
       size: contentToUpload.length,
-      contentType: S3Uploader.TEXT_CONTENT_TYPE,
+      contentType,
       piiRedacted: redactionResult.hasPII,
       piiRedactionCount: redactionResult.redactionCount
     }
@@ -187,12 +192,19 @@ class S3Uploader {
    * Create S3 put object command
    * @private
    */
-  _createPutCommand(key, contentToUpload, filename, uploadId, redactionResult) {
+  _createPutCommand(
+    key,
+    contentToUpload,
+    filename,
+    uploadId,
+    redactionResult,
+    contentType
+  ) {
     return new PutObjectCommand({
       Bucket: this.bucket,
       Key: key,
       Body: Buffer.from(contentToUpload, 'utf-8'),
-      ContentType: S3Uploader.TEXT_CONTENT_TYPE,
+      ContentType: contentType,
       Metadata: {
         originalName: filename,
         uploadId,
@@ -213,7 +225,8 @@ class S3Uploader {
     filename,
     contentToUpload,
     key,
-    redactionResult
+    redactionResult,
+    contentType
   ) {
     return {
       success: true,
@@ -223,7 +236,7 @@ class S3Uploader {
       fileId: uploadId,
       filename,
       size: contentToUpload.length,
-      contentType: 'text/plain',
+      contentType,
       piiRedacted: redactionResult.hasPII,
       piiRedactionCount: redactionResult.redactionCount
     }
@@ -311,7 +324,15 @@ class S3Uploader {
    * @returns {Promise<Object>} Upload result
    */
   async uploadTextContent(textContent, uploadId, title = 'Text Content') {
-    const filename = `${title.replaceAll(/[^a-zA-Z0-9-_]/g, '_')}.txt`
+    // Preserve .html extension for URL-sourced content; use .txt for everything else
+    const isHtml = title.toLowerCase().endsWith('.html')
+    const safeBase = title
+      .replace(/\.html$/i, '')
+      .replaceAll(/[^a-zA-Z0-9-_]/g, '_')
+    const filename = isHtml ? `${safeBase}.html` : `${safeBase}.txt`
+    const contentType = isHtml
+      ? S3Uploader.htmlContentType
+      : S3Uploader.textContentType
     const key = `${this.pathPrefix}/${uploadId}/${filename}`
 
     // Redact PII from content before uploading to S3
@@ -336,7 +357,8 @@ class S3Uploader {
         filename,
         contentToUpload,
         key,
-        redactionResult
+        redactionResult,
+        contentType
       )
     }
 
@@ -345,7 +367,8 @@ class S3Uploader {
       contentToUpload,
       filename,
       uploadId,
-      redactionResult
+      redactionResult,
+      contentType
     )
 
     try {
@@ -366,7 +389,8 @@ class S3Uploader {
         filename,
         contentToUpload,
         key,
-        redactionResult
+        redactionResult,
+        contentType
       )
     } catch (error) {
       const duration = Math.round(performance.now() - startTime)
