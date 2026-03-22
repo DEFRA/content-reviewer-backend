@@ -1,4 +1,5 @@
 import { createLogger } from '../logging/logger.js'
+import { config } from '../../../config.js'
 import { reviewRepository } from '../review-repository.js'
 import { resultEnvelopeStore } from '../result-envelope.js'
 import { ContentExtractor } from './content-extractor.js'
@@ -80,6 +81,79 @@ export class ReviewProcessor {
   }
 
   /**
+   * Check whether a message has exceeded the maximum receive count and, if so,
+   * mark the review as permanently failed and delete the message.
+   * Returns true when the message should be skipped (dead-lettered by the app).
+   * @param {Object} message - Raw SQS message
+   * @param {Object} messageHandler - SQSMessageHandler instance
+   * @param {Object} body - Parsed message body
+   * @returns {Promise<boolean>}
+   */
+  async isDeadLettered(message, messageHandler, body) {
+    const receiveCount = messageHandler.getReceiveCount(message)
+    const maxReceiveCount = config.get('sqs.maxReceiveCount')
+
+    if (receiveCount <= maxReceiveCount) {
+      return false
+    }
+
+    const reviewId = body.reviewId || body.uploadId
+
+    logger.error(
+      {
+        messageId: message.MessageId,
+        reviewId,
+        receiveCount,
+        maxReceiveCount,
+        receiptHandle: truncateReceiptHandle(message.ReceiptHandle)
+      },
+      `Message exceeded max receive count (${receiveCount}/${maxReceiveCount}) - dead-lettering: deleting and marking review as failed`
+    )
+
+    await this.markDeadLetteredReviewAsFailed(
+      reviewId,
+      receiveCount,
+      maxReceiveCount
+    )
+    await messageHandler.deleteMessage(message.ReceiptHandle)
+    return true
+  }
+
+  /**
+   * Mark a dead-lettered review as permanently failed in the repository and
+   * write the failed envelope so the UI reflects the correct state.
+   * @param {string|undefined} reviewId
+   * @param {number} receiveCount
+   * @param {number} maxReceiveCount
+   */
+  async markDeadLetteredReviewAsFailed(
+    reviewId,
+    receiveCount,
+    maxReceiveCount
+  ) {
+    if (!reviewId) return
+
+    try {
+      await reviewRepository.saveReviewError(
+        reviewId,
+        `Exceeded maximum retry attempts (${maxReceiveCount}). The review could not be completed after ${receiveCount} delivery attempts.`
+      )
+    } catch (saveErr) {
+      logger.error(
+        { reviewId, error: saveErr.message },
+        'Failed to save dead-letter error to repository'
+      )
+    }
+
+    resultEnvelopeStore.saveStatus(reviewId, 'failed').catch((err) => {
+      logger.warn(
+        { reviewId, error: err.message },
+        '[result-envelope] Failed to write dead-letter failed envelope (non-critical)'
+      )
+    })
+  }
+
+  /**
    * Process a single message
    */
   async processMessage(message, messageHandler) {
@@ -88,6 +162,12 @@ export class ReviewProcessor {
     try {
       const body = await this.validateAndParseMessage(message, messageHandler)
       if (!body) {
+        return
+      }
+
+      // Application-level dead-letter guard: stop processing if the message
+      // has been delivered more times than maxReceiveCount.
+      if (await this.isDeadLettered(message, messageHandler, body)) {
         return
       }
 

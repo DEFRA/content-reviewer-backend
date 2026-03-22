@@ -249,6 +249,12 @@ const config = convict({
       format: Number,
       default: 5,
       env: 'SQS_MAX_CONCURRENT_REQUESTS'
+    },
+    maxReceiveCount: {
+      doc: 'Maximum number of times a message may be received before being dead-lettered (application-level guard). Should match the SQS queue RedrivePolicy maxReceiveCount.',
+      format: Number,
+      default: 3,
+      env: 'SQS_MAX_RECEIVE_COUNT'
     }
   },
   bedrock: {
