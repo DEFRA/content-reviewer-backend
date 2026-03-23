@@ -1,36 +1,37 @@
-import hapi from '@hapi/hapi'
+import { describe, test, expect, beforeEach, vi } from 'vitest'
+
+const mockCreateServer = vi.fn()
+
+vi.mock('../../server.js', () => ({
+  createServer: (...args) => mockCreateServer(...args)
+}))
 
 describe('#startServer', () => {
-  let createServerSpy
-  let hapiServerSpy
   let startServerImport
-  let createServerImport
 
-  beforeAll(async () => {
-    vi.stubEnv('PORT', '3098')
-    createServerImport = await import('../../server.js')
+  beforeEach(async () => {
+    vi.clearAllMocks()
     startServerImport = await import('./start-server.js')
-
-    createServerSpy = vi.spyOn(createServerImport, 'createServer')
-    hapiServerSpy = vi.spyOn(hapi, 'server')
-  })
-
-  afterAll(() => {
-    vi.resetAllMocks()
   })
 
   describe('When server starts', () => {
     test('Should start up server as expected', async () => {
+      const mockServer = {
+        start: vi.fn().mockResolvedValue(undefined),
+        logger: { info: vi.fn(), error: vi.fn() }
+      }
+      mockCreateServer.mockResolvedValue(mockServer)
+
       await startServerImport.startServer()
 
-      expect(createServerSpy).toHaveBeenCalled()
-      expect(hapiServerSpy).toHaveBeenCalled()
+      expect(mockCreateServer).toHaveBeenCalled()
+      expect(mockServer.start).toHaveBeenCalled()
     })
   })
 
   describe('When server start fails', () => {
     test('Should log failed startup message', async () => {
-      createServerSpy.mockRejectedValue(new Error('Server failed to start'))
+      mockCreateServer.mockRejectedValue(new Error('Server failed to start'))
 
       await expect(startServerImport.startServer()).rejects.toThrow(
         'Server failed to start'
