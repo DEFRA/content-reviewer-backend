@@ -85,7 +85,8 @@ describe('ReviewProcessor - processMessage - successful processing', () => {
     vi.clearAllMocks()
     processor = new ReviewProcessor()
     messageHandler = {
-      deleteMessage: mockDeleteMessage
+      deleteMessage: mockDeleteMessage,
+      getReceiveCount: vi.fn().mockReturnValue(1)
     }
   })
 
@@ -137,7 +138,8 @@ describe('ReviewProcessor - processMessage - invalid messages', () => {
     vi.clearAllMocks()
     processor = new ReviewProcessor()
     messageHandler = {
-      deleteMessage: mockDeleteMessage
+      deleteMessage: mockDeleteMessage,
+      getReceiveCount: vi.fn().mockReturnValue(1)
     }
   })
 
@@ -165,7 +167,8 @@ describe('ReviewProcessor - processMessage - error handling', () => {
     vi.clearAllMocks()
     processor = new ReviewProcessor()
     messageHandler = {
-      deleteMessage: mockDeleteMessage
+      deleteMessage: mockDeleteMessage,
+      getReceiveCount: vi.fn().mockReturnValue(1)
     }
   })
 
