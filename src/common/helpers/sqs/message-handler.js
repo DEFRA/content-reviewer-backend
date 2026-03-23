@@ -151,8 +151,10 @@ export class SQSMessageHandler {
    */
   getReceiveCount(message) {
     const raw = message?.Attributes?.ApproximateReceiveCount
-    if (!raw) return 1
-    const count = parseInt(raw, 10)
+    if (!raw) {
+      return 1
+    }
+    const count = Number.parseInt(raw, 10)
     return Number.isFinite(count) && count > 0 ? count : 1
   }
 

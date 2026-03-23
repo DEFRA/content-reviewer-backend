@@ -131,7 +131,9 @@ export class ReviewProcessor {
     receiveCount,
     maxReceiveCount
   ) {
-    if (!reviewId) return
+    if (!reviewId) {
+      return
+    }
 
     try {
       await reviewRepository.saveReviewError(
