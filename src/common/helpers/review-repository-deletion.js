@@ -146,9 +146,15 @@ export async function deleteOldReviews(
     // Get all reviews (fetch up to 1000 to check all old ones)
     const { reviews } = await getRecentReviewsFn({ limit: 1000 })
 
-    // Calculate cutoff date (reviews older than this will be deleted)
+    // Calculate cutoff date (reviews older than this will be deleted).
+    // Truncate to midnight (UTC) so that a review created exactly N days ago
+    // (at any time of day) is treated as AT the boundary and therefore kept.
+    // Without truncation, sub-millisecond drift between new Date() calls in
+    // the implementation and the test helper causes a boundary review's
+    // timestamp to fall fractionally before the cutoff, triggering deletion.
     const cutoffDate = new Date()
-    cutoffDate.setDate(cutoffDate.getDate() - maxAgeInDays)
+    cutoffDate.setUTCDate(cutoffDate.getUTCDate() - maxAgeInDays)
+    cutoffDate.setUTCHours(0, 0, 0, 0)
     const cutoffTimestamp = cutoffDate.getTime()
 
     logger.info(

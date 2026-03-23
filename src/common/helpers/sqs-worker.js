@@ -78,6 +78,7 @@ class SQSWorker {
       maxMessages: this.maxMessages,
       waitTimeSeconds: this.waitTimeSeconds,
       visibilityTimeout: config.get('sqs.visibilityTimeout'),
+      maxReceiveCount: config.get('sqs.maxReceiveCount'),
       maxConcurrentRequests: this.maxConcurrentRequests,
       currentConcurrentRequests: this.currentConcurrentRequests,
       queuedMessages: this.processingQueue.length

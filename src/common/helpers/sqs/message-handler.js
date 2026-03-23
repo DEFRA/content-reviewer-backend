@@ -143,6 +143,22 @@ export class SQSMessageHandler {
   }
 
   /**
+   * Extract the ApproximateReceiveCount from an SQS message's Attributes map.
+   * SQS sets this automatically when AttributeNames: ['All'] is requested.
+   * Returns 1 as a safe default if the attribute is absent.
+   * @param {Object} message - Raw SQS message object
+   * @returns {number}
+   */
+  getReceiveCount(message) {
+    const raw = message?.Attributes?.ApproximateReceiveCount
+    if (!raw) {
+      return 1
+    }
+    const count = Number.parseInt(raw, 10)
+    return Number.isFinite(count) && count > 0 ? count : 1
+  }
+
+  /**
    * Delete message from queue
    */
   async deleteMessage(receiptHandle) {
