@@ -161,52 +161,172 @@ class ResultEnvelopeStore {
   }
 
   /**
+   * Snap a character offset to the nearest word boundary in canonicalText.
+   *
+   * The AI model occasionally returns start/end offsets that land in the
+   * middle of a word (e.g. "Currently" becomes "Cur" + "rently").  This
+   * helper expands a [start, end) pair outward so that both boundaries sit
+   * at a word-character transition, preventing partial-word highlights.
+   *
+   * Rules:
+   *  • start is moved LEFT  until it hits a non-word character (or pos 0).
+   *  • end   is moved RIGHT until it hits a non-word character (or end of string).
+   *  • Whitespace-only characters (\s) at the edges of the expanded span are
+   *    trimmed back so we never include a leading/trailing space in the highlight.
+   *
+   * @param {string} text
+   * @param {number} start  - raw start offset (inclusive)
+   * @param {number} end    - raw end offset (exclusive)
+   * @returns {{ start: number, end: number }}
+   */
+  _snapToWordBoundary(text, start, end) {
+    const wordChar = /\w/
+
+    // Expand start left while the character to the left of start is a word char
+    let s = start
+    while (s > 0 && wordChar.test(text[s - 1])) {
+      s--
+    }
+
+    // Expand end right while the character at end is a word char
+    let e = end
+    while (e < text.length && wordChar.test(text[e])) {
+      e++
+    }
+
+    // Trim trailing whitespace from the expanded end
+    while (e > s && /\s/.test(text[e - 1])) {
+      e--
+    }
+
+    // Trim leading whitespace from the expanded start
+    while (s < e && /\s/.test(text[s])) {
+      s++
+    }
+
+    return { start: s, end: e }
+  }
+
+  /**
+   * Sort and deduplicate raw issues + their paired improvements together by
+   * text position, then re-index sequentially so that annotatedSections,
+   * issues[], and improvements[] all share the same 0-based index.
+   *
+   * Steps:
+   *  1. Pair each raw issue with its improvement (by original AI array index).
+   *  2. Snap offsets to word boundaries and validate against canonicalText.
+   *  3. Sort pairs by absStart (text order).
+   *  4. Remove overlapping spans (keep the first one encountered).
+   *  5. Re-assign sequential chunkIdx 0,1,2… to issues.
+   *  6. Discard orphan improvements that had no valid paired issue.
+   *
+   * Returns { sortedIssues, sortedImprovements } — same length, same order.
+   *
+   * @param {string} canonicalText
+   * @param {Array}  issues        - spec issue objects from _mapIssue
+   * @param {Array}  improvements  - spec improvement objects from _mapImprovement
+   * @returns {{ sortedIssues: Array, sortedImprovements: Array }}
+   */
+  _sortAndAlignPairs(canonicalText, issues, improvements) {
+    // Pair each issue with its improvement by original index
+    const pairs = issues
+      .map((issue, idx) => {
+        const snapped = this._snapToWordBoundary(
+          canonicalText,
+          issue.absStart ?? 0,
+          issue.absEnd ?? 0
+        )
+        return {
+          issue: { ...issue, absStart: snapped.start, absEnd: snapped.end },
+          improvement: improvements[idx] || null,
+          originalIdx: idx
+        }
+      })
+      // Discard pairs whose issue span is invalid or out-of-range
+      .filter(({ issue }) => {
+        const { absStart, absEnd } = issue
+        return (
+          typeof absStart === 'number' &&
+          typeof absEnd === 'number' &&
+          absStart >= 0 &&
+          absEnd > absStart &&
+          absEnd <= canonicalText.length
+        )
+      })
+      // Sort by text position
+      .sort((a, b) => a.issue.absStart - b.issue.absStart)
+
+    // Remove overlapping spans
+    const deduped = []
+    let cursor = 0
+    for (const pair of pairs) {
+      if (pair.issue.absStart < cursor) {
+        logger.warn(
+          {
+            absStart: pair.issue.absStart,
+            absEnd: pair.issue.absEnd,
+            cursor,
+            originalIdx: pair.originalIdx
+          },
+          '[result-envelope] Dropping overlapping issue — no matching improvement rendered'
+        )
+        continue
+      }
+      deduped.push(pair)
+      cursor = pair.issue.absEnd
+    }
+
+    // Re-assign sequential chunkIdx and re-link improvements to their issue
+    const sortedIssues = deduped.map((pair, seqIdx) => ({
+      ...pair.issue,
+      chunkIdx: seqIdx
+    }))
+
+    const sortedImprovements = deduped.map((pair, seqIdx) => {
+      if (!pair.improvement) {
+        // Issue exists but AI gave no paired improvement — produce a stub
+        return {
+          issueId: sortedIssues[seqIdx].issueId,
+          severity: 'medium',
+          category: sortedIssues[seqIdx].category || '',
+          issue: 'Issue identified',
+          why: '',
+          current: sortedIssues[seqIdx].evidence || '',
+          suggested: ''
+        }
+      }
+      // Re-link improvement's issueId to the (potentially updated) issue
+      return { ...pair.improvement, issueId: sortedIssues[seqIdx].issueId }
+    })
+
+    return { sortedIssues, sortedImprovements }
+  }
+
+  /**
    * Split the canonical text into a sequence of plain and highlighted spans
-   * based on the issue offsets.  The result is ordered by position and
-   * non-overlapping (overlapping issues are skipped with a warning).
+   * based on the issue offsets.  Issues MUST already be sorted by absStart
+   * and free of overlaps (i.e. produced by _sortAndAlignPairs).
    *
    * Each span:
    *   { text: string, issueIdx: number|null, category: string|null }
    *
-   * issueIdx is the 0-based index into the issues[] array for highlighted
-   * spans, null for plain text runs between issues.
+   * issueIdx is the sequential 0-based index into both issues[] AND
+   * improvements[] — guaranteed 1:1 because _sortAndAlignPairs produced them.
    *
    * @param {string} canonicalText
-   * @param {Array}  issues  - spec issue objects (already built by _mapIssue)
+   * @param {Array}  sortedIssues  - already-sorted, deduped spec issue objects
    * @returns {Array}
    */
-  _buildAnnotatedSections(canonicalText, issues) {
+  _buildAnnotatedSections(canonicalText, sortedIssues) {
     if (!canonicalText) {
       return []
     }
 
-    // Sort issues by absStart; skip any with invalid or out-of-range offsets
-    const sorted = issues
-      .map((issue, idx) => ({ ...issue, _idx: idx }))
-      .filter(
-        (issue) =>
-          typeof issue.absStart === 'number' &&
-          typeof issue.absEnd === 'number' &&
-          issue.absStart >= 0 &&
-          issue.absEnd > issue.absStart &&
-          issue.absEnd <= canonicalText.length
-      )
-      .sort((a, b) => a.absStart - b.absStart)
-
     const sections = []
     let cursor = 0
 
-    for (const issue of sorted) {
-      const { absStart, absEnd, _idx, category } = issue
-
-      // Skip if this issue overlaps the previous one
-      if (absStart < cursor) {
-        logger.warn(
-          { absStart, absEnd, cursor },
-          '[result-envelope] Skipping overlapping issue span'
-        )
-        continue
-      }
+    for (let seqIdx = 0; seqIdx < sortedIssues.length; seqIdx++) {
+      const { absStart, absEnd, category } = sortedIssues[seqIdx]
 
       // Plain text before this issue
       if (absStart > cursor) {
@@ -217,10 +337,10 @@ class ResultEnvelopeStore {
         })
       }
 
-      // Highlighted span
+      // Highlighted span — issueIdx is the sequential index into issues[] and improvements[]
       sections.push({
         text: canonicalText.slice(absStart, absEnd),
-        issueIdx: _idx,
+        issueIdx: seqIdx,
         category
       })
 
@@ -353,12 +473,8 @@ class ResultEnvelopeStore {
 
     const rawIssues = reviewedContent.issues || []
 
-    // Build spec issues, always deriving evidence from canonicalText.
-    // Each issue is paired with its corresponding improvement by array index.
-    // If there are more issues than improvements (or vice versa) we handle
-    // the mismatch gracefully: extra issues get a stub improvement and extra
-    // improvements without a paired issue are appended as issue-less entries.
-    const issues = rawIssues.map((rawIssue, idx) =>
+    // Step 1: Build preliminary spec issue + improvement objects (original AI order)
+    const prelimIssues = rawIssues.map((rawIssue, idx) =>
       this._mapIssue(
         rawIssue,
         parsedImprovements[idx] || null,
@@ -366,20 +482,25 @@ class ResultEnvelopeStore {
         canonicalText
       )
     )
+    const prelimImprovements = parsedImprovements.map(
+      (parsedImprovement, idx) => {
+        const pairedIssue = prelimIssues[idx]
+        const issueId = pairedIssue?.issueId || `issue-orphan-${idx}`
+        return this._mapImprovement(parsedImprovement, issueId)
+      }
+    )
 
-    // Build spec improvements paired to their issue by issueId.
-    // Covers all parsedImprovements — those beyond rawIssues.length are kept
-    // so no model-suggested improvement is silently dropped.
-    const improvements = parsedImprovements.map((parsedImprovement, idx) => {
-      const pairedIssue = issues[idx]
-      const issueId = pairedIssue?.issueId || `issue-orphan-${idx}`
-      return this._mapImprovement(parsedImprovement, issueId)
-    })
+    // Step 2: Sort both arrays together by text position, deduplicate overlaps,
+    // and re-index sequentially — this guarantees strict 1:1 alignment between
+    // the highlighted spans in annotatedSections and the improvements list.
+    const { sortedIssues, sortedImprovements } = canonicalText
+      ? this._sortAndAlignPairs(canonicalText, prelimIssues, prelimImprovements)
+      : { sortedIssues: prelimIssues, sortedImprovements: prelimImprovements }
 
-    // Build annotated sections — canonical text split into plain/highlighted spans
+    // Step 3: Build annotated sections using the sorted, re-indexed issues
     const annotatedSections = this._buildAnnotatedSections(
       canonicalText,
-      issues
+      sortedIssues
     )
 
     const mappedScores = this._mapScores(scores)
@@ -387,12 +508,14 @@ class ResultEnvelopeStore {
     logger.info(
       {
         reviewId,
-        issueCount: issues.length,
-        improvementCount: improvements.length,
+        rawIssueCount: rawIssues.length,
+        rawImprovementCount: parsedImprovements.length,
+        alignedIssueCount: sortedIssues.length,
+        alignedImprovementCount: sortedImprovements.length,
         sectionCount: annotatedSections.length,
         scoreKeys: Object.keys(scores)
       },
-      '[result-envelope] Envelope built'
+      '[result-envelope] Envelope built — issues and improvements are 1:1 aligned'
     )
 
     return {
@@ -400,11 +523,11 @@ class ResultEnvelopeStore {
       status,
       processedAt: new Date().toISOString(),
       tokenUsed: bedrockUsage?.totalTokens ?? 0,
-      issueCount: issues.length,
+      issueCount: sortedIssues.length,
       canonicalText: canonicalText || '',
       annotatedSections,
-      issues,
-      improvements,
+      issues: sortedIssues,
+      improvements: sortedImprovements,
       scores: mappedScores
     }
   }
