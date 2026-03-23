@@ -13,28 +13,101 @@ import { documentSectionStripper } from './document-section-stripper.js'
 const logger = createLogger()
 
 /**
+ * Block-level HTML tag names whose closing tag marks a paragraph boundary.
+ * Inline elements (span, a, strong, em, …) are NOT in this set — their
+ * closing tags must not insert whitespace or words like "farm</span>ers"
+ * become "farm ers".
+ */
+const BLOCK_TAG_NAMES = new Set([
+  'address',
+  'article',
+  'aside',
+  'blockquote',
+  'body',
+  'br',
+  'caption',
+  'colgroup',
+  'dd',
+  'details',
+  'dialog',
+  'div',
+  'dl',
+  'dt',
+  'fieldset',
+  'figcaption',
+  'figure',
+  'footer',
+  'form',
+  'h1',
+  'h2',
+  'h3',
+  'h4',
+  'h5',
+  'h6',
+  'head',
+  'header',
+  'hgroup',
+  'hr',
+  'html',
+  'legend',
+  'li',
+  'main',
+  'menu',
+  'nav',
+  'ol',
+  'p',
+  'pre',
+  'section',
+  'summary',
+  'table',
+  'tbody',
+  'td',
+  'tfoot',
+  'th',
+  'thead',
+  'title',
+  'tr',
+  'ul'
+])
+
+/**
  * Strip HTML tags from a string using a linear-time state machine.
  * Each character is visited exactly once — no backtracking is possible,
  * making this safe against ReDoS (SonarQube S5852).
- * Characters inside a tag are replaced with a single space so that words
- * that were separated only by a tag boundary do not get merged.
+ *
+ * Block-level tags (p, div, h1–h6, li, …) insert a newline so that
+ * paragraph structure is preserved in the output.  Inline tags (span,
+ * a, strong, em, …) are removed without inserting any separator so that
+ * words spanning tag boundaries (e.g. "farm<span>ers</span>") are
+ * correctly joined rather than split.
+ *
  * @param {string} input
  * @returns {string}
  */
 function stripHtmlTags(input) {
   const out = []
   let inTag = false
+  let tagBuf = '' // accumulates tag name characters
 
   for (const ch of input) {
     if (!inTag && ch !== '<') {
       out.push(ch)
     } else if (ch === '<') {
       inTag = true
+      tagBuf = ''
     } else if (ch === '>') {
+      // Determine whether the tag we just closed is a block element.
+      // tagBuf may start with '/' (closing tag) or end with '/' (void closing).
+      // Strip those and any attributes to get a clean tag name.
+      const rawName = tagBuf.split(/[\s/]/u)[0].replace(/^\//, '').toLowerCase()
+      if (BLOCK_TAG_NAMES.has(rawName)) {
+        out.push('\n')
+      }
       inTag = false
-      out.push(' ') // separator where the tag was
+      tagBuf = ''
     } else {
-      // character inside a tag — discard
+      // Character inside a tag — accumulate for block-element detection
+      tagBuf += ch
     }
   }
 
@@ -249,8 +322,10 @@ class CanonicalDocumentStore {
     if (sourceType === SOURCE_TYPES.URL) {
       // Strip HTML tags using a linear-time state machine instead of a regex
       // so that malformed or adversarial input cannot trigger super-linear
-      // backtracking (SonarQube S5852).  Every character is visited exactly
-      // once: while inside a tag we discard; outside a tag we keep.
+      // backtracking (SonarQube S5852).  Block-level tags (p, div, h1–h6 …)
+      // emit a newline so paragraph boundaries are preserved; inline tags
+      // (span, a, strong …) are removed without any separator so words that
+      // span tag boundaries are not split.
       workingText = stripHtmlTags(workingText)
         .replaceAll('&nbsp;', ' ')
         .replaceAll('&amp;', '&')
@@ -258,8 +333,17 @@ class CanonicalDocumentStore {
         .replaceAll('&gt;', '>')
         .replaceAll('&quot;', '"')
         .replaceAll('&#39;', "'")
-        .split(/\s+/u)
-        .join(' ')
+
+      // Normalise whitespace while preserving paragraph structure:
+      //  1. Collapse runs of horizontal whitespace (spaces/tabs) on each line
+      //     to a single space — but do NOT collapse newlines.
+      //  2. Collapse 3+ consecutive newlines to 2 (paragraph break) so the
+      //     output never has more blank lines than a single empty paragraph.
+      workingText = workingText
+        .split('\n')
+        .map((line) => line.replaceAll(/ {2,}/gu, ' ').trim())
+        .join('\n')
+        .replaceAll(/\n{3,}/gu, '\n\n')
         .trim()
     }
 
