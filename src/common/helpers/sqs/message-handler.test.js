@@ -398,3 +398,40 @@ describe('SQSMessageHandler - deleteMessage', () => {
     )
   })
 })
+
+describe('SQSMessageHandler - getReceiveCount', () => {
+  let handler
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    handler = new SQSMessageHandler()
+  })
+
+  test('returns 1 when message has no Attributes', () => {
+    expect(handler.getReceiveCount({})).toBe(1)
+  })
+
+  test('returns 1 when ApproximateReceiveCount attribute is missing', () => {
+    expect(handler.getReceiveCount({ Attributes: {} })).toBe(1)
+  })
+
+  test('returns 1 when message is null or undefined', () => {
+    expect(handler.getReceiveCount(null)).toBe(1)
+    expect(handler.getReceiveCount(undefined)).toBe(1)
+  })
+
+  test('returns the parsed integer value when attribute is a valid numeric string', () => {
+    const message = { Attributes: { ApproximateReceiveCount: '3' } }
+    expect(handler.getReceiveCount(message)).toBe(3)
+  })
+
+  test('returns 1 when ApproximateReceiveCount is zero', () => {
+    const message = { Attributes: { ApproximateReceiveCount: '0' } }
+    expect(handler.getReceiveCount(message)).toBe(1)
+  })
+
+  test('returns 1 when ApproximateReceiveCount is NaN', () => {
+    const message = { Attributes: { ApproximateReceiveCount: 'not-a-number' } }
+    expect(handler.getReceiveCount(message)).toBe(1)
+  })
+})

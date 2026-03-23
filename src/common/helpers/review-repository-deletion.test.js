@@ -280,3 +280,47 @@ describe('deleteOldReviews - error handling', () => {
     ).rejects.toThrow('DB connection failed')
   })
 })
+
+describe('deleteSingleOldReview - reviewId fallback', () => {
+  it('uses review.reviewId when review.id is absent', async () => {
+    const s3Client = makeMockS3()
+    s3Client.send.mockResolvedValueOnce({})
+
+    const result = await deleteSingleOldReview(s3Client, BUCKET, PREFIX, {
+      reviewId: 'review-fallback',
+      createdAt: new Date().toISOString()
+    })
+
+    expect(result).toBe(true)
+    const sentCommand = s3Client.send.mock.calls[0][0]
+    expect(sentCommand).toMatchObject({
+      Key: `${PREFIX}review-fallback.json`
+    })
+  })
+})
+
+describe('deleteOldReviews - partial failure', () => {
+  it('counts only successfully deleted reviews when some fail', async () => {
+    const reviews = [
+      { id: 'old-success', createdAt: daysAgo(DAYS_OUTSIDE_WINDOW) },
+      { id: 'old-fail', createdAt: daysAgo(DAYS_OUTSIDE_WINDOW) }
+    ]
+    const getReviews = makeGetReviews(reviews)
+    const s3Client = {
+      send: vi
+        .fn()
+        .mockResolvedValueOnce({}) // old-success: delete succeeds
+        .mockRejectedValueOnce(new Error('S3 error')) // old-fail: delete fails
+    }
+
+    const deleted = await deleteOldReviews(
+      s3Client,
+      BUCKET,
+      PREFIX,
+      getReviews,
+      RETENTION_DAYS
+    )
+
+    expect(deleted).toBe(1)
+  })
+})

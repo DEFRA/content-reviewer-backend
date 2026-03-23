@@ -461,3 +461,71 @@ describe('_composeDocument', () => {
     ).toEqual(map)
   })
 })
+
+// ── _redactAndNormalise – HTML tag stripping for URL sources ──────────────────
+
+describe('_redactAndNormalise URL source — stripHtmlTags branches', () => {
+  it('strips HTML tags and inserts a space at tag boundaries', () => {
+    // Input contains an opening and closing tag — exercises inTag=true,
+    // inTag=false, and the space-insertion-at-> branch.
+    MOCK_SECTION_STRIP.mockReturnValueOnce({
+      strippedText: 'Hello World',
+      stats: { sectionsRemoved: [] }
+    })
+    const result = canonicalDocumentStore._redactAndNormalise({
+      text: '<p>Hello</p> World',
+      sourceType: SOURCE_TYPES.URL
+    })
+    // stripHtmlTags runs before the mock; verify PII redactor received
+    // the stripped+collapsed text (no angle brackets)
+    const callArg = MOCK_PII_REDACT.mock.calls[0][0]
+    expect(callArg).not.toContain('<')
+    expect(callArg).not.toContain('>')
+    expect(result.canonicalText).toBeDefined()
+  })
+
+  it('handles characters inside a tag (the discard branch)', () => {
+    // Long attribute value exercises the "char inside tag — discard" else branch
+    MOCK_SECTION_STRIP.mockReturnValueOnce({
+      strippedText: 'Link text',
+      stats: { sectionsRemoved: [] }
+    })
+    canonicalDocumentStore._redactAndNormalise({
+      text: '<a href="https://www.gov.uk/some-very-long-path">Link text</a>',
+      sourceType: SOURCE_TYPES.URL
+    })
+    const callArg = MOCK_PII_REDACT.mock.calls[0][0]
+    expect(callArg).not.toContain('href')
+    expect(callArg).not.toContain('<')
+  })
+
+  it('decodes HTML entities after tag stripping', () => {
+    MOCK_SECTION_STRIP.mockReturnValueOnce({
+      strippedText: 'cats & dogs',
+      stats: { sectionsRemoved: [] }
+    })
+    canonicalDocumentStore._redactAndNormalise({
+      text: '<p>cats &amp; dogs</p>',
+      sourceType: SOURCE_TYPES.URL
+    })
+    const callArg = MOCK_PII_REDACT.mock.calls[0][0]
+    // &amp; should have been decoded to & before reaching the PII redactor
+    expect(callArg).toContain('&')
+    expect(callArg).not.toContain('&amp;')
+  })
+
+  it('collapses multiple whitespace tokens to a single space', () => {
+    MOCK_SECTION_STRIP.mockReturnValueOnce({
+      strippedText: 'word1 word2',
+      stats: { sectionsRemoved: [] }
+    })
+    canonicalDocumentStore._redactAndNormalise({
+      text: '<div>word1   \n\n   word2</div>',
+      sourceType: SOURCE_TYPES.URL
+    })
+    const callArg = MOCK_PII_REDACT.mock.calls[0][0]
+    // After tag stripping + whitespace collapse the two words should be
+    // separated by a single space, not a newline or multiple spaces.
+    expect(callArg).not.toMatch(/\s{2,}/)
+  })
+})
