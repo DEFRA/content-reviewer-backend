@@ -1,10 +1,4 @@
-import {
-  S3Client,
-  PutObjectCommand,
-  GetObjectCommand
-} from '@aws-sdk/client-s3'
 import { randomUUID } from 'node:crypto'
-import { config } from '../../config.js'
 import { createLogger } from './logging/logger.js'
 
 const logger = createLogger()
@@ -39,8 +33,9 @@ function deriveCategory(rawIssue, improvement) {
 }
 
 /**
- * Builds and persists the spec-compliant result envelope to S3 at
- * result/{reviewId}.json
+ * Builds the spec-compliant result envelope.
+ * The envelope is stored as the `envelope` field inside reviews/{reviewId}.json
+ * by the review repository — no separate S3 file is written.
  *
  * Schema (per API Technical Requirements):
  * {
@@ -86,29 +81,6 @@ function deriveCategory(rawIssue, improvement) {
  * }
  */
 class ResultEnvelopeStore {
-  constructor() {
-    const s3Config = { region: config.get('aws.region') }
-
-    const awsEndpoint = config.get('aws.endpoint')
-    if (awsEndpoint) {
-      s3Config.endpoint = awsEndpoint
-      s3Config.forcePathStyle = true
-    }
-
-    this.s3Client = new S3Client(s3Config)
-    this.bucket = config.get('s3.bucket')
-    this.prefix = 'result'
-  }
-
-  /**
-   * Return the S3 key for a result envelope.
-   * @param {string} reviewId
-   * @returns {string} e.g. "result/review_<uuid>.json"
-   */
-  getResultKey(reviewId) {
-    return `${this.prefix}/${reviewId}.json`
-  }
-
   // ─── Private helpers ───────────────────────────────────────────────────────
 
   /**
@@ -403,6 +375,7 @@ class ResultEnvelopeStore {
     const clarity = pick(['clarity & structure', 'clarity', 'structure'])
     const accessibility = pick(['accessibility', 'accessible'])
     const govukStyle = pick([
+      'gov.uk style compliance',
       'govuk style compliance',
       'govuk style',
       'style',
@@ -566,119 +539,6 @@ class ResultEnvelopeStore {
         tone: 0
       }
     }
-  }
-
-  /**
-   * Persist an envelope to S3 at result/{reviewId}.json.
-   *
-   * @param {string} reviewId
-   * @param {Object} envelope
-   * @returns {Promise<void>}
-   */
-  async save(reviewId, envelope) {
-    const key = this.getResultKey(reviewId)
-
-    logger.info(
-      {
-        reviewId,
-        s3Key: key,
-        status: envelope.status,
-        issueCount: envelope.issueCount
-      },
-      `[result-envelope] Saving to S3 at ${key}`
-    )
-
-    const command = new PutObjectCommand({
-      Bucket: this.bucket,
-      Key: key,
-      Body: JSON.stringify(envelope, null, 2),
-      ContentType: 'application/json',
-      Metadata: {
-        documentId: reviewId,
-        status: envelope.status,
-        issueCount: String(envelope.issueCount)
-      }
-    })
-
-    try {
-      await this.s3Client.send(command)
-      logger.info(
-        { reviewId, s3Key: key },
-        '[result-envelope] Saved successfully'
-      )
-    } catch (error) {
-      logger.error(
-        { reviewId, s3Key: key, error: error.message },
-        '[result-envelope] Failed to save'
-      )
-      throw error
-    }
-  }
-
-  /**
-   * Read and return the result envelope from S3.
-   * Returns null if the file does not exist.
-   *
-   * @param {string} reviewId
-   * @returns {Promise<Object|null>}
-   */
-  async get(reviewId) {
-    const key = this.getResultKey(reviewId)
-
-    try {
-      const response = await this.s3Client.send(
-        new GetObjectCommand({ Bucket: this.bucket, Key: key })
-      )
-
-      const chunks = []
-      for await (const chunk of response.Body) {
-        chunks.push(chunk)
-      }
-      return JSON.parse(Buffer.concat(chunks).toString('utf-8'))
-    } catch (error) {
-      if (error.name === 'NoSuchKey') {
-        return null
-      }
-      logger.error(
-        { reviewId, s3Key: key, error: error.message },
-        '[result-envelope] Failed to read'
-      )
-      throw error
-    }
-  }
-
-  /**
-   * Build the completed envelope and persist it.
-   *
-   * @param {string} reviewId
-   * @param {Object} parsedReview
-   * @param {Object} bedrockUsage
-   * @param {string} canonicalText  - full normalised text from the canonical document
-   * @returns {Promise<Object>} The saved envelope
-   */
-  async saveCompleted(reviewId, parsedReview, bedrockUsage, canonicalText) {
-    const envelope = this.buildEnvelope(
-      reviewId,
-      parsedReview,
-      bedrockUsage,
-      canonicalText,
-      'completed'
-    )
-    await this.save(reviewId, envelope)
-    return envelope
-  }
-
-  /**
-   * Persist a stub envelope for a given status.
-   *
-   * @param {string} reviewId
-   * @param {string} status  - "pending" | "processing" | "failed"
-   * @returns {Promise<Object>}
-   */
-  async saveStatus(reviewId, status) {
-    const envelope = this.buildStubEnvelope(reviewId, status)
-    await this.save(reviewId, envelope)
-    return envelope
   }
 }
 

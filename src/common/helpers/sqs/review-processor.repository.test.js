@@ -51,8 +51,8 @@ vi.mock('../review-repository.js', () => ({
 
 vi.mock('../result-envelope.js', () => ({
   resultEnvelopeStore: {
-    saveStatus: vi.fn().mockResolvedValue(),
-    saveCompleted: vi.fn().mockResolvedValue()
+    buildEnvelope: vi.fn().mockReturnValue({ status: 'completed' }),
+    buildStubEnvelope: vi.fn().mockReturnValue({ status: 'pending' })
   }
 }))
 
@@ -227,7 +227,8 @@ describe('ReviewProcessor - saveReviewToRepository', () => {
           stopReason: 'end_turn',
           completedAt: expect.any(Date)
         }),
-        { inputTokens: 100, outputTokens: 50 }
+        { inputTokens: 100, outputTokens: 50 },
+        expect.objectContaining({ status: 'completed' })
       )
       expect(mockLoggerInfo).toHaveBeenCalledWith(
         expect.objectContaining({

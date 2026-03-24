@@ -32,8 +32,8 @@ vi.mock('../logging/logger.js', () => ({
 
 vi.mock('../result-envelope.js', () => ({
   resultEnvelopeStore: {
-    saveStatus: vi.fn().mockResolvedValue(),
-    saveCompleted: vi.fn().mockResolvedValue()
+    buildEnvelope: vi.fn().mockReturnValue({ status: 'completed' }),
+    buildStubEnvelope: vi.fn().mockReturnValue({ status: 'pending' })
   }
 }))
 

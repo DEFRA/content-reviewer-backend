@@ -317,14 +317,17 @@ class ReviewRepositoryS3 {
    * @param {string} reviewId - Review ID
    * @param {Object} result - Review result from Bedrock
    * @param {Object} usage - Bedrock usage statistics
+   * @param {Object|null} envelope - Pre-built result envelope (annotatedSections, scores, etc.)
    * @returns {Promise<void>}
    */
-  async saveReviewResult(reviewId, result, usage) {
-    // Update review status to 'completed' and add result + usage
-    // This saves the COMPLETE review object with fileName, createdAt, etc.
+  async saveReviewResult(reviewId, result, usage, envelope = null) {
+    // Update review status to 'completed' and add result, usage, and envelope.
+    // The envelope is the spec-compliant frontend data; storing it here removes
+    // the need for a separate result S3 file.
     await this.updateReviewStatus(reviewId, 'completed', {
       result,
-      bedrockUsage: usage
+      bedrockUsage: usage,
+      ...(envelope ? { envelope } : {})
     })
   }
 

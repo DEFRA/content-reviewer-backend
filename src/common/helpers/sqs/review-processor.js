@@ -3,6 +3,7 @@ import { config } from '../../../config.js'
 import { reviewRepository } from '../review-repository.js'
 import { resultEnvelopeStore } from '../result-envelope.js'
 import { ContentExtractor } from './content-extractor.js'
+// resultEnvelopeStore is used only for building envelopes (no S3 writes)
 import { BedrockReviewProcessor } from './bedrock-processor.js'
 import { ErrorHandler } from './error-handler.js'
 import { truncateReceiptHandle } from './message-handler.js'
@@ -146,13 +147,6 @@ export class ReviewProcessor {
         'Failed to save dead-letter error to repository'
       )
     }
-
-    resultEnvelopeStore.saveStatus(reviewId, 'failed').catch((err) => {
-      logger.warn(
-        { reviewId, error: err.message },
-        '[result-envelope] Failed to write dead-letter failed envelope (non-critical)'
-      )
-    })
   }
 
   /**
@@ -296,13 +290,7 @@ export class ReviewProcessor {
         `Review status updated to processing in ${statusUpdateDuration}ms`
       )
 
-      // Write processing stub to result/{reviewId}.json so the UI can show "Processing"
-      resultEnvelopeStore.saveStatus(reviewId, 'processing').catch((err) => {
-        logger.warn(
-          { reviewId, error: err.message },
-          '[result-envelope] Failed to write processing stub (non-critical)'
-        )
-      })
+      // Status is tracked in reviews/{reviewId}.json via updateReviewStatus above
     } catch (statusError) {
       logger.error(
         {
@@ -329,6 +317,16 @@ export class ReviewProcessor {
     bedrockResult,
     canonicalText = ''
   ) {
+    // Build the spec-compliant envelope (annotatedSections, scores, improvements, etc.)
+    // and embed it directly into reviews/{reviewId}.json — no separate S3 file needed.
+    const envelope = resultEnvelopeStore.buildEnvelope(
+      reviewId,
+      parseResult.parsedReview,
+      bedrockResult.bedrockResponse.usage,
+      canonicalText,
+      'completed'
+    )
+
     const saveStart = performance.now()
     await reviewRepository.saveReviewResult(
       reviewId,
@@ -339,7 +337,8 @@ export class ReviewProcessor {
         stopReason: bedrockResult.bedrockResponse.stopReason,
         completedAt: new Date()
       },
-      bedrockResult.bedrockResponse.usage
+      bedrockResult.bedrockResponse.usage,
+      envelope
     )
     const saveDuration = Math.round(performance.now() - saveStart)
 
@@ -348,34 +347,17 @@ export class ReviewProcessor {
       `Review result saved to S3 in ${saveDuration}ms`
     )
 
-    // Save the position-based review data as a separate S3 object: positions/{reviewId}.json
+    // Save raw position data (character offsets from Bedrock) as a separate debug
+    // artefact at reviews/positions/{reviewId}.json.  Non-critical — never blocks
+    // the main result.
     const reviewedContent = parseResult.parsedReview?.reviewedContent
     if (reviewedContent) {
-      try {
-        await reviewRepository.savePositions(reviewId, reviewedContent)
-      } catch (positionsError) {
+      reviewRepository.savePositions(reviewId, reviewedContent).catch((err) => {
         logger.error(
-          { reviewId, error: positionsError.message },
+          { reviewId, error: err.message },
           'Failed to save positions file - review result still saved successfully'
         )
-      }
-    }
-
-    // Save the spec-compliant result envelope: result/{reviewId}.json
-    // This merges canonicalText + position offsets + improvements + scores
-    // into the single file the frontend results page reads.
-    try {
-      await resultEnvelopeStore.saveCompleted(
-        reviewId,
-        parseResult.parsedReview,
-        bedrockResult.bedrockResponse.usage,
-        canonicalText
-      )
-    } catch (envelopeError) {
-      logger.error(
-        { reviewId, error: envelopeError.message },
-        '[result-envelope] Failed to save completed envelope (non-critical)'
-      )
+      })
     }
   }
 
@@ -441,13 +423,5 @@ export class ReviewProcessor {
         reviewRepository
       )
     }
-
-    // Write failed envelope to result/{reviewId}.json
-    resultEnvelopeStore.saveStatus(reviewId, 'failed').catch((err) => {
-      logger.warn(
-        { reviewId, error: err.message },
-        '[result-envelope] Failed to write failed envelope (non-critical)'
-      )
-    })
   }
 }
