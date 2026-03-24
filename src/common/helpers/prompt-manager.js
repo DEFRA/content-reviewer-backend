@@ -99,11 +99,12 @@ Content Completeness: X/5 - Brief generic quality note
 [/SCORES]
 
 [ISSUE_POSITIONS]
-{"issues":[{"start":12,"end":19,"type":"plain-english","text":"service"},{"start":45,"end":98,"type":"clarity","text":"Use this online service to apply, pay and book an appointment at a passport office."},{"start":210,"end":235,"type":"govuk-style","text":"Adviceline"}]}
+{"issues":[{"ref":1,"start":12,"end":19,"type":"plain-english","text":"service"},{"ref":2,"start":45,"end":98,"type":"clarity","text":"Use this online service to apply, pay and book an appointment at a passport office."},{"ref":3,"start":210,"end":235,"type":"govuk-style","text":"Adviceline"}]}
 [/ISSUE_POSITIONS]
 
 [IMPROVEMENTS]
 [PRIORITY: critical]
+REF: 1
 CATEGORY: Plain English
 ISSUE: Use of complex jargon
 WHY: Creates barriers for users who need clear, simple language
@@ -112,6 +113,7 @@ SUGGESTED: work with interested groups
 [/PRIORITY]
 
 [PRIORITY: high]
+REF: 2
 CATEGORY: Clarity & Structure
 ISSUE: Passive voice obscures meaning
 WHY: Makes it unclear who is responsible for actions
@@ -120,6 +122,7 @@ SUGGESTED: The department implemented the policy
 [/PRIORITY]
 
 [PRIORITY: medium]
+REF: 3
 CATEGORY: GOV.UK Style Compliance
 ISSUE: Use of "words to avoid"
 WHY: Not in line with GOV.UK style guide
@@ -128,6 +131,7 @@ SUGGESTED: in future, we will use our resources
 [/PRIORITY]
 
 [PRIORITY: low]
+REF: 4
 CATEGORY: Content Completeness
 ISSUE: Missing contact information
 WHY: Users need to know who to contact for help
@@ -180,8 +184,9 @@ For each of the 5 categories, assign a score:
 
 In the [ISSUE_POSITIONS] section, return a single-line JSON object containing an \`issues\` array. Each entry identifies the **character offset** of a problematic span within the **original input text** (0-indexed, counting from the very first character of the input) AND the exact text of the problematic span.
 
-Each issue object must have exactly these four fields:
+Each issue object must have exactly these five fields:
 
+- ref (integer): A unique 1-based reference number for this issue — starts at 1 and increments by 1 for each issue. This number MUST match the REF: field of the corresponding [PRIORITY] block in [IMPROVEMENTS]
 - start (integer): 0-based index of the first character of the problematic span
 - end (integer): 0-based index of the character **after** the last character of the span (exclusive)
 - type (string): Issue category — one of the five values listed below
@@ -196,22 +201,23 @@ Each issue object must have exactly these four fields:
 
 **Rules:**
 - The JSON must be on a **single line** with no line breaks inside it
+- ref is a unique 1-based integer — number issues 1, 2, 3… in the order they appear in the text. Each ref value must be unique and must match exactly one REF: value in [IMPROVEMENTS]
 - start and end are character offsets into the **original input text as received** — count every character including spaces, punctuation, and newlines
 - end is **exclusive** — inputText.slice(start, end) must yield exactly the problematic span
 - The text field must be the **exact characters** from inputText.slice(start, end) — no paraphrasing, no ellipsis
 - Mark the **complete meaningful span** — the full word, complete phrase, or entire sentence that has the issue. Never cut a phrase mid-word or mid-clause (e.g. mark "travellers' point of entry" not "travellers' point of")
 - When an entire sentence is the issue (e.g. passive voice, overly long), mark the full sentence
 - When only a word or phrase is the issue (e.g. jargon, "words to avoid"), mark only that complete word/phrase
-- Each issue in [ISSUE_POSITIONS] must have a **corresponding [PRIORITY] entry** in [IMPROVEMENTS] — ordered the same way
+- Each issue in [ISSUE_POSITIONS] must have a **corresponding [PRIORITY] entry** in [IMPROVEMENTS] linked by the matching REF number
 - Do NOT include issues for formatting (headings, lists, links) as these are not visible in plain text input
 - If no issues are found, return: {"issues":[]}
 
 **Example** (given input text "The department should utilise all available frameworks going forward."):
-- "utilise" starts at offset 22, ends at 29, text is "utilise" → {"start":22,"end":29,"type":"plain-english","text":"utilise"}
-- "going forward" starts at offset 54, ends at 67, text is "going forward" → {"start":54,"end":67,"type":"govuk-style","text":"going forward"}
+- "utilise" starts at offset 22, ends at 29, ref is 1 → {"ref":1,"start":22,"end":29,"type":"plain-english","text":"utilise"}
+- "going forward" starts at offset 54, ends at 67, ref is 2 → {"ref":2,"start":54,"end":67,"type":"govuk-style","text":"going forward"}
 
 Full [ISSUE_POSITIONS] output for that example:
-{"issues":[{"start":22,"end":29,"type":"plain-english","text":"utilise"},{"start":54,"end":67,"type":"govuk-style","text":"going forward"}]}
+{"issues":[{"ref":1,"start":22,"end":29,"type":"plain-english","text":"utilise"},{"ref":2,"start":54,"end":67,"type":"govuk-style","text":"going forward"}]}
 
 ---
 
@@ -219,12 +225,13 @@ Full [ISSUE_POSITIONS] output for that example:
 
 List **all identified improvements** in order of priority (most critical first). Each improvement must include:
 
-1. **Severity level** - critical, high, medium, or low
-2. **Category** - which of the 5 categories this improvement addresses
-3. **Issue title** (clear, specific)
-4. **Why this matters** (user impact, GOV.UK compliance)
-5. **Current text** — the full sentence or complete meaningful phrase from the input that contains the problem. This gives users enough context to locate and understand the issue. It must contain the span text from [ISSUE_POSITIONS] but can be longer to provide full context (e.g. the whole sentence, not just the problematic word)
-6. **Suggested improvement** — the full corrected version of the CURRENT text, showing exactly what the replacement should look like
+1. **REF number** - the integer that matches the corresponding entry's ref field in [ISSUE_POSITIONS]. Start at 1 and increment by 1 for each issue, in the same order as [ISSUE_POSITIONS]
+2. **Severity level** - critical, high, medium, or low
+3. **Category** - which of the 5 categories this improvement addresses
+4. **Issue title** (clear, specific)
+5. **Why this matters** (user impact, GOV.UK compliance)
+6. **Current text** — the full sentence or complete meaningful phrase from the input that contains the problem. This gives users enough context to locate and understand the issue. It must contain the span text from [ISSUE_POSITIONS] but can be longer to provide full context (e.g. the whole sentence, not just the problematic word)
+7. **Suggested improvement** — the full corrected version of the CURRENT text, showing exactly what the replacement should look like
 
 **Severity levels:**
 - **critical** - Blocks publication, must be fixed
@@ -343,9 +350,9 @@ If you see text patterns that suggest these elements exist (e.g., "1.", "2." for
 2. Use the **exact markers and field names** as specified:
    - Section markers: [SCORES], [ISSUE_POSITIONS], [IMPROVEMENTS]
    - Priority blocks: [PRIORITY: severity]
-   - Field names: CATEGORY:, ISSUE:, WHY:, CURRENT:, SUGGESTED:
-3. In [ISSUE_POSITIONS], return a **single-line JSON object** — {"issues":[...]} — where each issue has start, end (0-based char offsets), type, and text (the exact verbatim characters at those offsets)
-4. Each {"start":N,"end":M,"type":"category","text":"exact text"} entry must correspond 1-to-1 with a [PRIORITY] block in [IMPROVEMENTS], in the same order
+   - Field names: REF:, CATEGORY:, ISSUE:, WHY:, CURRENT:, SUGGESTED:
+3. In [ISSUE_POSITIONS], return a **single-line JSON object** — {"issues":[...]} — where each issue has ref (1-based integer), start, end (0-based char offsets), type, and text (the exact verbatim characters at those offsets)
+4. Each issue entry's **ref** number must exactly match the **REF:** field of its corresponding [PRIORITY] block in [IMPROVEMENTS]. This is how issues are linked to improvements — NOT by array position
 5. The CURRENT: field in each [PRIORITY] block must be the **full sentence or complete meaningful phrase** containing the issue — the span text from [ISSUE_POSITIONS] must be contained within it (CURRENT can be longer for context, but must not be shorter)
 6. The [SCORES] section must contain **exactly five categories** in this order: Plain English, Clarity & Structure, Accessibility, GOV.UK Style Compliance, Content Completeness. Do NOT add an "Overall" row.
 7. Score notes must be **generic quality assessments only** — do NOT quote, name, or reference specific words, acronyms, phrases, or terminology from the input content
