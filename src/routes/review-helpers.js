@@ -7,7 +7,6 @@ import {
   canonicalDocumentStore,
   SOURCE_TYPES as CANONICAL_SOURCE_TYPES
 } from '../common/helpers/canonical-document.js'
-import { resultEnvelopeStore } from '../common/helpers/result-envelope.js'
 
 // ============ CONSTANTS ============
 
@@ -414,15 +413,6 @@ export async function processTextReviewSubmission(payload, headers, logger) {
     userId,
     mimeType
   )
-
-  // Write a pending stub to result/{reviewId}.json immediately so the status
-  // endpoint can return "pending" before Bedrock processing begins
-  resultEnvelopeStore.saveStatus(reviewId, 'pending').catch((err) => {
-    logger.warn(
-      { reviewId, error: err.message },
-      '[result-envelope] Failed to write pending stub (non-critical)'
-    )
-  })
 
   // STEP 5: Queue SQS job pointing to canonical document so the processor reads canonicalText
   const sqsSendDuration = await queueReviewJob(
