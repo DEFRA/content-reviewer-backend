@@ -40,22 +40,29 @@ function deriveCategory(rawIssue, improvement) {
  * @param {string} raw
  * @returns {string}
  */
+const DISPLAY_PLAIN_ENGLISH = 'Plain English'
+const DISPLAY_CLARITY = 'Clarity & Structure'
+const DISPLAY_GOVUK_STYLE = 'GOV.UK Style Compliance'
+const DISPLAY_COMPLETENESS = 'Content Completeness'
+
 const CATEGORY_DISPLAY_NAMES = {
-  'plain-english': 'Plain English',
-  'plain english': 'Plain English',
-  clarity: 'Clarity & Structure',
-  'clarity & structure': 'Clarity & Structure',
+  'plain-english': DISPLAY_PLAIN_ENGLISH,
+  'plain english': DISPLAY_PLAIN_ENGLISH,
+  clarity: DISPLAY_CLARITY,
+  'clarity & structure': DISPLAY_CLARITY,
   accessibility: 'Accessibility',
-  'govuk-style': 'GOV.UK Style Compliance',
-  'govuk style': 'GOV.UK Style Compliance',
-  'govuk style compliance': 'GOV.UK Style Compliance',
-  'gov.uk style compliance': 'GOV.UK Style Compliance',
-  completeness: 'Content Completeness',
-  'content completeness': 'Content Completeness'
+  'govuk-style': DISPLAY_GOVUK_STYLE,
+  'govuk style': DISPLAY_GOVUK_STYLE,
+  'govuk style compliance': DISPLAY_GOVUK_STYLE,
+  'gov.uk style compliance': DISPLAY_GOVUK_STYLE,
+  completeness: DISPLAY_COMPLETENESS,
+  'content completeness': DISPLAY_COMPLETENESS
 }
 
 function normalizeCategoryDisplay(raw) {
-  if (!raw) return ''
+  if (!raw) {
+    return ''
+  }
   return CATEGORY_DISPLAY_NAMES[raw.toLowerCase()] || raw
 }
 

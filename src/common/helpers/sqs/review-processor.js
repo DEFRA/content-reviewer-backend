@@ -158,12 +158,15 @@ export class ReviewProcessor {
   async processMessage(message, messageHandler) {
     const startTime = performance.now()
 
-    // Heartbeat: extend visibility by 900 s every 4 minutes while processing.
+    // Heartbeat: extend visibility every 4 minutes while processing.
     const HEARTBEAT_INTERVAL_MS = 4 * 60 * 1000
+    const HEARTBEAT_VISIBILITY_SECONDS = 900
     const heartbeat = setInterval(() => {
-      messageHandler.extendVisibility(message.ReceiptHandle, 900).catch(
-        () => {} // extendVisibility already logs warnings internally
-      )
+      messageHandler
+        .extendVisibility(message.ReceiptHandle, HEARTBEAT_VISIBILITY_SECONDS)
+        .catch(
+          () => {} // extendVisibility already logs warnings internally
+        )
     }, HEARTBEAT_INTERVAL_MS)
 
     try {
