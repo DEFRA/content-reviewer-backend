@@ -1,23 +1,38 @@
 import { resultEnvelopeStore } from '../common/helpers/result-envelope.js'
+import { reviewRepository } from '../common/helpers/review-repository.js'
 import { createLogger } from '../common/helpers/logging/logger.js'
 import { config } from '../config.js'
 
 const logger = createLogger()
 
-const HTTP_NOT_FOUND = 404
 const HTTP_BAD_REQUEST = 400
 const HTTP_INTERNAL_SERVER_ERROR = 500
+
+const EMPTY_SCORES = {
+  plainEnglish: 0,
+  plainEnglishNote: '',
+  clarity: 0,
+  clarityNote: '',
+  accessibility: 0,
+  accessibilityNote: '',
+  govukStyle: 0,
+  govukStyleNote: '',
+  completeness: 0,
+  completenessNote: '',
+  overall: 0,
+  style: 0,
+  tone: 0
+}
 
 /**
  * GET /api/result/:reviewId
  *
- * Returns the spec-compliant result envelope from result/{reviewId}.json.
- * Used by the frontend results page as its primary data source.
+ * Returns the spec-compliant result envelope for the frontend results page.
+ * The envelope is stored as the `envelope` field inside reviews/{reviewId}.json.
  *
  * Possible responses:
  *   200  { documentId, status: "pending"|"processing"|"completed"|"failed",
  *          processedAt, tokenUsed, issueCount, issues[], scores{} }
- *   404  when the envelope file does not yet exist
  *   400  when reviewId is missing
  *   500  on S3 read failure
  */
@@ -33,51 +48,40 @@ async function getResultEnvelopeHandler(request, h) {
   logger.info({ reviewId }, '[result-envelope] GET request received')
 
   try {
-    const envelope = await resultEnvelopeStore.get(reviewId)
+    const review = await reviewRepository.getReview(reviewId)
 
-    if (!envelope) {
-      // File not yet written — review may still be very early in the pipeline
+    if (!review) {
+      // Review not yet created — very early in the pipeline
       logger.info(
         { reviewId },
-        '[result-envelope] Not found — returning pending stub'
+        '[result-envelope] Review not found — returning pending stub'
       )
       return h.response({
         success: true,
-        data: {
-          documentId: reviewId,
-          status: 'pending',
-          processedAt: null,
-          tokenUsed: 0,
-          issueCount: 0,
-          canonicalText: '',
-          annotatedSections: [],
-          issues: [],
-          improvements: [],
-          scores: {
-            plainEnglish: 0,
-            plainEnglishNote: '',
-            clarity: 0,
-            clarityNote: '',
-            accessibility: 0,
-            accessibilityNote: '',
-            govukStyle: 0,
-            govukStyleNote: '',
-            completeness: 0,
-            completenessNote: '',
-            overall: 0,
-            style: 0,
-            tone: 0
-          }
-        }
+        data: resultEnvelopeStore.buildStubEnvelope(reviewId, 'pending')
       })
     }
 
-    logger.info(
-      { reviewId, status: envelope.status, issueCount: envelope.issueCount },
-      '[result-envelope] Returning result envelope'
-    )
+    // Completed review — return the stored envelope
+    if (review.status === 'completed' && review.envelope) {
+      logger.info(
+        {
+          reviewId,
+          status: review.envelope.status,
+          issueCount: review.envelope.issueCount
+        },
+        '[result-envelope] Returning completed envelope'
+      )
+      return h.response({ success: true, data: review.envelope })
+    }
 
-    return h.response({ success: true, data: envelope })
+    // Still processing or failed — return a stub with the current status
+    logger.info(
+      { reviewId, status: review.status },
+      '[result-envelope] Returning status stub'
+    )
+    const stub = resultEnvelopeStore.buildStubEnvelope(reviewId, review.status)
+    return h.response({ success: true, data: stub })
   } catch (error) {
     logger.error(
       { reviewId, error: error.message, stack: error.stack },

@@ -5,8 +5,6 @@ const mockLoggerInfo = vi.fn()
 const mockLoggerError = vi.fn()
 const mockLoggerWarn = vi.fn()
 const mockSaveReviewError = vi.fn()
-const mockSaveStatus = vi.fn()
-const mockSaveCompleted = vi.fn()
 const mockUpdateReviewStatus = vi.fn()
 const mockSaveReviewResult = vi.fn()
 
@@ -29,8 +27,12 @@ vi.mock('../review-repository.js', () => ({
 
 vi.mock('../result-envelope.js', () => ({
   resultEnvelopeStore: {
-    saveStatus: (...args) => mockSaveStatus(...args),
-    saveCompleted: (...args) => mockSaveCompleted(...args)
+    buildEnvelope: vi
+      .fn()
+      .mockReturnValue({ status: 'completed', documentId: 'review_123' }),
+    buildStubEnvelope: vi
+      .fn()
+      .mockReturnValue({ status: 'pending', documentId: 'review_123' })
   }
 }))
 
@@ -79,7 +81,6 @@ describe('ReviewProcessor - markDeadLetteredReviewAsFailed', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     processor = new ReviewProcessor()
-    mockSaveStatus.mockResolvedValue({})
     mockSaveReviewError.mockResolvedValue()
   })
 
@@ -120,7 +121,6 @@ describe('ReviewProcessor - isDeadLettered', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     processor = new ReviewProcessor()
-    mockSaveStatus.mockResolvedValue({})
     mockSaveReviewError.mockResolvedValue()
   })
 
@@ -145,15 +145,56 @@ describe('ReviewProcessor - isDeadLettered', () => {
   })
 })
 
-describe('ReviewProcessor - saveReviewToRepository error branches', () => {
+describe('ReviewProcessor - saveReviewToRepository', () => {
   let processor
 
   beforeEach(() => {
     vi.clearAllMocks()
     processor = new ReviewProcessor()
     mockSaveReviewResult.mockResolvedValue()
-    mockSaveStatus.mockResolvedValue({})
-    mockSaveCompleted.mockResolvedValue({})
+  })
+
+  test('builds envelope and passes it to saveReviewResult', async () => {
+    const { resultEnvelopeStore } = await import('../result-envelope.js')
+
+    const parseResult = {
+      parsedReview: {
+        scores: {},
+        reviewedContent: { issues: [] },
+        improvements: []
+      },
+      finalReviewContent: 'review text',
+      parseDuration: 100
+    }
+    const bedrockResult = {
+      bedrockResponse: {
+        usage: { totalTokens: 100 },
+        guardrailAssessment: null,
+        stopReason: 'end_turn'
+      },
+      bedrockDuration: 500
+    }
+
+    await processor.saveReviewToRepository(
+      'review_123',
+      parseResult,
+      bedrockResult,
+      'canonical text'
+    )
+
+    expect(resultEnvelopeStore.buildEnvelope).toHaveBeenCalledWith(
+      'review_123',
+      parseResult.parsedReview,
+      bedrockResult.bedrockResponse.usage,
+      'canonical text',
+      'completed'
+    )
+    expect(mockSaveReviewResult).toHaveBeenCalledWith(
+      'review_123',
+      expect.objectContaining({ reviewData: parseResult.parsedReview }),
+      bedrockResult.bedrockResponse.usage,
+      expect.objectContaining({ status: 'completed' })
+    )
   })
 
   test('logs error but does not throw when savePositions fails', async () => {
@@ -188,44 +229,12 @@ describe('ReviewProcessor - saveReviewToRepository error branches', () => {
       )
     ).resolves.not.toThrow()
 
+    // Allow the fire-and-forget savePositions rejection to propagate
+    await new Promise((r) => setTimeout(r, 10))
+
     expect(mockLoggerError).toHaveBeenCalledWith(
       expect.objectContaining({ reviewId: 'review_123' }),
       'Failed to save positions file - review result still saved successfully'
-    )
-  })
-
-  test('logs error but does not throw when saveCompleted fails', async () => {
-    mockSaveCompleted.mockRejectedValueOnce(new Error('Envelope write failed'))
-
-    const parseResult = {
-      parsedReview: {
-        reviewedContent: null,
-        improvements: []
-      },
-      finalReviewContent: 'review text',
-      parseDuration: 100
-    }
-    const bedrockResult = {
-      bedrockResponse: {
-        usage: { totalTokens: 100 },
-        guardrailAssessment: null,
-        stopReason: 'end_turn'
-      },
-      bedrockDuration: 500
-    }
-
-    await expect(
-      processor.saveReviewToRepository(
-        'review_456',
-        parseResult,
-        bedrockResult,
-        'text'
-      )
-    ).resolves.not.toThrow()
-
-    expect(mockLoggerError).toHaveBeenCalledWith(
-      expect.objectContaining({ reviewId: 'review_456' }),
-      '[result-envelope] Failed to save completed envelope (non-critical)'
     )
   })
 
@@ -252,6 +261,34 @@ describe('ReviewProcessor - saveReviewToRepository error branches', () => {
       bedrockResult,
       'text'
     )
+    await new Promise((r) => setTimeout(r, 10))
     expect(reviewRepository.savePositions).not.toHaveBeenCalled()
+  })
+
+  test('throws when saveReviewResult fails', async () => {
+    mockSaveReviewResult.mockRejectedValueOnce(new Error('S3 write failed'))
+
+    const parseResult = {
+      parsedReview: { reviewedContent: null, improvements: [] },
+      finalReviewContent: 'text',
+      parseDuration: 50
+    }
+    const bedrockResult = {
+      bedrockResponse: {
+        usage: {},
+        guardrailAssessment: null,
+        stopReason: 'end_turn'
+      },
+      bedrockDuration: 300
+    }
+
+    await expect(
+      processor.saveReviewToRepository(
+        'review_456',
+        parseResult,
+        bedrockResult,
+        'text'
+      )
+    ).rejects.toThrow('S3 write failed')
   })
 })
