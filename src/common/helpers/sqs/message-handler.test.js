@@ -11,6 +11,7 @@ const TEST_WAIT_TIME_SECONDS = 20
 const TEST_VISIBILITY_TIMEOUT = 30
 const TEST_TRUNCATED_LENGTH = 23
 const QUEUE_ERROR_MESSAGE = 'Queue does not exist'
+const TEST_RECEIVE_COUNT = 3
 
 // Test error messages
 const ERROR_QUEUE_DOES_NOT_EXIST = 'Queue does not exist'
@@ -421,8 +422,10 @@ describe('SQSMessageHandler - getReceiveCount', () => {
   })
 
   test('returns the parsed integer value when attribute is a valid numeric string', () => {
-    const message = { Attributes: { ApproximateReceiveCount: '3' } }
-    expect(handler.getReceiveCount(message)).toBe(3)
+    const message = {
+      Attributes: { ApproximateReceiveCount: String(TEST_RECEIVE_COUNT) }
+    }
+    expect(handler.getReceiveCount(message)).toBe(TEST_RECEIVE_COUNT)
   })
 
   test('returns 1 when ApproximateReceiveCount is zero', () => {

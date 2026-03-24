@@ -10,15 +10,33 @@ import { testStructuralPreservation } from './text-normaliser.structural.test.js
 import { testBuildSourceMap } from './text-normaliser.source-map.test.js'
 import { testRealWorldScenarios } from './text-normaliser.real-world.test.js'
 
-describe('TextNormaliser', () => {
+describe('TextNormaliser - edge cases', () => {
   testNormaliseEdgeCases()
+})
+describe('TextNormaliser - control characters', () => {
   testControlChars()
+})
+describe('TextNormaliser - unicode and ligatures', () => {
   testUnicodeAndLigatures()
+})
+describe('TextNormaliser - quotes and dashes', () => {
   testQuotesAndDashes()
+})
+describe('TextNormaliser - whitespace and lines', () => {
   testWhitespaceAndLines()
+})
+describe('TextNormaliser - page numbers', () => {
   testPageNumbers()
+})
+describe('TextNormaliser - URL protection', () => {
   testUrlProtection()
+})
+describe('TextNormaliser - structural preservation', () => {
   testStructuralPreservation()
+})
+describe('TextNormaliser - build source map', () => {
   testBuildSourceMap()
+})
+describe('TextNormaliser - real world scenarios', () => {
   testRealWorldScenarios()
 })
