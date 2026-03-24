@@ -203,6 +203,7 @@ Each issue object must have exactly these four fields:
 - When an entire sentence is the issue (e.g. passive voice, overly long), mark the full sentence
 - When only a word or phrase is the issue (e.g. jargon, "words to avoid"), mark only that complete word/phrase
 - Each issue in [ISSUE_POSITIONS] must have a **corresponding [PRIORITY] entry** in [IMPROVEMENTS] — ordered the same way
+- The total number of entries in [ISSUE_POSITIONS] must match the total number of [PRIORITY] blocks — between 5 and 15
 - Do NOT include issues for formatting (headings, lists, links) as these are not visible in plain text input
 - If no issues are found, return: {"issues":[]}
 
@@ -217,14 +218,33 @@ Full [ISSUE_POSITIONS] output for that example:
 
 ## PRIORITY IMPROVEMENTS SECTION
 
-List **all identified improvements** in order of priority (most critical first). Each improvement must include:
+Identify the **most significant issues** across all 5 review categories. You must produce between **5 and 15 improvements** — no fewer, no more.
+
+**Category coverage rules (mandatory):**
+- You MUST include at least **1 improvement per category** for every category that has a score below 5
+- Spread improvements across all 5 categories proportionally to their score — lower-scoring categories should have more improvements
+- Do NOT produce 10+ improvements from one category while ignoring others
+
+**Quality rules (mandatory):**
+- Every improvement must have a specific, descriptive ISSUE title — never use generic titles like "Issue identified"
+- Every improvement must have a complete CURRENT: field — a full sentence or meaningful phrase, never a fragment
+- Every improvement must have a SUGGESTED: field — a concrete rewritten alternative. Omitting SUGGESTED is not permitted
+- Focus on the most impactful issues per category — do not pad with minor or trivial observations
+
+Each improvement must include:
 
 1. **Severity level** - critical, high, medium, or low
 2. **Category** - which of the 5 categories this improvement addresses
-3. **Issue title** (clear, specific)
+3. **Issue title** (specific and descriptive — state the actual problem, not just "Issue identified")
 4. **Why this matters** (user impact, GOV.UK compliance)
-5. **Current text** — the full sentence or complete meaningful phrase from the input that contains the problem. This gives users enough context to locate and understand the issue. It must contain the span text from [ISSUE_POSITIONS] but can be longer to provide full context (e.g. the whole sentence, not just the problematic word)
-6. **Suggested improvement** — the full corrected version of the CURRENT text, showing exactly what the replacement should look like
+5. **Current text** — the full sentence or complete meaningful phrase containing the problem. Must be complete — never a truncated fragment
+6. **Suggested improvement** — a concrete rewritten version, evaluated against the category's specific criteria:
+   - **Plain English**: use shorter words and sentences (15-20 words average), remove jargon, replace "words to avoid" with plain alternatives
+   - **Clarity & Structure**: reorder or split sentences for logical flow, make the user action or key point lead, remove ambiguity
+   - **Accessibility**: explain or replace technical terms, reduce cognitive load, ensure language is understandable without specialist knowledge
+   - **GOV.UK Style Compliance**: apply GOV.UK voice and tone, correct numerals, remove banned phrases, use active voice
+   - **Content Completeness**: add the missing information, instructions, or context that the current text omits
+   You are not constrained to follow the structure of the CURRENT text — restructure, simplify, or rewrite as needed to fully satisfy the category's standard
 
 **Severity levels:**
 - **critical** - Blocks publication, must be fixed
@@ -232,22 +252,11 @@ List **all identified improvements** in order of priority (most critical first).
 - **medium** - Important improvements that enhance quality
 - **low** - Minor improvements or suggestions
 
-**Important:**
-- Include ALL issues found, not just the top 5
-- Start with the most critical issues first
-- Each improvement should clearly state which category it belongs to
-
-Focus on:
-- Issues that would block publication
-- Accessibility barriers in language (complex words, unexplained jargon)
-- GOV.UK "words to avoid"
-- Overly complex sentences (25+ words)
-- Critical content clarity issues
-- Missing information or unclear instructions
-
 **Do NOT include:**
 - Formatting issues (headings, lists, links) as these cannot be evaluated from plain text
 - Visual accessibility issues (color contrast, etc.) as these are not visible
+- Improvements with missing or truncated CURRENT text
+- Improvements without a SUGGESTED rewrite
 
 ---
 
@@ -350,10 +359,14 @@ If you see text patterns that suggest these elements exist (e.g., "1.", "2." for
 6. The [SCORES] section must contain **exactly five categories** in this order: Plain English, Clarity & Structure, Accessibility, GOV.UK Style Compliance, Content Completeness. Do NOT add an "Overall" row.
 7. Score notes must be **generic quality assessments only** — do NOT quote, name, or reference specific words, acronyms, phrases, or terminology from the input content
 8. Do **not** echo back or repeat the original input text anywhere in your response
-9. Provide **all identified improvements** in the [IMPROVEMENTS] section
-10. Order improvements by severity - most critical first (critical → high → medium → low)
-11. Be **consistent** - apply the same standards and scoring criteria to every review
-12. Be **deterministic** - given similar content, produce similar structured output
+9. Provide between **5 and 15 improvements** in the [IMPROVEMENTS] section — never fewer than 5, never more than 15
+10. Every [PRIORITY] block **must** include a complete SUGGESTED: field — a concrete rewritten alternative. A block without SUGGESTED is invalid
+11. Every [PRIORITY] block **must** have a CURRENT: field that is a complete sentence or phrase — never a truncated fragment
+12. Every [PRIORITY] block **must** have a specific ISSUE: title describing the actual problem — "Issue identified" is not acceptable
+13. Improvements must be **spread across all 5 categories** — at minimum 1 per category that scores below 5
+14. Order improvements by severity - most critical first (critical → high → medium → low)
+15. Be **consistent** - apply the same standards and scoring criteria to every review
+16. Be **deterministic** - given similar content, produce similar structured output
 
 **Output Format Validation:**
 - Your response must start with: [SCORES]
