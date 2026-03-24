@@ -239,15 +239,15 @@ const config = convict({
       env: 'SQS_WAIT_TIME_SECONDS'
     },
     visibilityTimeout: {
-      doc: 'Message visibility timeout in seconds',
+      doc: 'Message visibility timeout in seconds. Must exceed the Bedrock client timeout (360s) plus processing overhead — set to 900s (15 min) so a large 100k-char document cannot become visible again mid-processing.',
       format: Number,
-      default: 300,
+      default: 900,
       env: 'SQS_VISIBILITY_TIMEOUT'
     },
     maxConcurrentRequests: {
-      doc: 'Maximum concurrent Bedrock API requests (to prevent rate limiting). Set to 2-3 for dev, 5-10 for prod.',
+      doc: 'Maximum concurrent Bedrock API requests. Each 100k-char review uses ~25-30k input tokens; running too many concurrently exhausts the tokens-per-minute quota. Keep at 2 unless the Bedrock quota has been increased.',
       format: Number,
-      default: 5,
+      default: 2,
       env: 'SQS_MAX_CONCURRENT_REQUESTS'
     },
     maxReceiveCount: {
@@ -290,9 +290,9 @@ const config = convict({
       env: 'BEDROCK_MODEL_NAME'
     },
     maxTokens: {
-      doc: 'Maximum tokens in AI response',
+      doc: 'Maximum output tokens in AI response. The structured response (scores + 5-15 position-based improvements) is ~3-4k tokens. Setting this to 100k was reserving unused token quota and inflating TPM usage. 8192 provides ample headroom.',
       format: Number,
-      default: 100000,
+      default: 8192,
       env: 'BEDROCK_MAX_TOKENS'
     },
     temperature: {
