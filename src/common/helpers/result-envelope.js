@@ -143,15 +143,17 @@ class ResultEnvelopeStore {
       why: improvement?.why || improvement?.issue || '',
       suggested: improvement?.suggested || '',
       evidence: deriveEvidence(start, end, canonicalText, rawIssue.text),
-      chunkIdx: idx
+      chunkIdx: idx,
+      ref: rawIssue.ref // preserve for ref-based matching; undefined when absent
     }
   }
 
   /**
-   * Build an improvement object that mirrors its paired issue.
+   * Build an improvement object that mirrors its parsed improvement.
+   * Preserves the `ref` field so _sortAndAlignPairs can match by ref.
    *
    * @param {Object} parsedImprovement  - from parseBedrockResponse improvements[]
-   * @param {string} issueId            - the issueId of the matching issue
+   * @param {string} issueId            - temporary issueId (re-linked after matching)
    * @returns {Object}
    */
   _mapImprovement(parsedImprovement, issueId) {
@@ -162,7 +164,8 @@ class ResultEnvelopeStore {
       issue: parsedImprovement?.issue || '',
       why: parsedImprovement?.why || '',
       current: parsedImprovement?.current || '',
-      suggested: parsedImprovement?.suggested || ''
+      suggested: parsedImprovement?.suggested || '',
+      ref: parsedImprovement?.ref // preserve for ref-based matching; undefined when absent
     }
   }
 
@@ -214,41 +217,76 @@ class ResultEnvelopeStore {
   }
 
   /**
-   * Sort and deduplicate raw issues + their paired improvements together by
-   * text position, then re-index sequentially so that annotatedSections,
-   * issues[], and improvements[] all share the same 0-based index.
+   * Determine whether all issues carry a valid `ref` field AND at least one
+   * improvement also carries a `ref` field.  Both conditions must be true for
+   * ref-based matching to be used; otherwise the code falls back to
+   * index-based pairing (Approach 2 behaviour — no improvements are dropped).
    *
-   * Steps:
-   *  1. Pair each raw issue with its improvement (by original AI array index).
-   *  2. Snap offsets to word boundaries and validate against canonicalText.
-   *  3. Sort pairs by absStart (text order).
-   *  4. Remove overlapping spans (keep the first one encountered).
-   *  5. Re-assign sequential chunkIdx 0,1,2… to issues.
-   *  6. Discard orphan improvements that had no valid paired issue.
-   *
-   * Returns { sortedIssues, sortedImprovements } — same length, same order.
-   *
-   * @param {string} canonicalText
-   * @param {Array}  issues        - spec issue objects from _mapIssue
-   * @param {Array}  improvements  - spec improvement objects from _mapImprovement
-   * @returns {{ sortedIssues: Array, sortedImprovements: Array }}
+   * @param {Array} issues
+   * @param {Array} improvements
+   * @returns {boolean}
    */
-  _sortAndAlignPairs(canonicalText, issues, improvements) {
-    // Pair each issue with its improvement by original index
-    const pairs = issues
+  _hasRefFields(issues, improvements) {
+    if (issues.length === 0) {
+      return false
+    }
+    const allIssuesHaveRef = issues.every(
+      (i) => i.ref !== undefined && !Number.isNaN(i.ref)
+    )
+    const anyImprovementHasRef = improvements.some(
+      (imp) => imp.ref !== undefined && !Number.isNaN(imp.ref)
+    )
+    return allIssuesHaveRef && anyImprovementHasRef
+  }
+
+  /**
+   * Build a ref → improvement lookup map from the improvements array.
+   * Only the first improvement for each ref value is kept (duplicates ignored).
+   * Returns an empty Map when not using ref-based matching.
+   * @param {Array}   improvements
+   * @param {boolean} useRefMatching
+   * @returns {Map}
+   */
+  _buildRefMap(improvements, useRefMatching) {
+    const refMap = new Map()
+    if (!useRefMatching) {
+      return refMap
+    }
+    for (const imp of improvements) {
+      if (imp.ref !== undefined && !refMap.has(imp.ref)) {
+        refMap.set(imp.ref, imp)
+      }
+    }
+    return refMap
+  }
+
+  /**
+   * Map issues to (snapped-offset issue, improvement) pairs, filter invalid
+   * spans, then sort by ascending absStart.
+   * @param {string}  canonicalText
+   * @param {Array}   issues
+   * @param {Array}   improvements
+   * @param {boolean} useRefMatching
+   * @param {Map}     refMap
+   * @returns {Array}
+   */
+  _buildPairs(canonicalText, issues, improvements, useRefMatching, refMap) {
+    return issues
       .map((issue, idx) => {
         const snapped = this._snapToWordBoundary(
           canonicalText,
           issue.absStart ?? 0,
           issue.absEnd ?? 0
         )
+        const improvement = useRefMatching
+          ? refMap.get(issue.ref) || null
+          : improvements[idx] || null
         return {
           issue: { ...issue, absStart: snapped.start, absEnd: snapped.end },
-          improvement: improvements[idx] || null,
+          improvement,
           originalIdx: idx
         }
       })
-      // Discard pairs whose issue span is invalid or out-of-range
       .filter(({ issue }) => {
         const { absStart, absEnd } = issue
         return (
@@ -259,30 +297,48 @@ class ResultEnvelopeStore {
           absEnd <= canonicalText.length
         )
       })
-      // Sort by text position
       .sort((a, b) => a.issue.absStart - b.issue.absStart)
+  }
 
-    // Remove overlapping spans
+  /**
+   * Remove overlapping issue spans from a sorted pairs array.
+   * Earlier spans take precedence; later overlapping spans are dropped.
+   * @param {Array} sortedPairs
+   * @returns {Array}
+   */
+  _dedupeOverlaps(sortedPairs) {
     const deduped = []
     let cursor = 0
-    for (const pair of pairs) {
+    for (const pair of sortedPairs) {
       if (pair.issue.absStart < cursor) {
         logger.warn(
           {
             absStart: pair.issue.absStart,
             absEnd: pair.issue.absEnd,
             cursor,
-            originalIdx: pair.originalIdx
+            originalIdx: pair.originalIdx,
+            ref: pair.issue.ref
           },
-          '[result-envelope] Dropping overlapping issue — no matching improvement rendered'
+          '[result-envelope] Dropping overlapping issue span'
         )
         continue
       }
       deduped.push(pair)
       cursor = pair.issue.absEnd
     }
+    return deduped
+  }
 
-    // Re-assign sequential chunkIdx and re-link improvements to their issue
+  /**
+   * Build sortedIssues and sortedImprovements from deduplicated pairs, then
+   * append any unmatched improvements (those with no valid paired issue) as
+   * orphan entries so they are never silently dropped.
+   * @param {Array}   deduped
+   * @param {Array}   improvements
+   * @param {boolean} useRefMatching
+   * @returns {{ sortedIssues: Array, sortedImprovements: Array }}
+   */
+  _buildSortedResults(deduped, improvements, useRefMatching) {
     const sortedIssues = deduped.map((pair, seqIdx) => ({
       ...pair.issue,
       chunkIdx: seqIdx
@@ -290,7 +346,6 @@ class ResultEnvelopeStore {
 
     const sortedImprovements = deduped.map((pair, seqIdx) => {
       if (!pair.improvement) {
-        // Issue exists but AI gave no paired improvement — produce a stub
         return {
           issueId: sortedIssues[seqIdx].issueId,
           severity: 'medium',
@@ -301,11 +356,87 @@ class ResultEnvelopeStore {
           suggested: ''
         }
       }
-      // Re-link improvement's issueId to the (potentially updated) issue
       return { ...pair.improvement, issueId: sortedIssues[seqIdx].issueId }
     })
 
+    const matchedRefs = new Set(
+      deduped
+        .filter((p) => p.improvement !== null)
+        .map((p) =>
+          useRefMatching ? p.issue.ref : improvements.indexOf(p.improvement)
+        )
+    )
+
+    const unmatchedImprovements = useRefMatching
+      ? improvements.filter(
+          (imp) => imp.ref !== undefined && !matchedRefs.has(imp.ref)
+        )
+      : improvements.slice(deduped.length)
+
+    if (unmatchedImprovements.length > 0) {
+      logger.warn(
+        { unmatchedCount: unmatchedImprovements.length, useRefMatching },
+        '[result-envelope] Unmatched improvements appended without highlight'
+      )
+    }
+
+    for (const imp of unmatchedImprovements) {
+      sortedImprovements.push({
+        issueId: `issue-orphan-${randomUUID()}`,
+        severity: imp.severity || 'medium',
+        category: imp.category || '',
+        issue: imp.issue || '',
+        why: imp.why || '',
+        current: imp.current || '',
+        suggested: imp.suggested || '',
+        unmatched: true
+      })
+    }
+
     return { sortedIssues, sortedImprovements }
+  }
+
+  /**
+   * Sort and align issues with their paired improvements using ref-based
+   * matching (primary) or index-based pairing (fallback).
+   *
+   * PRIMARY PATH — ref-based matching (Approach 3):
+   *   Used when every issue carries a `ref` field and at least one improvement
+   *   also carries a `ref` field.  Issues are linked to improvements by ref
+   *   value, not array position.  Unmatched improvements are appended without
+   *   a highlight so they are never silently dropped.
+   *
+   * FALLBACK PATH — index-based pairing (Approach 2):
+   *   Used when ref fields are absent.  Excess improvements beyond the issue
+   *   count are appended without highlights rather than silently dropped.
+   *
+   * @param {string} canonicalText
+   * @param {Array}  issues        - spec issue objects from _mapIssue
+   * @param {Array}  improvements  - spec improvement objects from _mapImprovement
+   * @returns {{ sortedIssues: Array, sortedImprovements: Array }}
+   */
+  _sortAndAlignPairs(canonicalText, issues, improvements) {
+    const useRefMatching = this._hasRefFields(issues, improvements)
+
+    logger.info(
+      {
+        useRefMatching,
+        issueCount: issues.length,
+        improvementCount: improvements.length
+      },
+      `[result-envelope] Pairing strategy: ${useRefMatching ? 'ref-based' : 'index-based (fallback)'}`
+    )
+
+    const refMap = this._buildRefMap(improvements, useRefMatching)
+    const pairs = this._buildPairs(
+      canonicalText,
+      issues,
+      improvements,
+      useRefMatching,
+      refMap
+    )
+    const deduped = this._dedupeOverlaps(pairs)
+    return this._buildSortedResults(deduped, improvements, useRefMatching)
   }
 
   /**
@@ -480,21 +611,17 @@ class ResultEnvelopeStore {
 
     const rawIssues = reviewedContent.issues || []
 
-    // Step 1: Build preliminary spec issue + improvement objects (original AI order)
+    // Step 1: Build preliminary spec issue objects (original AI order).
+    // Issues are mapped independently of improvements — pairing is deferred
+    // to _sortAndAlignPairs which uses ref-based matching (or index fallback).
     const prelimIssues = rawIssues.map((rawIssue, idx) =>
-      this._mapIssue(
-        rawIssue,
-        parsedImprovements[idx] || null,
-        idx,
-        canonicalText
-      )
+      this._mapIssue(rawIssue, null, idx, canonicalText)
     )
-    const prelimImprovements = parsedImprovements.map(
-      (parsedImprovement, idx) => {
-        const pairedIssue = prelimIssues[idx]
-        const issueId = pairedIssue?.issueId || `issue-orphan-${idx}`
-        return this._mapImprovement(parsedImprovement, issueId)
-      }
+
+    // Build improvement objects independently — all improvements are preserved
+    // at this stage; none are discarded due to array length mismatch.
+    const prelimImprovements = parsedImprovements.map((parsedImprovement) =>
+      this._mapImprovement(parsedImprovement, `issue-orphan-${randomUUID()}`)
     )
 
     // Step 2: Sort both arrays together by text position, deduplicate overlaps,
@@ -519,10 +646,12 @@ class ResultEnvelopeStore {
         rawImprovementCount: parsedImprovements.length,
         alignedIssueCount: sortedIssues.length,
         alignedImprovementCount: sortedImprovements.length,
+        unmatchedImprovements: sortedImprovements.filter((i) => i.unmatched)
+          .length,
         sectionCount: annotatedSections.length,
         scoreKeys: Object.keys(scores)
       },
-      '[result-envelope] Envelope built — issues and improvements are 1:1 aligned'
+      '[result-envelope] Envelope built'
     )
 
     return {

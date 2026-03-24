@@ -19,6 +19,8 @@ const REVIEWED_CONTENT_OPEN = '[REVIEWED_CONTENT]'
 const REVIEWED_CONTENT_CLOSE = '[/REVIEWED_CONTENT]'
 const IMPROVEMENTS_OPEN = '[IMPROVEMENTS]'
 const IMPROVEMENTS_CLOSE = '[/IMPROVEMENTS]'
+const ISSUE_POSITIONS_OPEN = '[ISSUE_POSITIONS]'
+const ISSUE_POSITIONS_CLOSE = '[/ISSUE_POSITIONS]'
 
 const SAMPLE_SCORE_LINE = 'Clarity: 3/5 - Needs improvement'
 const SAMPLE_SCORE_LINE_2 = 'Structure: 4/5 - Good layout'
@@ -26,6 +28,11 @@ const SAMPLE_PLAIN_TEXT = 'This is plain text content with no markers.'
 const SCORE_CLARITY = 3
 const SCORE_STRUCTURE = 4
 const SCORE_MAX = 5
+
+const PLAIN_ENGLISH_SCORE_LINE = 'Plain English: 3/5 - Some issues'
+const PRIORITY_HIGH_OPEN = 'PRIORITY: high]'
+const CATEGORY_PLAIN_ENGLISH = 'CATEGORY: Plain English'
+const WHY_BARRIERS = 'WHY: Barriers for users'
 
 function buildMarkerResponse({
   scores = '',
@@ -317,5 +324,144 @@ describe('parseBedrockResponse - issue extraction edge cases', () => {
 
     expect(result.reviewedContent.issues[0].position).toBeDefined()
     expect(typeof result.reviewedContent.issues[0].position).toBe('number')
+  })
+})
+
+// ============ REF field extraction ============
+
+describe('parseBedrockResponse - ref field in [ISSUE_POSITIONS]', () => {
+  it('extracts ref field from [ISSUE_POSITIONS] JSON when present', () => {
+    const originalText = 'The department should utilise all resources.'
+    const issuePositionsResponse = [
+      '[SCORES]',
+      PLAIN_ENGLISH_SCORE_LINE,
+      '[/SCORES]',
+      ISSUE_POSITIONS_OPEN,
+      '{"issues":[{"ref":1,"start":22,"end":29,"type":"plain-english","text":"utilise"}]}',
+      ISSUE_POSITIONS_CLOSE,
+      IMPROVEMENTS_OPEN,
+      IMPROVEMENTS_CLOSE
+    ].join('\n')
+
+    const result = parseBedrockResponse(
+      issuePositionsResponse,
+      undefined,
+      originalText
+    )
+
+    expect(result.reviewedContent.issues).toHaveLength(1)
+    expect(result.reviewedContent.issues[0].ref).toBe(1)
+  })
+
+  it('extracts ref as undefined when ref field is absent from [ISSUE_POSITIONS]', () => {
+    const originalText = 'The department should utilise all resources.'
+    const issuePositionsResponse = [
+      '[SCORES]',
+      PLAIN_ENGLISH_SCORE_LINE,
+      '[/SCORES]',
+      ISSUE_POSITIONS_OPEN,
+      '{"issues":[{"start":22,"end":29,"type":"plain-english","text":"utilise"}]}',
+      ISSUE_POSITIONS_CLOSE,
+      IMPROVEMENTS_OPEN,
+      IMPROVEMENTS_CLOSE
+    ].join('\n')
+
+    const result = parseBedrockResponse(
+      issuePositionsResponse,
+      undefined,
+      originalText
+    )
+
+    expect(result.reviewedContent.issues).toHaveLength(1)
+    expect(result.reviewedContent.issues[0].ref).toBeUndefined()
+  })
+
+  it('extracts multiple refs from [ISSUE_POSITIONS] JSON', () => {
+    const originalText =
+      'The department should utilise all resources going forward.'
+    const issuePositionsResponse = [
+      '[SCORES]',
+      PLAIN_ENGLISH_SCORE_LINE,
+      '[/SCORES]',
+      ISSUE_POSITIONS_OPEN,
+      '{"issues":[{"ref":1,"start":22,"end":29,"type":"plain-english","text":"utilise"},{"ref":2,"start":44,"end":57,"type":"govuk-style","text":"going forward"}]}',
+      ISSUE_POSITIONS_CLOSE,
+      IMPROVEMENTS_OPEN,
+      IMPROVEMENTS_CLOSE
+    ].join('\n')
+
+    const result = parseBedrockResponse(
+      issuePositionsResponse,
+      undefined,
+      originalText
+    )
+
+    expect(result.reviewedContent.issues).toHaveLength(2)
+    expect(result.reviewedContent.issues[0].ref).toBe(1)
+    expect(result.reviewedContent.issues[1].ref).toBe(2)
+  })
+})
+
+describe('parseBedrockResponse - REF field in [IMPROVEMENTS]', () => {
+  it('extracts REF field from [PRIORITY] block when present', () => {
+    const improvements = [
+      PRIORITY_HIGH_OPEN,
+      'REF: 1',
+      CATEGORY_PLAIN_ENGLISH,
+      'ISSUE: Use of jargon',
+      WHY_BARRIERS,
+      'CURRENT: utilise resources',
+      'SUGGESTED: use resources'
+    ].join('\n')
+    const response = buildMarkerResponse({ improvements })
+
+    const result = parseBedrockResponse(response)
+
+    expect(result.improvements).toHaveLength(1)
+    expect(result.improvements[0].ref).toBe(1)
+  })
+
+  it('sets ref to undefined when REF field is absent from [PRIORITY] block', () => {
+    const improvements = [
+      PRIORITY_HIGH_OPEN,
+      CATEGORY_PLAIN_ENGLISH,
+      'ISSUE: Use of jargon',
+      WHY_BARRIERS,
+      'CURRENT: utilise resources',
+      'SUGGESTED: use resources'
+    ].join('\n')
+    const response = buildMarkerResponse({ improvements })
+
+    const result = parseBedrockResponse(response)
+
+    expect(result.improvements).toHaveLength(1)
+    expect(result.improvements[0].ref).toBeUndefined()
+  })
+
+  it('extracts multiple REF fields from multiple [PRIORITY] blocks', () => {
+    const improvements = [
+      PRIORITY_HIGH_OPEN,
+      'REF: 2',
+      CATEGORY_PLAIN_ENGLISH,
+      'ISSUE: Jargon used',
+      WHY_BARRIERS,
+      'CURRENT: utilise',
+      'SUGGESTED: use',
+      '[/PRIORITY]',
+      '[PRIORITY: medium]',
+      'REF: 1',
+      'CATEGORY: Clarity',
+      'ISSUE: Passive voice',
+      'WHY: Unclear responsibility',
+      'CURRENT: was done by the team',
+      'SUGGESTED: the team did it'
+    ].join('\n')
+    const response = buildMarkerResponse({ improvements })
+
+    const result = parseBedrockResponse(response)
+
+    expect(result.improvements).toHaveLength(2)
+    expect(result.improvements[0].ref).toBe(2)
+    expect(result.improvements[1].ref).toBe(1)
   })
 })

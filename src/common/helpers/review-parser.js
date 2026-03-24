@@ -42,6 +42,8 @@ function resolveIssueText(rawText, start, end, originalText) {
 /**
  * Map a raw issue entry from the JSON to a validated issue object.
  * Returns null if the issue has no resolvable text or has invalid offsets.
+ * Preserves the optional `ref` field (1-based integer) used to link issues
+ * to their corresponding [PRIORITY] block in [IMPROVEMENTS].
  */
 function mapRawIssue(raw, originalText) {
   const start = Number(raw.start)
@@ -63,7 +65,10 @@ function mapRawIssue(raw, originalText) {
     return null
   }
 
-  return { start, end, type, text }
+  // Preserve ref if present (integer); undefined when the model omits it
+  const ref = raw.ref === undefined ? undefined : Number(raw.ref)
+
+  return { start, end, type, text, ref }
 }
 
 /**
@@ -345,13 +350,19 @@ function parseImprovementBlock(block) {
     return null
   }
 
+  // Extract REF: field — present when the model follows the new prompt format.
+  // Stored as an integer when valid; undefined when absent (legacy/fallback path).
+  const rawRef = extractField(block, 'REF')
+  const ref = rawRef ? Number(rawRef) : undefined
+
   return {
     severity: severityMatch[1].trim().toLowerCase(),
     category,
     issue,
     why,
     current: extractField(block, 'CURRENT'),
-    suggested: extractField(block, 'SUGGESTED')
+    suggested: extractField(block, 'SUGGESTED'),
+    ref
   }
 }
 
