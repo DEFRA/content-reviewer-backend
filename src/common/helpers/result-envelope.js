@@ -24,12 +24,46 @@ function deriveEvidence(start, end, canonicalText, fallbackText) {
 
 /**
  * Derive the category for an issue from the raw issue type or improvement category.
+ * Returns a lowercase-hyphenated value used for CSS class names.
  * @param {Object} rawIssue
  * @param {Object|null} improvement
  * @returns {string}
  */
 function deriveCategory(rawIssue, improvement) {
   return (rawIssue.type || improvement?.category || 'general').toLowerCase()
+}
+
+/**
+ * Map a raw category value (either a type key like "plain-english" or a display
+ * name like "Plain English") to the canonical Title Case display name shown in
+ * the Priority Improvements badge.
+ * @param {string} raw
+ * @returns {string}
+ */
+const DISPLAY_PLAIN_ENGLISH = 'Plain English'
+const DISPLAY_CLARITY = 'Clarity & Structure'
+const DISPLAY_GOVUK_STYLE = 'GOV.UK Style Compliance'
+const DISPLAY_COMPLETENESS = 'Content Completeness'
+
+const CATEGORY_DISPLAY_NAMES = {
+  'plain-english': DISPLAY_PLAIN_ENGLISH,
+  'plain english': DISPLAY_PLAIN_ENGLISH,
+  clarity: DISPLAY_CLARITY,
+  'clarity & structure': DISPLAY_CLARITY,
+  accessibility: 'Accessibility',
+  'govuk-style': DISPLAY_GOVUK_STYLE,
+  'govuk style': DISPLAY_GOVUK_STYLE,
+  'govuk style compliance': DISPLAY_GOVUK_STYLE,
+  'gov.uk style compliance': DISPLAY_GOVUK_STYLE,
+  completeness: DISPLAY_COMPLETENESS,
+  'content completeness': DISPLAY_COMPLETENESS
+}
+
+function normalizeCategoryDisplay(raw) {
+  if (!raw) {
+    return ''
+  }
+  return CATEGORY_DISPLAY_NAMES[raw.toLowerCase()] || raw
 }
 
 /**
@@ -124,7 +158,7 @@ class ResultEnvelopeStore {
     return {
       issueId,
       severity: parsedImprovement?.severity || 'medium',
-      category: parsedImprovement?.category || '',
+      category: normalizeCategoryDisplay(parsedImprovement?.category),
       issue: parsedImprovement?.issue || '',
       why: parsedImprovement?.why || '',
       current: parsedImprovement?.current || '',
@@ -260,7 +294,7 @@ class ResultEnvelopeStore {
         return {
           issueId: sortedIssues[seqIdx].issueId,
           severity: 'medium',
-          category: sortedIssues[seqIdx].category || '',
+          category: normalizeCategoryDisplay(sortedIssues[seqIdx].category),
           issue: 'Issue identified',
           why: '',
           current: sortedIssues[seqIdx].evidence || '',
