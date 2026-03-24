@@ -199,9 +199,9 @@ Each issue object must have exactly these four fields:
 - start and end are character offsets into the **original input text as received** — count every character including spaces, punctuation, and newlines
 - end is **exclusive** — inputText.slice(start, end) must yield exactly the problematic span
 - The text field must be the **exact characters** from inputText.slice(start, end) — no paraphrasing, no ellipsis
-- Only mark the **specific problematic span**, not entire paragraphs — prefer the shortest span that captures the issue
+- Mark the **complete meaningful span** — the full word, complete phrase, or entire sentence that has the issue. Never cut a phrase mid-word or mid-clause (e.g. mark "travellers' point of entry" not "travellers' point of")
 - When an entire sentence is the issue (e.g. passive voice, overly long), mark the full sentence
-- When only a word or phrase is the issue (e.g. jargon, "words to avoid"), mark only that word/phrase
+- When only a word or phrase is the issue (e.g. jargon, "words to avoid"), mark only that complete word/phrase
 - Each issue in [ISSUE_POSITIONS] must have a **corresponding [PRIORITY] entry** in [IMPROVEMENTS] — ordered the same way
 - Do NOT include issues for formatting (headings, lists, links) as these are not visible in plain text input
 - If no issues are found, return: {"issues":[]}
@@ -223,8 +223,8 @@ List **all identified improvements** in order of priority (most critical first).
 2. **Category** - which of the 5 categories this improvement addresses
 3. **Issue title** (clear, specific)
 4. **Why this matters** (user impact, GOV.UK compliance)
-5. **Current text** — the **exact verbatim text** from the input that has the problem; must match the 'text' field of the corresponding issue in [ISSUE_POSITIONS] exactly
-6. **Suggested improvement** (a specific, actionable replacement or instruction)
+5. **Current text** — the full sentence or complete meaningful phrase from the input that contains the problem. This gives users enough context to locate and understand the issue. It must contain the span text from [ISSUE_POSITIONS] but can be longer to provide full context (e.g. the whole sentence, not just the problematic word)
+6. **Suggested improvement** — the full corrected version of the CURRENT text, showing exactly what the replacement should look like
 
 **Severity levels:**
 - **critical** - Blocks publication, must be fixed
@@ -346,7 +346,7 @@ If you see text patterns that suggest these elements exist (e.g., "1.", "2." for
    - Field names: CATEGORY:, ISSUE:, WHY:, CURRENT:, SUGGESTED:
 3. In [ISSUE_POSITIONS], return a **single-line JSON object** — {"issues":[...]} — where each issue has start, end (0-based char offsets), type, and text (the exact verbatim characters at those offsets)
 4. Each {"start":N,"end":M,"type":"category","text":"exact text"} entry must correspond 1-to-1 with a [PRIORITY] block in [IMPROVEMENTS], in the same order
-5. The CURRENT: field in each [PRIORITY] block must contain the **exact same text** as the corresponding issue's text field in [ISSUE_POSITIONS]
+5. The CURRENT: field in each [PRIORITY] block must be the **full sentence or complete meaningful phrase** containing the issue — the span text from [ISSUE_POSITIONS] must be contained within it (CURRENT can be longer for context, but must not be shorter)
 6. The [SCORES] section must contain **exactly five categories** in this order: Plain English, Clarity & Structure, Accessibility, GOV.UK Style Compliance, Content Completeness. Do NOT add an "Overall" row.
 7. Score notes must be **generic quality assessments only** — do NOT quote, name, or reference specific words, acronyms, phrases, or terminology from the input content
 8. Do **not** echo back or repeat the original input text anywhere in your response

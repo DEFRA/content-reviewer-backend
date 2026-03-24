@@ -1,37 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 
-// ── Hoisted mocks ─────────────────────────────────────────────────────────────
-
-const { MOCK_S3_SEND, S3_BUCKET } = vi.hoisted(() => ({
-  MOCK_S3_SEND: vi.fn(),
-  S3_BUCKET: 'test-bucket'
-}))
-
-vi.mock('@aws-sdk/client-s3', () => ({
-  S3Client: vi.fn(function () {
-    return { send: MOCK_S3_SEND }
-  }),
-  PutObjectCommand: vi.fn(function (input) {
-    return input
-  }),
-  GetObjectCommand: vi.fn(function (input) {
-    return input
-  })
-}))
-
-vi.mock('../../config.js', () => ({
-  config: {
-    get: vi.fn((key) => {
-      const map = {
-        'aws.region': 'eu-west-2',
-        'aws.endpoint': null,
-        's3.bucket': S3_BUCKET
-      }
-      return map[key] ?? null
-    })
-  }
-}))
-
 vi.mock('./logging/logger.js', () => ({
   createLogger: vi.fn(() => ({
     info: vi.fn(),
@@ -45,15 +13,6 @@ import { resultEnvelopeStore } from './result-envelope.js'
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 const REVIEW_ID = 'review_test-uuid-1234'
-
-function makeS3Body(obj) {
-  const bytes = new TextEncoder().encode(JSON.stringify(obj))
-  return {
-    [Symbol.asyncIterator]: async function* () {
-      yield bytes
-    }
-  }
-}
 
 function makeParsedReview(overrides = {}) {
   return {
@@ -83,17 +42,6 @@ function makeParsedReview(overrides = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks()
-  MOCK_S3_SEND.mockResolvedValue({})
-})
-
-// ── getResultKey ──────────────────────────────────────────────────────────────
-
-describe('getResultKey', () => {
-  it('returns result/{reviewId}.json', () => {
-    expect(resultEnvelopeStore.getResultKey(REVIEW_ID)).toBe(
-      `result/${REVIEW_ID}.json`
-    )
-  })
 })
 
 // ── _mapScores ────────────────────────────────────────────────────────────────
@@ -141,6 +89,17 @@ describe('_mapScores', () => {
     expect(result.plainEnglish).toBe(0)
     expect(result.clarity).toBe(0)
     expect(result.overall).toBe(0)
+  })
+
+  it('maps GOV.UK Style Compliance key as output by Bedrock prompt template', () => {
+    // The prompt template tells Bedrock to output exactly "GOV.UK Style Compliance: X/5 - note"
+    // That lowercases to "gov.uk style compliance" (with dot) — must NOT return 0
+    const raw = {
+      'GOV.UK Style Compliance': { score: 3, note: 'Mostly compliant' }
+    }
+    const result = resultEnvelopeStore._mapScores(raw)
+    expect(result.govukStyle).toBe(60)
+    expect(result.govukStyleNote).toBe('Mostly compliant')
   })
 
   it('falls back to legacy key aliases (style, tone)', () => {
@@ -295,66 +254,11 @@ describe('buildEnvelope', () => {
   })
 })
 
-// ── save ──────────────────────────────────────────────────────────────────────
+// ── buildCompleted (replaces saveCompleted) ───────────────────────────────────
 
-describe('save', () => {
-  it('calls S3 PutObjectCommand with correct key and content-type', async () => {
-    const envelope = resultEnvelopeStore.buildStubEnvelope(REVIEW_ID, 'pending')
-    await resultEnvelopeStore.save(REVIEW_ID, envelope)
-
-    expect(MOCK_S3_SEND).toHaveBeenCalledTimes(1)
-    const cmd = MOCK_S3_SEND.mock.calls[0][0]
-    expect(cmd.Key).toBe(`result/${REVIEW_ID}.json`)
-    expect(cmd.Bucket).toBe(S3_BUCKET)
-    expect(cmd.ContentType).toBe('application/json')
-  })
-
-  it('throws when S3 send rejects', async () => {
-    MOCK_S3_SEND.mockRejectedValueOnce(new Error('S3 write failed'))
-    const envelope = resultEnvelopeStore.buildStubEnvelope(REVIEW_ID, 'pending')
-    await expect(resultEnvelopeStore.save(REVIEW_ID, envelope)).rejects.toThrow(
-      'S3 write failed'
-    )
-  })
-})
-
-// ── get ───────────────────────────────────────────────────────────────────────
-
-describe('get', () => {
-  it('returns parsed envelope from S3', async () => {
-    const stub = resultEnvelopeStore.buildStubEnvelope(REVIEW_ID, 'completed')
-    MOCK_S3_SEND.mockResolvedValueOnce({ Body: makeS3Body(stub) })
-
-    const result = await resultEnvelopeStore.get(REVIEW_ID)
-    expect(result.documentId).toBe(REVIEW_ID)
-    expect(result.status).toBe('completed')
-  })
-
-  it('returns null when the envelope does not exist (NoSuchKey)', async () => {
-    const notFound = new Error('Not found')
-    notFound.name = 'NoSuchKey'
-    MOCK_S3_SEND.mockRejectedValueOnce(notFound)
-
-    const result = await resultEnvelopeStore.get(REVIEW_ID)
-    expect(result).toBeNull()
-  })
-
-  it('rethrows non-NoSuchKey S3 errors', async () => {
-    const err = new Error('S3 read failed')
-    err.name = 'InternalError'
-    MOCK_S3_SEND.mockRejectedValueOnce(err)
-
-    await expect(resultEnvelopeStore.get(REVIEW_ID)).rejects.toThrow(
-      'S3 read failed'
-    )
-  })
-})
-
-// ── saveCompleted ─────────────────────────────────────────────────────────────
-
-describe('saveCompleted', () => {
-  it('builds and persists a completed envelope, returning it', async () => {
-    const result = await resultEnvelopeStore.saveCompleted(
+describe('buildEnvelope — completed', () => {
+  it('builds a completed envelope with correct status and documentId', () => {
+    const result = resultEnvelopeStore.buildEnvelope(
       REVIEW_ID,
       makeParsedReview(),
       { totalTokens: 200 },
@@ -362,21 +266,22 @@ describe('saveCompleted', () => {
     )
     expect(result.status).toBe('completed')
     expect(result.documentId).toBe(REVIEW_ID)
-    expect(MOCK_S3_SEND).toHaveBeenCalledTimes(1)
   })
 })
 
-// ── saveStatus ────────────────────────────────────────────────────────────────
+// ── buildStubEnvelope (replaces saveStatus) ───────────────────────────────────
 
-describe('saveStatus', () => {
-  it('builds and persists a stub envelope with the given status', async () => {
-    const result = await resultEnvelopeStore.saveStatus(REVIEW_ID, 'processing')
+describe('buildStubEnvelope', () => {
+  it('builds a stub envelope with the given status', () => {
+    const result = resultEnvelopeStore.buildStubEnvelope(
+      REVIEW_ID,
+      'processing'
+    )
     expect(result.status).toBe('processing')
-    expect(MOCK_S3_SEND).toHaveBeenCalledTimes(1)
   })
 
-  it('builds and persists a failed stub envelope', async () => {
-    const result = await resultEnvelopeStore.saveStatus(REVIEW_ID, 'failed')
+  it('builds a failed stub envelope with zero issueCount', () => {
+    const result = resultEnvelopeStore.buildStubEnvelope(REVIEW_ID, 'failed')
     expect(result.status).toBe('failed')
     expect(result.issueCount).toBe(0)
   })

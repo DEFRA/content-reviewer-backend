@@ -63,8 +63,8 @@ vi.mock('../common/helpers/canonical-document.js', () => ({
 
 vi.mock('../common/helpers/result-envelope.js', () => ({
   resultEnvelopeStore: {
-    saveStatus: vi.fn().mockResolvedValue(undefined),
-    saveResult: vi.fn().mockResolvedValue(undefined)
+    buildEnvelope: vi.fn().mockReturnValue({ status: 'completed' }),
+    buildStubEnvelope: vi.fn().mockReturnValue({ status: 'pending' })
   }
 }))
 
@@ -110,8 +110,6 @@ beforeEach(() => {
   config.get.mockImplementation(buildDefaultConfigMock())
   // vi.resetAllMocks() strips return values, so restore the Promise return
   // that review-helpers.js relies on (.catch() is called on the result)
-  resultEnvelopeStore.saveStatus.mockResolvedValue(undefined)
-  resultEnvelopeStore.saveResult.mockResolvedValue(undefined)
 })
 
 // ============ CONSTANTS ============
