@@ -343,6 +343,123 @@ describe('_hasRefFields', () => {
   })
 })
 
+// ── _findNearestOccurrence ────────────────────────────────────────────────────
+
+describe('_findNearestOccurrence', () => {
+  it('returns null when searchText is empty', () => {
+    expect(
+      resultEnvelopeStore._findNearestOccurrence('', 'some text', 5)
+    ).toBeNull()
+  })
+
+  it('returns null when canonicalText is empty', () => {
+    expect(resultEnvelopeStore._findNearestOccurrence('word', '', 5)).toBeNull()
+  })
+
+  it('returns null when text is not found', () => {
+    expect(
+      resultEnvelopeStore._findNearestOccurrence('missing', 'hello world', 5)
+    ).toBeNull()
+  })
+
+  it('returns the single occurrence when text appears once', () => {
+    const result = resultEnvelopeStore._findNearestOccurrence(
+      CATEGORY_UTILISE_TEXT,
+      'The department should utilise all resources.',
+      0
+    )
+    expect(result).toEqual({ start: 22, end: 29 })
+  })
+
+  it('picks the occurrence nearest the hint midpoint for duplicate text', () => {
+    const text = 'use good words and use plain words here'
+    // "use" at 0 (mid=1.5) and 19 (mid=20.5); hintMid=26.5 → pick 19
+    const result = resultEnvelopeStore._findNearestOccurrence('use', text, 26.5)
+    expect(result).toEqual({ start: 19, end: 22 })
+  })
+})
+
+// ── _resolveIssuePosition ────────────────────────────────────────────────────
+
+const RESOLVE_TEXT = 'The department should utilise all resources available.'
+// "utilise" in RESOLVE_TEXT: start=22, end=29
+const RESOLVE_CORRECT_START = 22
+const RESOLVE_CORRECT_END = 29
+const RESOLVE_WRONG_START = 5
+const RESOLVE_WRONG_END = 12
+
+describe('_resolveIssuePosition', () => {
+  it('returns unchanged offsets when slice already matches issueText', () => {
+    const result = resultEnvelopeStore._resolveIssuePosition(
+      RESOLVE_CORRECT_START,
+      RESOLVE_CORRECT_END,
+      CATEGORY_UTILISE_TEXT,
+      RESOLVE_TEXT
+    )
+    expect(result.start).toBe(RESOLVE_CORRECT_START)
+    expect(result.end).toBe(RESOLVE_CORRECT_END)
+  })
+
+  it('finds correct position via issueText search when offset is wrong', () => {
+    const result = resultEnvelopeStore._resolveIssuePosition(
+      RESOLVE_WRONG_START,
+      RESOLVE_WRONG_END,
+      CATEGORY_UTILISE_TEXT,
+      RESOLVE_TEXT
+    )
+    expect(result.start).toBe(RESOLVE_CORRECT_START)
+    expect(result.end).toBe(RESOLVE_CORRECT_END)
+  })
+
+  it('uses fallbackText when issueText is not found in canonicalText', () => {
+    // issueText is wrong/absent but improvement.current contains the verbatim phrase
+    const result = resultEnvelopeStore._resolveIssuePosition(
+      0,
+      5,
+      'xyzzy-not-present',
+      RESOLVE_TEXT,
+      CATEGORY_UTILISE_TEXT // fallbackText = improvement.current
+    )
+    expect(result.start).toBe(RESOLVE_CORRECT_START)
+    expect(result.end).toBe(RESOLVE_CORRECT_END)
+  })
+
+  it('returns original offsets when both issueText and fallbackText are not found', () => {
+    const result = resultEnvelopeStore._resolveIssuePosition(
+      0,
+      5,
+      'xyzzy-not-present',
+      RESOLVE_TEXT,
+      'also-not-present'
+    )
+    expect(result.start).toBe(0)
+    expect(result.end).toBe(5)
+  })
+
+  it('returns original offsets when issueText is empty and no fallback provided', () => {
+    const result = resultEnvelopeStore._resolveIssuePosition(
+      5,
+      10,
+      '',
+      RESOLVE_TEXT
+    )
+    expect(result.start).toBe(5)
+    expect(result.end).toBe(10)
+  })
+
+  it('picks the occurrence nearest the hint midpoint for duplicate text', () => {
+    const text = 'use good words and use plain words here'
+    const result = resultEnvelopeStore._resolveIssuePosition(
+      25,
+      28,
+      'use',
+      text
+    )
+    expect(result.start).toBe(19)
+    expect(result.end).toBe(22)
+  })
+})
+
 // ── _snapToWordBoundary ───────────────────────────────────────────────────────
 
 const SNAP_TEXT = 'The department should utilise all resources.'

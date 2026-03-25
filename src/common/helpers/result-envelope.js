@@ -118,6 +118,133 @@ class ResultEnvelopeStore {
   // ─── Private helpers ───────────────────────────────────────────────────────
 
   /**
+   * Search canonicalText for the nearest occurrence of `searchText` to
+   * `hintMid`.  Returns `{ start, end }` when found, or `null` when the
+   * text is not present in canonicalText.
+   *
+   * @param {string} searchText
+   * @param {string} canonicalText
+   * @param {number} hintMid  - midpoint of the originally-reported span (used
+   *   to disambiguate when searchText appears more than once)
+   * @returns {{ start: number, end: number } | null}
+   */
+  _findNearestOccurrence(searchText, canonicalText, hintMid) {
+    if (!searchText || !canonicalText) {
+      return null
+    }
+    let bestStart = -1
+    let bestDistance = Infinity
+    let searchFrom = 0
+
+    while (searchFrom <= canonicalText.length) {
+      const found = canonicalText.indexOf(searchText, searchFrom)
+      if (found === -1) {
+        break
+      }
+      const mid = found + searchText.length / 2
+      const dist = Math.abs(mid - hintMid)
+      if (dist < bestDistance) {
+        bestDistance = dist
+        bestStart = found
+      }
+      searchFrom = found + 1
+    }
+
+    if (bestStart === -1) {
+      return null
+    }
+    return { start: bestStart, end: bestStart + searchText.length }
+  }
+
+  /**
+   * Resolve the best character-offset pair for a raw issue.
+   *
+   * Bedrock sometimes produces `start`/`end` values that are off (e.g. the
+   * model counted from a different baseline or the document was pre-processed
+   * differently).  When the canonical text slice at the given offsets does not
+   * match the expected text, the method tries the following in order:
+   *
+   *   1. Fast path  — the slice at [start, end) already equals issueText.
+   *   2. issueText search — find issueText anywhere in canonicalText.
+   *   3. fallbackText search — find the improvement's `current` field text,
+   *      which Bedrock always fills with the verbatim problematic phrase.
+   *
+   * @param {number} start
+   * @param {number} end
+   * @param {string} issueText      - rawIssue.text from [ISSUE_POSITIONS]
+   * @param {string} canonicalText
+   * @param {string|null} [fallbackText]  - improvement.current (verbatim
+   *   problematic text from the document; used when issueText search fails)
+   * @returns {{ start: number, end: number }}
+   */
+  _resolveIssuePosition(
+    start,
+    end,
+    issueText,
+    canonicalText,
+    fallbackText = null
+  ) {
+    // Fast path: offsets are already correct
+    if (issueText && canonicalText.slice(start, end) === issueText) {
+      return { start, end }
+    }
+
+    const hintMid = (start + end) / 2
+
+    // First attempt: search using the verbatim text from [ISSUE_POSITIONS]
+    if (issueText) {
+      const found = this._findNearestOccurrence(
+        issueText,
+        canonicalText,
+        hintMid
+      )
+      if (found) {
+        logger.info(
+          {
+            originalStart: start,
+            originalEnd: end,
+            resolvedStart: found.start,
+            resolvedEnd: found.end,
+            source: 'issueText',
+            text: issueText.substring(0, 60)
+          },
+          '[result-envelope] Resolved issue position via issueText search'
+        )
+        return found
+      }
+    }
+
+    // Second attempt: use the improvement's current field as a fallback.
+    // The prompt instructs Bedrock to set current = the full sentence or phrase
+    // from the document that contains the problem, so this is always verbatim.
+    if (fallbackText) {
+      const found = this._findNearestOccurrence(
+        fallbackText,
+        canonicalText,
+        hintMid
+      )
+      if (found) {
+        logger.info(
+          {
+            originalStart: start,
+            originalEnd: end,
+            resolvedStart: found.start,
+            resolvedEnd: found.end,
+            source: 'fallbackText (improvement.current)',
+            text: fallbackText.substring(0, 60)
+          },
+          '[result-envelope] Resolved issue position via improvement.current fallback'
+        )
+        return found
+      }
+    }
+
+    // Text not found by any method — return original offsets; the
+    // _buildPairs validity filter will discard them if they are out of range.
+    return { start, end }
+  }
+
+  /**
    * Map a parsed issue + its paired improvement into the spec issue object.
    *
    * The `evidence` field is always taken from the canonical text slice
@@ -131,8 +258,25 @@ class ResultEnvelopeStore {
    * @returns {Object}
    */
   _mapIssue(rawIssue, improvement, idx, canonicalText) {
-    const start = rawIssue.start ?? 0
-    const end = rawIssue.end ?? 0
+    let start = rawIssue.start ?? 0
+    let end = rawIssue.end ?? 0
+
+    // Attempt to resolve the true position using the verbatim text field as
+    // ground truth, with improvement.current as a secondary fallback.
+    // This corrects cases where Bedrock's offsets are wrong but the text
+    // fields are accurate (e.g. offsets counted from the message start rather
+    // than from the content text).
+    if (canonicalText) {
+      const resolved = this._resolveIssuePosition(
+        start,
+        end,
+        rawIssue.text || '',
+        canonicalText,
+        improvement?.current || null
+      )
+      start = resolved.start
+      end = resolved.end
+    }
 
     return {
       issueId: `issue-${randomUUID()}`,
@@ -612,11 +756,25 @@ class ResultEnvelopeStore {
     const rawIssues = reviewedContent.issues || []
 
     // Step 1: Build preliminary spec issue objects (original AI order).
-    // Issues are mapped independently of improvements — pairing is deferred
-    // to _sortAndAlignPairs which uses ref-based matching (or index fallback).
-    const prelimIssues = rawIssues.map((rawIssue, idx) =>
-      this._mapIssue(rawIssue, null, idx, canonicalText)
-    )
+    // Pre-pair each rawIssue with its corresponding parsedImprovement (by ref
+    // first, index fallback) so that _mapIssue can use improvement.current as
+    // a fallback text for position resolution.  The definitive pairing is still
+    // performed by _sortAndAlignPairs — this early pairing is only for
+    // position resolution.
+    const improvByRef = new Map()
+    for (const imp of parsedImprovements) {
+      if (imp.ref !== undefined && !improvByRef.has(imp.ref)) {
+        improvByRef.set(imp.ref, imp)
+      }
+    }
+
+    const prelimIssues = rawIssues.map((rawIssue, idx) => {
+      const pairedImp =
+        rawIssue.ref !== undefined
+          ? (improvByRef.get(rawIssue.ref) ?? parsedImprovements[idx] ?? null)
+          : (parsedImprovements[idx] ?? null)
+      return this._mapIssue(rawIssue, pairedImp, idx, canonicalText)
+    })
 
     // Build improvement objects independently — all improvements are preserved
     // at this stage; none are discarded due to array length mismatch.
