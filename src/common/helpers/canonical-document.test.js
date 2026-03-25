@@ -208,12 +208,12 @@ describe('_redactAndNormalise section stripping', () => {
     expect(MOCK_SECTION_STRIP).toHaveBeenCalledOnce()
   })
 
-  it('DOES strip for URL source type', () => {
+  it('does NOT strip for URL source type', () => {
     canonicalDocumentStore._redactAndNormalise({
       text: 'Some page content.',
       sourceType: SOURCE_TYPES.URL
     })
-    expect(MOCK_SECTION_STRIP).toHaveBeenCalledOnce()
+    expect(MOCK_SECTION_STRIP).not.toHaveBeenCalled()
   })
 
   it('passes stripped text to PII redactor', () => {
@@ -514,18 +514,14 @@ describe('_redactAndNormalise URL source — stripHtmlTags branches', () => {
     expect(callArg).not.toContain('&amp;')
   })
 
-  it('collapses multiple whitespace tokens to a single space', () => {
-    MOCK_SECTION_STRIP.mockReturnValueOnce({
-      strippedText: 'word1 word2',
-      stats: { sectionsRemoved: [] }
-    })
+  it('collapses multiple spaces on a line but preserves paragraph breaks', () => {
     canonicalDocumentStore._redactAndNormalise({
       text: '<div>word1   \n\n   word2</div>',
       sourceType: SOURCE_TYPES.URL
     })
     const callArg = MOCK_PII_REDACT.mock.calls[0][0]
-    // After tag stripping + whitespace collapse the two words should be
-    // separated by a single space, not a newline or multiple spaces.
-    expect(callArg).not.toMatch(/\s{2,}/)
+    // Multiple horizontal spaces are collapsed to one; paragraph breaks (\n\n)
+    // are preserved as structural separators — URL sources skip section stripping.
+    expect(callArg).not.toMatch(/ {2,}/)
   })
 })
