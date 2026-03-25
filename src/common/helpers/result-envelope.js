@@ -651,7 +651,7 @@ class ResultEnvelopeStore {
         sectionCount: annotatedSections.length,
         scoreKeys: Object.keys(scores)
       },
-      '[result-envelope] Envelope built'
+      '[result-envelope] Envelope built — issues and improvements are 1:1 aligned'
     )
 
     return {

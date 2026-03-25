@@ -206,6 +206,7 @@ Each issue object must have exactly these five fields:
 - end is **exclusive** — inputText.slice(start, end) must yield exactly the problematic span
 - The text field must be the **exact characters** from inputText.slice(start, end) — no paraphrasing, no ellipsis
 - Mark the **complete meaningful span** — the full word, complete phrase, or entire sentence that has the issue. Never cut a phrase mid-word or mid-clause (e.g. mark "travellers' point of entry" not "travellers' point of")
+- Mark the **complete meaningful span** — the full word, complete phrase, or entire sentence that has the issue. Never cut a phrase mid-word or mid-clause (e.g. mark "travellers' point of entry" not "travellers' point of")
 - When an entire sentence is the issue (e.g. passive voice, overly long), mark the full sentence
 - When only a word or phrase is the issue (e.g. jargon, "words to avoid"), mark only that complete word/phrase
 - Each issue in [ISSUE_POSITIONS] must have a **corresponding [PRIORITY] entry** in [IMPROVEMENTS] linked by the matching REF number
