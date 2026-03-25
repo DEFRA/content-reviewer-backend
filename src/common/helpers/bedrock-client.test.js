@@ -215,10 +215,14 @@ describe('bedrockClient.sendMessage', () => {
 // ============ sendMessage - AWS error handling ============
 
 describe('bedrockClient.sendMessage - AWS credential errors', () => {
+  beforeEach(() => {
+    vi.spyOn(bedrockClient, '_sleep').mockResolvedValue(undefined)
+  })
+
   it('handles CredentialsProviderError by throwing friendly message', async () => {
     const credError = new Error('No credentials')
     credError.name = 'CredentialsProviderError'
-    MOCK_SEND.mockRejectedValueOnce(credError)
+    MOCK_SEND.mockRejectedValue(credError)
 
     await expect(
       bedrockClient.sendMessage(SAMPLE_USER_MESSAGE)
@@ -228,7 +232,7 @@ describe('bedrockClient.sendMessage - AWS credential errors', () => {
   it('handles AccessDeniedException by throwing friendly message', async () => {
     const accessError = new Error('Denied')
     accessError.name = 'AccessDeniedException'
-    MOCK_SEND.mockRejectedValueOnce(accessError)
+    MOCK_SEND.mockRejectedValue(accessError)
 
     await expect(
       bedrockClient.sendMessage(SAMPLE_USER_MESSAGE)
@@ -238,17 +242,17 @@ describe('bedrockClient.sendMessage - AWS credential errors', () => {
   it('handles ResourceNotFoundException by throwing friendly message', async () => {
     const notFoundError = new Error('Not found')
     notFoundError.name = 'ResourceNotFoundException'
-    MOCK_SEND.mockRejectedValueOnce(notFoundError)
+    MOCK_SEND.mockRejectedValue(notFoundError)
 
     await expect(
       bedrockClient.sendMessage(SAMPLE_USER_MESSAGE)
     ).rejects.toThrow('Bedrock resource not found')
   })
 
-  it('handles ThrottlingException by throwing friendly message', async () => {
+  it('handles ThrottlingException by throwing friendly message after retries', async () => {
     const throttleError = new Error('Too many tokens')
     throttleError.name = 'ThrottlingException'
-    MOCK_SEND.mockRejectedValueOnce(throttleError)
+    MOCK_SEND.mockRejectedValue(throttleError)
 
     await expect(
       bedrockClient.sendMessage(SAMPLE_USER_MESSAGE)
@@ -258,7 +262,7 @@ describe('bedrockClient.sendMessage - AWS credential errors', () => {
   it('handles ValidationException by throwing friendly message', async () => {
     const validationError = new Error('Invalid input')
     validationError.name = 'ValidationException'
-    MOCK_SEND.mockRejectedValueOnce(validationError)
+    MOCK_SEND.mockRejectedValue(validationError)
 
     await expect(
       bedrockClient.sendMessage(SAMPLE_USER_MESSAGE)
@@ -267,30 +271,34 @@ describe('bedrockClient.sendMessage - AWS credential errors', () => {
 })
 
 describe('bedrockClient.sendMessage - AWS service errors', () => {
-  it('handles ServiceUnavailableException by throwing friendly message', async () => {
+  beforeEach(() => {
+    vi.spyOn(bedrockClient, '_sleep').mockResolvedValue(undefined)
+  })
+
+  it('handles ServiceUnavailableException by throwing friendly message after retries', async () => {
     const serviceError = new Error('Service down')
     serviceError.name = 'ServiceUnavailableException'
-    MOCK_SEND.mockRejectedValueOnce(serviceError)
+    MOCK_SEND.mockRejectedValue(serviceError)
 
     await expect(
       bedrockClient.sendMessage(SAMPLE_USER_MESSAGE)
     ).rejects.toThrow('temporarily unavailable')
   })
 
-  it('handles TimeoutError by throwing friendly message', async () => {
+  it('handles TimeoutError by throwing friendly message after retries', async () => {
     const timeoutError = new Error('Request timed out')
     timeoutError.name = 'TimeoutError'
-    MOCK_SEND.mockRejectedValueOnce(timeoutError)
+    MOCK_SEND.mockRejectedValue(timeoutError)
 
     await expect(
       bedrockClient.sendMessage(SAMPLE_USER_MESSAGE)
     ).rejects.toThrow('timed out')
   })
 
-  it('handles ETIMEDOUT code by throwing friendly message', async () => {
+  it('handles ETIMEDOUT code by throwing friendly message after retries', async () => {
     const etimedoutError = new Error('Connection timed out')
     etimedoutError.code = 'ETIMEDOUT'
-    MOCK_SEND.mockRejectedValueOnce(etimedoutError)
+    MOCK_SEND.mockRejectedValue(etimedoutError)
 
     await expect(
       bedrockClient.sendMessage(SAMPLE_USER_MESSAGE)
@@ -300,7 +308,7 @@ describe('bedrockClient.sendMessage - AWS service errors', () => {
   it('handles unknown errors with generic message', async () => {
     const unknownError = new Error('Unexpected failure')
     unknownError.name = 'UnknownError'
-    MOCK_SEND.mockRejectedValueOnce(unknownError)
+    MOCK_SEND.mockRejectedValue(unknownError)
 
     await expect(
       bedrockClient.sendMessage(SAMPLE_USER_MESSAGE)
@@ -501,5 +509,141 @@ describe('bedrockClient._buildInferenceConfig', () => {
     const config = bedrockClient._buildInferenceConfig()
 
     expect(config.topP).toBe(TOP_P)
+  })
+})
+
+// ============ _isRetryableError ============
+
+describe('bedrockClient._isRetryableError', () => {
+  it('returns true for ThrottlingException', () => {
+    const error = new Error('throttled')
+    error.name = 'ThrottlingException'
+    expect(bedrockClient._isRetryableError(error)).toBe(true)
+  })
+
+  it('returns true for ServiceUnavailableException', () => {
+    const error = new Error('unavailable')
+    error.name = 'ServiceUnavailableException'
+    expect(bedrockClient._isRetryableError(error)).toBe(true)
+  })
+
+  it('returns true for TimeoutError', () => {
+    const error = new Error('timeout')
+    error.name = 'TimeoutError'
+    expect(bedrockClient._isRetryableError(error)).toBe(true)
+  })
+
+  it('returns true for ETIMEDOUT code', () => {
+    const error = new Error('timed out')
+    error.code = 'ETIMEDOUT'
+    expect(bedrockClient._isRetryableError(error)).toBe(true)
+  })
+
+  it('returns true for ECONNRESET code', () => {
+    const error = new Error('connection reset')
+    error.code = 'ECONNRESET'
+    expect(bedrockClient._isRetryableError(error)).toBe(true)
+  })
+
+  it('returns false for non-retryable errors', () => {
+    const error = new Error('auth failed')
+    error.name = 'AccessDeniedException'
+    expect(bedrockClient._isRetryableError(error)).toBe(false)
+  })
+
+  it('returns false for ValidationException', () => {
+    const error = new Error('invalid input')
+    error.name = 'ValidationException'
+    expect(bedrockClient._isRetryableError(error)).toBe(false)
+  })
+})
+
+// ============ _sleep ============
+
+describe('bedrockClient._sleep', () => {
+  it('resolves after the given delay', async () => {
+    await expect(bedrockClient._sleep(0)).resolves.toBeUndefined()
+  })
+})
+
+// ============ sendMessage - retry behaviour ============
+
+describe('bedrockClient.sendMessage - retry on retryable errors', () => {
+  const SAMPLE_RESPONSE_TEXT = 'Content looks good.'
+
+  function buildBedrockResponse() {
+    return {
+      output: { message: { content: [{ text: SAMPLE_RESPONSE_TEXT }] } },
+      usage: {
+        inputTokens: INPUT_TOKENS,
+        outputTokens: OUTPUT_TOKENS,
+        totalTokens: TOTAL_TOKENS
+      },
+      trace: { guardrail: { action: 'NONE', assessments: [] } },
+      stopReason: 'end_turn'
+    }
+  }
+
+  beforeEach(() => {
+    vi.spyOn(bedrockClient, '_sleep').mockResolvedValue(undefined)
+  })
+
+  it('retries and succeeds after a ThrottlingException on first attempt', async () => {
+    const throttleError = new Error('throttled')
+    throttleError.name = 'ThrottlingException'
+    MOCK_SEND.mockRejectedValueOnce(throttleError)
+    MOCK_SEND.mockResolvedValueOnce(buildBedrockResponse())
+
+    const result = await bedrockClient.sendMessage(SAMPLE_USER_MESSAGE)
+
+    expect(result.success).toBe(true)
+    expect(result.content).toBe(SAMPLE_RESPONSE_TEXT)
+    expect(bedrockClient._sleep).toHaveBeenCalledOnce()
+  })
+
+  it('retries and succeeds after a ServiceUnavailableException', async () => {
+    const serviceError = new Error('unavailable')
+    serviceError.name = 'ServiceUnavailableException'
+    MOCK_SEND.mockRejectedValueOnce(serviceError)
+    MOCK_SEND.mockResolvedValueOnce(buildBedrockResponse())
+
+    const result = await bedrockClient.sendMessage(SAMPLE_USER_MESSAGE)
+
+    expect(result.success).toBe(true)
+    expect(bedrockClient._sleep).toHaveBeenCalledOnce()
+  })
+
+  it('throws after exhausting all retries on repeated ThrottlingException', async () => {
+    const throttleError = new Error('throttled')
+    throttleError.name = 'ThrottlingException'
+    MOCK_SEND.mockRejectedValue(throttleError)
+
+    await expect(
+      bedrockClient.sendMessage(SAMPLE_USER_MESSAGE)
+    ).rejects.toThrow('token quota exceeded')
+  })
+
+  it('includes system prompt in command input when provided', async () => {
+    MOCK_SEND.mockResolvedValueOnce(buildBedrockResponse())
+
+    await bedrockClient.sendMessage(
+      SAMPLE_USER_MESSAGE,
+      [],
+      'You are a helpful assistant.'
+    )
+
+    const sentCommand = MOCK_SEND.mock.calls[0][0]
+    expect(sentCommand.system).toEqual([
+      { text: 'You are a helpful assistant.' }
+    ])
+  })
+
+  it('omits system field from command when systemPrompt is null', async () => {
+    MOCK_SEND.mockResolvedValueOnce(buildBedrockResponse())
+
+    await bedrockClient.sendMessage(SAMPLE_USER_MESSAGE, [], null)
+
+    const sentCommand = MOCK_SEND.mock.calls[0][0]
+    expect(sentCommand.system).toBeUndefined()
   })
 })

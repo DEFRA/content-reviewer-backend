@@ -1,10 +1,8 @@
 import { createLogger } from '../logging/logger.js'
 import { config } from '../../../config.js'
-import { config } from '../../../config.js'
 import { reviewRepository } from '../review-repository.js'
 import { resultEnvelopeStore } from '../result-envelope.js'
 import { ContentExtractor } from './content-extractor.js'
-// resultEnvelopeStore is used only for building envelopes (no S3 writes)
 // resultEnvelopeStore is used only for building envelopes (no S3 writes)
 import { BedrockReviewProcessor } from './bedrock-processor.js'
 import { ErrorHandler } from './error-handler.js'
@@ -338,16 +336,6 @@ export class ReviewProcessor {
     bedrockResult,
     canonicalText = ''
   ) {
-    // Build the spec-compliant envelope (annotatedSections, scores, improvements, etc.)
-    // and embed it directly into reviews/{reviewId}.json — no separate S3 file needed.
-    const envelope = resultEnvelopeStore.buildEnvelope(
-      reviewId,
-      parseResult.parsedReview,
-      bedrockResult.bedrockResponse.usage,
-      canonicalText,
-      'completed'
-    )
-
     // Build the spec-compliant envelope (annotatedSections, scores, improvements, etc.)
     // and embed it directly into reviews/{reviewId}.json — no separate S3 file needed.
     const envelope = resultEnvelopeStore.buildEnvelope(
