@@ -234,16 +234,6 @@ class BedrockClient {
   }
 
   /**
-   * Send a message to Claude and get a response.
-   *
-   * @param {string} userMessage          - The user's message/prompt
-   * @param {Array}  conversationHistory  - Optional previous messages for context
-   * @param {string} [systemPrompt]       - Optional system prompt passed via the
-   *   Bedrock Converse `system` parameter (preferred over injecting as a message).
-   *   When provided the prompt is NOT injected into the messages array.
-   * @returns {Promise<Object>} Response with content, usage stats, and guardrail metrics
-   */
-  /**
    * Returns true for errors that are safe to retry (throttling, transient
    * service issues, timeouts). Other errors (auth, validation) fail fast.
    * @private
@@ -266,6 +256,16 @@ class BedrockClient {
     return new Promise((resolve) => setTimeout(resolve, ms))
   }
 
+  /**
+   * Send a message to Claude and get a response.
+   *
+   * @param {string} userMessage          - The user's message/prompt
+   * @param {Array}  conversationHistory  - Optional previous messages for context
+   * @param {string} [systemPrompt]       - Optional system prompt passed via the
+   *   Bedrock Converse `system` parameter (preferred over injecting as a message).
+   *   When provided the prompt is NOT injected into the messages array.
+   * @returns {Promise<Object>} Response with content, usage stats, and guardrail metrics
+   */
   async sendMessage(
     userMessage,
     conversationHistory = [],
@@ -332,8 +332,8 @@ class BedrockClient {
     }
 
     // Should not reach here, but guard against it
-    const errorDetails = this._extractErrorDetails(lastError)
-    logger.error('Bedrock API exhausted all retries', errorDetails)
+    const exhaustedErrorDetails = this._extractErrorDetails(lastError)
+    logger.error('Bedrock API exhausted all retries', exhaustedErrorDetails)
     return this._handleAwsError(lastError)
   }
 
