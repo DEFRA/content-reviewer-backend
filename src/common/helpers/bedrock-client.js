@@ -38,7 +38,6 @@ class BedrockClient {
     this.temperature = config.get('bedrock.temperature')
     this.topP = config.get('bedrock.topP')
     this.timeout = 360000 // 360 seconds — large documents (100k chars) can take 3-5 min
-    this.timeout = 360000 // 360 seconds — large documents (100k chars) can take 3-5 min
 
     this.client = new BedrockRuntimeClient({
       region: this.region,
@@ -235,6 +234,29 @@ class BedrockClient {
   }
 
   /**
+   * Returns true for errors that are safe to retry (throttling, transient
+   * service issues, timeouts). Other errors (auth, validation) fail fast.
+   * @private
+   */
+  _isRetryableError(error) {
+    return (
+      error.name === 'ThrottlingException' ||
+      error.name === 'ServiceUnavailableException' ||
+      error.name === 'TimeoutError' ||
+      error.code === 'ETIMEDOUT' ||
+      error.code === 'ECONNRESET'
+    )
+  }
+
+  /**
+   * Sleep for the given number of milliseconds.
+   * @private
+   */
+  _sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms))
+  }
+
+  /**
    * Send a message to Claude and get a response.
    *
    * @param {string} userMessage          - The user's message/prompt
@@ -244,52 +266,6 @@ class BedrockClient {
    *   When provided the prompt is NOT injected into the messages array.
    * @returns {Promise<Object>} Response with content, usage stats, and guardrail metrics
    */
-  /**
-   * Returns true for errors that are safe to retry (throttling, transient
-   * service issues, timeouts). Other errors (auth, validation) fail fast.
-   * @private
-   */
-  _isRetryableError(error) {
-    return (
-      error.name === 'ThrottlingException' ||
-      error.name === 'ServiceUnavailableException' ||
-      error.name === 'TimeoutError' ||
-      error.code === 'ETIMEDOUT' ||
-      error.code === 'ECONNRESET'
-    )
-  }
-
-  /**
-   * Sleep for the given number of milliseconds.
-   * @private
-   */
-  _sleep(ms) {
-    return new Promise((resolve) => setTimeout(resolve, ms))
-  }
-
-  /**
-   * Returns true for errors that are safe to retry (throttling, transient
-   * service issues, timeouts). Other errors (auth, validation) fail fast.
-   * @private
-   */
-  _isRetryableError(error) {
-    return (
-      error.name === 'ThrottlingException' ||
-      error.name === 'ServiceUnavailableException' ||
-      error.name === 'TimeoutError' ||
-      error.code === 'ETIMEDOUT' ||
-      error.code === 'ECONNRESET'
-    )
-  }
-
-  /**
-   * Sleep for the given number of milliseconds.
-   * @private
-   */
-  _sleep(ms) {
-    return new Promise((resolve) => setTimeout(resolve, ms))
-  }
-
   async sendMessage(
     userMessage,
     conversationHistory = [],
@@ -308,15 +284,6 @@ class BedrockClient {
     const messages = this._buildMessages(userMessage, conversationHistory)
     const guardrailConfig = this._buildGuardrailConfig()
     const inferenceConfig = this._buildInferenceConfig()
-    // Retry up to 4 times on throttling / transient errors with exponential
-    // backoff: 30 s → 60 s → 120 s → 120 s (capped).
-    const MAX_RETRIES = 4
-    const BASE_BACKOFF_MS = 30_000
-    const MAX_BACKOFF_MS = 120_000
-
-    const messages = this._buildMessages(userMessage, conversationHistory)
-    const guardrailConfig = this._buildGuardrailConfig()
-    const inferenceConfig = this._buildInferenceConfig()
 
     const commandInput = {
       modelId: this.inferenceProfileArn,
@@ -324,16 +291,7 @@ class BedrockClient {
       inferenceConfig,
       guardrailConfig
     }
-    const commandInput = {
-      modelId: this.inferenceProfileArn,
-      messages,
-      inferenceConfig,
-      guardrailConfig
-    }
 
-    if (systemPrompt) {
-      commandInput.system = [{ text: systemPrompt }]
-    }
     if (systemPrompt) {
       commandInput.system = [{ text: systemPrompt }]
     }
