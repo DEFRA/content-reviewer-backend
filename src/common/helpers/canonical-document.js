@@ -347,15 +347,18 @@ class CanonicalDocumentStore {
         .trim()
     }
 
-    // ── Step 0b: Front-matter stripping (file and URL sources only) ──────────
+    // ── Step 0b: Front-matter stripping (file sources only) ─────────────────
     // Title pages, copyright/imprint pages and tables of contents are structural
-    // boilerplate that add noise for the AI without containing reviewable content.
-    // We skip this for free-text pastes (SOURCE_TYPES.TEXT) because those are
-    // direct user input and we must not silently discard any of their content.
+    // boilerplate found in PDFs/uploaded files that add noise for the AI.
+    // URL sources are explicitly excluded: GOV.UK pages do not have PDF-style
+    // front-matter, and the section stripper would falsely classify the page
+    // H1 (short first "page") as a title page and the navigation contents list
+    // as a TOC, stripping legitimate reviewable content.
+    // Free-text pastes (SOURCE_TYPES.TEXT) are also skipped — direct user input
+    // must never be silently discarded.
     let sectionStripStats = null
 
-    const shouldStrip =
-      sourceType === SOURCE_TYPES.FILE || sourceType === SOURCE_TYPES.URL
+    const shouldStrip = sourceType === SOURCE_TYPES.FILE
 
     if (shouldStrip) {
       const { strippedText, stats } = documentSectionStripper.strip(workingText)

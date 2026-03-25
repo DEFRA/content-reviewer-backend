@@ -3,6 +3,9 @@ import { createLogger } from '../common/helpers/logging/logger.js'
 
 const logger = createLogger()
 
+const HTTP_OK = 200
+const HTTP_INTERNAL_SERVER_ERROR = 500
+
 const adminRoutes = {
   plugin: {
     name: 'adminRoutes',
@@ -20,7 +23,7 @@ const adminRoutes = {
                   message: 'System prompt uploaded to S3 successfully',
                   timestamp: new Date().toISOString()
                 })
-                .code(200)
+                .code(HTTP_OK)
             } catch (error) {
               logger.error(
                 { error: error.message },
@@ -31,7 +34,7 @@ const adminRoutes = {
                   message: 'Failed to upload system prompt',
                   error: error.message
                 })
-                .code(500)
+                .code(HTTP_INTERNAL_SERVER_ERROR)
             }
           }
         },
@@ -47,7 +50,7 @@ const adminRoutes = {
                   'System prompt cache cleared — next review will fetch fresh prompt',
                 timestamp: new Date().toISOString()
               })
-              .code(200)
+              .code(HTTP_OK)
           }
         }
       ])
