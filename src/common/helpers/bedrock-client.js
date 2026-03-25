@@ -11,6 +11,9 @@ const ERROR_MESSAGES = {
   SERIALIZE_ERROR: 'Could not serialize full error'
 }
 
+// 360 seconds — large documents (100k chars) can take 3-5 min
+const BEDROCK_TIMEOUT_MS = 360_000
+
 /**
  * CDP-Compliant Bedrock Client
  *
@@ -37,7 +40,7 @@ class BedrockClient {
     this.maxTokens = config.get('bedrock.maxTokens')
     this.temperature = config.get('bedrock.temperature')
     this.topP = config.get('bedrock.topP')
-    this.timeout = 360000 // 360 seconds — large documents (100k chars) can take 3-5 min
+    this.timeout = BEDROCK_TIMEOUT_MS
 
     this.client = new BedrockRuntimeClient({
       region: this.region,
@@ -59,10 +62,6 @@ class BedrockClient {
         inferenceProfileArn: this.inferenceProfileArn,
         guardrailArn: this.guardrailArn,
         region: this.region,
-        awsProfile: process.env.AWS_PROFILE || 'none',
-        hasAccessKeyId: !!process.env.AWS_ACCESS_KEY_ID,
-        hasSecretAccessKey: !!process.env.AWS_SECRET_ACCESS_KEY,
-        hasSessionToken: !!process.env.AWS_SESSION_TOKEN,
         nodeEnv: process.env.NODE_ENV
       }
     )
@@ -324,17 +323,15 @@ class BedrockClient {
           continue
         }
 
-        // Non-retryable error or final attempt — log and convert
-        const errorDetails = this._extractErrorDetails(error)
-        logger.error('Bedrock API error', errorDetails)
-        return this._handleAwsError(error)
+        // Non-retryable error or final attempt — exit retry loop
+        break
       }
     }
 
-    // Should not reach here, but guard against it
-    const exhaustedErrorDetails = this._extractErrorDetails(lastError)
-    logger.error('Bedrock API exhausted all retries', exhaustedErrorDetails)
-    return this._handleAwsError(lastError)
+    // All attempts exhausted or non-retryable error encountered
+    const errorDetails = this._extractErrorDetails(lastError)
+    logger.error('Bedrock API error', errorDetails)
+    this._handleAwsError(lastError)
   }
 
   /**
