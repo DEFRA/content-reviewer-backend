@@ -234,6 +234,29 @@ class BedrockClient {
   }
 
   /**
+   * Returns true for errors that are safe to retry (throttling, transient
+   * service issues, timeouts). Other errors (auth, validation) fail fast.
+   * @private
+   */
+  _isRetryableError(error) {
+    return (
+      error.name === 'ThrottlingException' ||
+      error.name === 'ServiceUnavailableException' ||
+      error.name === 'TimeoutError' ||
+      error.code === 'ETIMEDOUT' ||
+      error.code === 'ECONNRESET'
+    )
+  }
+
+  /**
+   * Sleep for the given number of milliseconds.
+   * @private
+   */
+  _sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms))
+  }
+
+  /**
    * Send a message to Claude and get a response.
    *
    * @param {string} userMessage          - The user's message/prompt

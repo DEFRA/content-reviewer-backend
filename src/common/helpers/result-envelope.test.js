@@ -21,21 +21,31 @@ const SCORE_100 = 100
 const TOKEN_999 = 999
 const GOVUK_NOTE = 'Mostly compliant'
 
+// Category key constants (lowercase keys used in raw data / CSS classes)
+const CATEGORY_PLAIN_ENGLISH_KEY = 'plain-english'
+const CATEGORY_UTILISE_TEXT = 'utilise'
+
+// Display name constants (Title Case labels shown in the UI)
+const DISPLAY_PLAIN_ENGLISH = 'Plain English'
+const DISPLAY_CLARITY = 'Clarity & Structure'
+const DISPLAY_GOVUK_STYLE = 'GOV.UK Style Compliance'
+const DISPLAY_COMPLETENESS = 'Content Completeness'
+
 // Single-issue fixture data — named to avoid repeated literal duplication
 const FIXTURE_ISSUE = {
   start: 4,
   end: 11,
-  type: 'plain-english',
-  text: 'utilise',
+  type: CATEGORY_PLAIN_ENGLISH_KEY,
+  text: CATEGORY_UTILISE_TEXT,
   ref: 1
 }
 const FIXTURE_IMPROVEMENT_ISSUE_TEXT = 'Use simpler word'
 const FIXTURE_IMPROVEMENT = {
   severity: 'medium',
-  category: 'plain-english',
+  category: CATEGORY_PLAIN_ENGLISH_KEY,
   issue: FIXTURE_IMPROVEMENT_ISSUE_TEXT,
   why: '"utilise" should be "use"',
-  current: 'utilise',
+  current: CATEGORY_UTILISE_TEXT,
   suggested: 'use',
   ref: 1
 }
@@ -43,11 +53,11 @@ const FIXTURE_IMPROVEMENT = {
 function makeParsedReview(overrides = {}) {
   return {
     scores: {
-      'Plain English': { score: 4, note: 'Good use of plain language' },
-      'Clarity & Structure': { score: 3, note: 'Could be clearer' },
+      [DISPLAY_PLAIN_ENGLISH]: { score: 4, note: 'Good use of plain language' },
+      [DISPLAY_CLARITY]: { score: 3, note: 'Could be clearer' },
       Accessibility: { score: 5, note: 'Excellent' },
       'GovUK Style Compliance': { score: 4, note: GOVUK_NOTE },
-      'Content Completeness': { score: 3, note: 'Missing some details' }
+      [DISPLAY_COMPLETENESS]: { score: 3, note: 'Missing some details' }
     },
     reviewedContent: { issues: [FIXTURE_ISSUE] },
     improvements: [FIXTURE_IMPROVEMENT],
@@ -64,11 +74,11 @@ beforeEach(() => {
 describe('_mapScores', () => {
   it('maps all five canonical categories and scales 0-5 to 0-100', () => {
     const raw = {
-      'Plain English': { score: 4, note: 'Good' },
-      'Clarity & Structure': { score: 3, note: 'OK' },
+      [DISPLAY_PLAIN_ENGLISH]: { score: 4, note: 'Good' },
+      [DISPLAY_CLARITY]: { score: 3, note: 'OK' },
       Accessibility: { score: 5, note: 'Excellent' },
       'GovUK Style Compliance': { score: 2, note: 'Needs work' },
-      'Content Completeness': { score: 1, note: 'Incomplete' }
+      [DISPLAY_COMPLETENESS]: { score: 1, note: 'Incomplete' }
     }
     const result = resultEnvelopeStore._mapScores(raw)
     expect(result.plainEnglish).toBe(SCORE_80)
@@ -80,7 +90,7 @@ describe('_mapScores', () => {
 
   it('stores note strings alongside scaled values', () => {
     const raw = {
-      'Plain English': { score: 3, note: 'Average' }
+      [DISPLAY_PLAIN_ENGLISH]: { score: 3, note: 'Average' }
     }
     const result = resultEnvelopeStore._mapScores(raw)
     expect(result.plainEnglishNote).toBe('Average')
@@ -88,11 +98,11 @@ describe('_mapScores', () => {
 
   it('computes overall as the average of non-zero scores', () => {
     const raw = {
-      'Plain English': { score: 4, note: '' },
-      'Clarity & Structure': { score: 2, note: '' },
+      [DISPLAY_PLAIN_ENGLISH]: { score: 4, note: '' },
+      [DISPLAY_CLARITY]: { score: 2, note: '' },
       Accessibility: { score: 0, note: '' },
-      'GOV.UK Style Compliance': { score: 0, note: '' },
-      'Content Completeness': { score: 0, note: '' }
+      [DISPLAY_GOVUK_STYLE]: { score: 0, note: '' },
+      [DISPLAY_COMPLETENESS]: { score: 0, note: '' }
     }
     const result = resultEnvelopeStore._mapScores(raw)
     // Only plainEnglish (80) and clarity (40) are non-zero → average = 60
@@ -108,7 +118,7 @@ describe('_mapScores', () => {
 
   it('maps GOV.UK Style Compliance key as output by Bedrock prompt template', () => {
     const raw = {
-      'GOV.UK Style Compliance': { score: 3, note: GOVUK_NOTE }
+      [DISPLAY_GOVUK_STYLE]: { score: 3, note: GOVUK_NOTE }
     }
     const result = resultEnvelopeStore._mapScores(raw)
     expect(result.govukStyle).toBe(SCORE_60)
@@ -127,11 +137,11 @@ describe('_mapScores', () => {
 
   it('populates legacy style and tone fields for backwards compatibility', () => {
     const raw = {
-      'Plain English': { score: 3, note: '' },
-      'Clarity & Structure': { score: 4, note: '' },
+      [DISPLAY_PLAIN_ENGLISH]: { score: 3, note: '' },
+      [DISPLAY_CLARITY]: { score: 4, note: '' },
       Accessibility: { score: 3, note: '' },
-      'GOV.UK Style Compliance': { score: 5, note: '' },
-      'Content Completeness': { score: 2, note: '' }
+      [DISPLAY_GOVUK_STYLE]: { score: 5, note: '' },
+      [DISPLAY_COMPLETENESS]: { score: 2, note: '' }
     }
     const result = resultEnvelopeStore._mapScores(raw)
     expect(result.style).toBe(result.govukStyle)
@@ -351,7 +361,9 @@ describe('_snapToWordBoundary', () => {
       UTILISE_START,
       UTILISE_END
     )
-    expect(SNAP_TEXT.slice(result.start, result.end)).toBe('utilise')
+    expect(SNAP_TEXT.slice(result.start, result.end)).toBe(
+      CATEGORY_UTILISE_TEXT
+    )
   })
 
   it('expands start left to word boundary when offset lands mid-word', () => {
@@ -361,7 +373,9 @@ describe('_snapToWordBoundary', () => {
       UTILISE_END
     )
     expect(result.start).toBeLessThanOrEqual(UTILISE_START)
-    expect(SNAP_TEXT.slice(result.start, result.end)).toContain('utilise')
+    expect(SNAP_TEXT.slice(result.start, result.end)).toContain(
+      CATEGORY_UTILISE_TEXT
+    )
   })
 
   it('expands end right to word boundary when offset lands mid-word', () => {
@@ -407,10 +421,13 @@ describe('_snapToWordBoundary', () => {
 
 // ── normalizeCategoryDisplay via _mapImprovement ───────────────────────────────
 
-describe('buildEnvelope — category normalization in improvements', () => {
-  const CANONICAL = 'The department should utilise all resources available.'
-  const USAGE = { totalTokens: 100, inputTokens: 80, outputTokens: 20 }
+const CATEGORY_NORMALIZATION_USAGE = {
+  totalTokens: 100,
+  inputTokens: 80,
+  outputTokens: 20
+}
 
+describe('buildEnvelope — category normalization in improvements', () => {
   function buildReviewWithCategory(categoryRaw) {
     return {
       scores: {},
@@ -432,59 +449,59 @@ describe('buildEnvelope — category normalization in improvements', () => {
   it('normalizes plain-english key to "Plain English" display name', () => {
     const envelope = resultEnvelopeStore.buildEnvelope(
       REVIEW_ID,
-      buildReviewWithCategory('plain-english'),
-      USAGE,
-      CANONICAL
+      buildReviewWithCategory(CATEGORY_PLAIN_ENGLISH_KEY),
+      CATEGORY_NORMALIZATION_USAGE,
+      CANONICAL_TEXT_BUILD
     )
-    expect(envelope.improvements[0].category).toBe('Plain English')
+    expect(envelope.improvements[0].category).toBe(DISPLAY_PLAIN_ENGLISH)
   })
 
   it('normalizes "plain english" key to "Plain English" display name', () => {
     const envelope = resultEnvelopeStore.buildEnvelope(
       REVIEW_ID,
       buildReviewWithCategory('plain english'),
-      USAGE,
-      CANONICAL
+      CATEGORY_NORMALIZATION_USAGE,
+      CANONICAL_TEXT_BUILD
     )
-    expect(envelope.improvements[0].category).toBe('Plain English')
+    expect(envelope.improvements[0].category).toBe(DISPLAY_PLAIN_ENGLISH)
   })
 
   it('normalizes clarity key to "Clarity & Structure"', () => {
     const envelope = resultEnvelopeStore.buildEnvelope(
       REVIEW_ID,
       buildReviewWithCategory('clarity'),
-      USAGE,
-      CANONICAL
+      CATEGORY_NORMALIZATION_USAGE,
+      CANONICAL_TEXT_BUILD
     )
-    expect(envelope.improvements[0].category).toBe('Clarity & Structure')
+    expect(envelope.improvements[0].category).toBe(DISPLAY_CLARITY)
   })
 
   it('normalizes govuk-style key to "GOV.UK Style Compliance"', () => {
     const envelope = resultEnvelopeStore.buildEnvelope(
       REVIEW_ID,
       buildReviewWithCategory('govuk-style'),
-      USAGE,
-      CANONICAL
+      CATEGORY_NORMALIZATION_USAGE,
+      CANONICAL_TEXT_BUILD
     )
-    expect(envelope.improvements[0].category).toBe('GOV.UK Style Compliance')
+    expect(envelope.improvements[0].category).toBe(DISPLAY_GOVUK_STYLE)
   })
 
   it('normalizes completeness key to "Content Completeness"', () => {
     const envelope = resultEnvelopeStore.buildEnvelope(
       REVIEW_ID,
       buildReviewWithCategory('completeness'),
-      USAGE,
-      CANONICAL
+      CATEGORY_NORMALIZATION_USAGE,
+      CANONICAL_TEXT_BUILD
     )
-    expect(envelope.improvements[0].category).toBe('Content Completeness')
+    expect(envelope.improvements[0].category).toBe(DISPLAY_COMPLETENESS)
   })
 
   it('normalizes accessibility key to "Accessibility"', () => {
     const envelope = resultEnvelopeStore.buildEnvelope(
       REVIEW_ID,
       buildReviewWithCategory('accessibility'),
-      USAGE,
-      CANONICAL
+      CATEGORY_NORMALIZATION_USAGE,
+      CANONICAL_TEXT_BUILD
     )
     expect(envelope.improvements[0].category).toBe('Accessibility')
   })
@@ -493,8 +510,8 @@ describe('buildEnvelope — category normalization in improvements', () => {
     const envelope = resultEnvelopeStore.buildEnvelope(
       REVIEW_ID,
       buildReviewWithCategory('custom-category'),
-      USAGE,
-      CANONICAL
+      CATEGORY_NORMALIZATION_USAGE,
+      CANONICAL_TEXT_BUILD
     )
     expect(envelope.improvements[0].category).toBe('custom-category')
   })
@@ -503,8 +520,8 @@ describe('buildEnvelope — category normalization in improvements', () => {
     const envelope = resultEnvelopeStore.buildEnvelope(
       REVIEW_ID,
       buildReviewWithCategory(null),
-      USAGE,
-      CANONICAL
+      CATEGORY_NORMALIZATION_USAGE,
+      CANONICAL_TEXT_BUILD
     )
     expect(envelope.improvements[0].category).toBe('')
   })
