@@ -9,7 +9,6 @@ const logger = createLogger()
  * S3 Client for file uploads
  */
 class S3Uploader {
-  // Renamed to match ^[_a-z][a-zA-Z0-9]*$
   static get textContentType() {
     return 'text/plain'
   }
@@ -44,115 +43,6 @@ class S3Uploader {
     this.bucket = config.get('s3.bucket')
     this.pathPrefix = 'content-uploads' // previously config.get('upload.s3Path')
   }
-
-  /**
-   * Upload file to S3
-   * @param {Object} file - File object from multer
-   * @param {string} uploadId - Unique upload ID
-   * @returns {Promise<Object>} Upload result
-   */
-  /*async uploadFile(file, uploadId) {
-    const key = `${this.pathPrefix}/${uploadId}/${file.originalname}`
-
-    logger.info(
-      {
-        uploadId,
-        filename: file.originalname,
-        size: file.size,
-        contentType: file.mimetype,
-        bucket: this.bucket,
-        key
-      },
-      'S3 file upload started'
-    )
-
-    const startTime = performance.now()
-
-    // Mock mode - simulate successful upload without actually uploading
-    if (this.mockMode) {
-      logger.warn(
-        {
-          uploadId,
-          filename: file.originalname,
-          size: file.size
-        },
-        '[MOCK MODE] Simulating S3 file upload - not actually uploading'
-      )
-
-      return {
-        success: true,
-        bucket: this.bucket,
-        key,
-        location: `s3://${this.bucket}/${key}`,
-        fileId: uploadId,
-        filename: file.originalname,
-        size: file.size,
-        contentType: file.mimetype
-      }
-    }
-
-    const command = new PutObjectCommand({
-      Bucket: this.bucket,
-      Key: key,
-      Body: file.buffer,
-      ContentType: file.mimetype,
-      Metadata: {
-        originalName: file.originalname,
-        uploadId,
-        uploadedAt: new Date().toISOString()
-      }
-    })
-
-    try {
-      await this.s3Client.send(command)
-
-      const endTime = performance.now()
-      const duration = Math.round(endTime - startTime)
-
-      logger.info(
-        {
-          uploadId,
-          filename: file.originalname,
-          size: file.size,
-          bucket: this.bucket,
-          key,
-          s3Location: `s3://${this.bucket}/${key}`,
-          durationMs: duration
-        },
-        `S3 file upload completed in ${duration}ms`
-      )
-
-      return {
-        success: true,
-        bucket: this.bucket,
-        key,
-        location: `s3://${this.bucket}/${key}`,
-        fileId: uploadId,
-        filename: file.originalname,
-        size: file.size,
-        contentType: file.mimetype
-      }
-    } catch (error) {
-      const endTime = performance.now()
-      const duration = Math.round(endTime - startTime)
-
-      logger.error(
-        {
-          uploadId,
-          filename: file.originalname,
-          bucket: this.bucket,
-          key,
-          error: error.message,
-          errorName: error.name,
-          errorCode: error.Code,
-          durationMs: duration
-        },
-        `S3 file upload failed after ${duration}ms: ${error.message}`
-      )
-
-      throw new Error(`S3 upload failed: ${error.message}`)
-    }
-  }*/
 
   /**
    * Create mock upload response
