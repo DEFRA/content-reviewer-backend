@@ -474,67 +474,81 @@ class ResultEnvelopeStore {
   }
 
   /**
-   * Build sortedIssues and sortedImprovements from deduplicated pairs, then
-   * append any unmatched improvements (those with no valid paired issue) as
-   * orphan entries so they are never silently dropped.
+   * Return true when an improvement is displayable: it must have a non-empty
+   * suggested rewrite that differs from its current text, and its issue title
+   * must not be the generic "Issue identified" fallback.
+   * @param {Object|null} improvement
+   * @returns {boolean}
+   */
+  _isValidImprovement(improvement) {
+    if (!improvement) {
+      return false
+    }
+    const hasSuggested =
+      improvement.suggested && improvement.suggested.trim().length > 0
+    const hasRealTitle =
+      improvement.issue &&
+      improvement.issue.trim().toLowerCase() !== 'issue identified'
+    return hasSuggested && hasRealTitle
+  }
+
+  /**
+   * Build sortedIssues and sortedImprovements from deduplicated pairs.
+   *
+   * Only pairs with a valid improvement (non-empty suggested text, non-generic
+   * title) are included — this enforces strict 1:1 mapping between highlighted
+   * spans and improvement cards.  Pairs with an invalid improvement and
+   * improvements without a paired highlight (unmatched) are both discarded so
+   * no orphan highlight or orphan improvement card ever appears.
+   *
    * @param {Array}   deduped
    * @param {Array}   improvements
    * @param {boolean} useRefMatching
    * @returns {{ sortedIssues: Array, sortedImprovements: Array }}
    */
   _buildSortedResults(deduped, improvements, useRefMatching) {
-    const sortedIssues = deduped.map((pair, seqIdx) => ({
+    // Keep only pairs that have a displayable improvement
+    const validPairs = deduped.filter((pair) =>
+      this._isValidImprovement(pair.improvement)
+    )
+
+    const droppedCount = deduped.length - validPairs.length
+    if (droppedCount > 0) {
+      logger.warn(
+        { droppedCount },
+        '[result-envelope] Dropped pairs with invalid/missing improvements (no highlight or improvement card will appear)'
+      )
+    }
+
+    const sortedIssues = validPairs.map((pair, seqIdx) => ({
       ...pair.issue,
       chunkIdx: seqIdx
     }))
 
-    const sortedImprovements = deduped.map((pair, seqIdx) => {
-      if (!pair.improvement) {
-        return {
-          issueId: sortedIssues[seqIdx].issueId,
-          severity: 'medium',
-          category: normalizeCategoryDisplay(sortedIssues[seqIdx].category),
-          issue: 'Issue identified',
-          why: '',
-          current: sortedIssues[seqIdx].evidence || '',
-          suggested: ''
-        }
-      }
-      return { ...pair.improvement, issueId: sortedIssues[seqIdx].issueId }
-    })
+    const sortedImprovements = validPairs.map((pair, seqIdx) => ({
+      ...pair.improvement,
+      issueId: sortedIssues[seqIdx].issueId
+    }))
 
+    // Count and log unmatched improvements that are silently discarded
     const matchedRefs = new Set(
-      deduped
+      validPairs
         .filter((p) => p.improvement !== null)
         .map((p) =>
           useRefMatching ? p.issue.ref : improvements.indexOf(p.improvement)
         )
     )
-
-    const unmatchedImprovements = useRefMatching
+    const unmatchedCount = useRefMatching
       ? improvements.filter(
           (imp) => imp.ref !== undefined && !matchedRefs.has(imp.ref)
-        )
-      : improvements.slice(deduped.length)
+        ).length
+      : Math.max(0, improvements.length - deduped.length)
 
-    if (unmatchedImprovements.length > 0) {
+    if (unmatchedCount > 0) {
       logger.warn(
-        { unmatchedCount: unmatchedImprovements.length, useRefMatching },
-        '[result-envelope] Unmatched improvements appended without highlight'
+        { unmatchedCount, useRefMatching },
+        '[result-envelope] Unmatched improvements discarded (no corresponding highlight in text)'
       )
-    }
-
-    for (const imp of unmatchedImprovements) {
-      sortedImprovements.push({
-        issueId: `issue-orphan-${randomUUID()}`,
-        severity: imp.severity || 'medium',
-        category: imp.category || '',
-        issue: imp.issue || '',
-        why: imp.why || '',
-        current: imp.current || '',
-        suggested: imp.suggested || '',
-        unmatched: true
-      })
     }
 
     return { sortedIssues, sortedImprovements }
