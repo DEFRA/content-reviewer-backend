@@ -309,6 +309,7 @@ export class ReviewProcessor {
       )
 
       // Status is tracked in reviews/{reviewId}.json via updateReviewStatus above
+      // Status is tracked in reviews/{reviewId}.json via updateReviewStatus above
     } catch (statusError) {
       logger.error(
         {

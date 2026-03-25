@@ -404,3 +404,108 @@ describe('_snapToWordBoundary', () => {
     expect(text[result.start]).not.toBe(' ')
   })
 })
+
+// ── normalizeCategoryDisplay via _mapImprovement ───────────────────────────────
+
+describe('buildEnvelope — category normalization in improvements', () => {
+  const CANONICAL = 'The department should utilise all resources available.'
+  const USAGE = { totalTokens: 100, inputTokens: 80, outputTokens: 20 }
+
+  function buildReviewWithCategory(categoryRaw) {
+    return {
+      scores: {},
+      reviewedContent: { issues: [] },
+      improvements: [
+        {
+          severity: 'medium',
+          category: categoryRaw,
+          issue: 'Issue title',
+          why: 'Explanation',
+          current: 'Old text',
+          suggested: 'New text',
+          ref: undefined
+        }
+      ]
+    }
+  }
+
+  it('normalizes plain-english key to "Plain English" display name', () => {
+    const envelope = resultEnvelopeStore.buildEnvelope(
+      REVIEW_ID,
+      buildReviewWithCategory('plain-english'),
+      USAGE,
+      CANONICAL
+    )
+    expect(envelope.improvements[0].category).toBe('Plain English')
+  })
+
+  it('normalizes "plain english" key to "Plain English" display name', () => {
+    const envelope = resultEnvelopeStore.buildEnvelope(
+      REVIEW_ID,
+      buildReviewWithCategory('plain english'),
+      USAGE,
+      CANONICAL
+    )
+    expect(envelope.improvements[0].category).toBe('Plain English')
+  })
+
+  it('normalizes clarity key to "Clarity & Structure"', () => {
+    const envelope = resultEnvelopeStore.buildEnvelope(
+      REVIEW_ID,
+      buildReviewWithCategory('clarity'),
+      USAGE,
+      CANONICAL
+    )
+    expect(envelope.improvements[0].category).toBe('Clarity & Structure')
+  })
+
+  it('normalizes govuk-style key to "GOV.UK Style Compliance"', () => {
+    const envelope = resultEnvelopeStore.buildEnvelope(
+      REVIEW_ID,
+      buildReviewWithCategory('govuk-style'),
+      USAGE,
+      CANONICAL
+    )
+    expect(envelope.improvements[0].category).toBe('GOV.UK Style Compliance')
+  })
+
+  it('normalizes completeness key to "Content Completeness"', () => {
+    const envelope = resultEnvelopeStore.buildEnvelope(
+      REVIEW_ID,
+      buildReviewWithCategory('completeness'),
+      USAGE,
+      CANONICAL
+    )
+    expect(envelope.improvements[0].category).toBe('Content Completeness')
+  })
+
+  it('normalizes accessibility key to "Accessibility"', () => {
+    const envelope = resultEnvelopeStore.buildEnvelope(
+      REVIEW_ID,
+      buildReviewWithCategory('accessibility'),
+      USAGE,
+      CANONICAL
+    )
+    expect(envelope.improvements[0].category).toBe('Accessibility')
+  })
+
+  it('passes through unknown category values unchanged', () => {
+    const envelope = resultEnvelopeStore.buildEnvelope(
+      REVIEW_ID,
+      buildReviewWithCategory('custom-category'),
+      USAGE,
+      CANONICAL
+    )
+    expect(envelope.improvements[0].category).toBe('custom-category')
+  })
+
+  it('returns empty string for null category', () => {
+    const envelope = resultEnvelopeStore.buildEnvelope(
+      REVIEW_ID,
+      buildReviewWithCategory(null),
+      USAGE,
+      CANONICAL
+    )
+    expect(envelope.improvements[0].category).toBe('')
+  })
+})

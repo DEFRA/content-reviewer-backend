@@ -51,6 +51,9 @@ vi.mock('@aws-sdk/client-sqs', () => ({
   }),
   DeleteMessageCommand: vi.fn(function (params) {
     return params
+  }),
+  ChangeMessageVisibilityCommand: vi.fn(function (params) {
+    return params
   })
 }))
 
@@ -436,5 +439,53 @@ describe('SQSMessageHandler - getReceiveCount', () => {
   test('returns 1 when ApproximateReceiveCount is NaN', () => {
     const message = { Attributes: { ApproximateReceiveCount: 'not-a-number' } }
     expect(handler.getReceiveCount(message)).toBe(1)
+  })
+})
+
+describe('SQSMessageHandler - extendVisibility', () => {
+  let handler
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    handler = new SQSMessageHandler()
+  })
+
+  test('sends ChangeMessageVisibilityCommand with given timeout', async () => {
+    mockSend.mockResolvedValueOnce({})
+
+    await handler.extendVisibility(TEST_RECEIPT_HANDLE, 900)
+
+    expect(mockSend).toHaveBeenCalledWith({
+      QueueUrl: TEST_QUEUE_URL,
+      ReceiptHandle: TEST_RECEIPT_HANDLE,
+      VisibilityTimeout: 900
+    })
+    expect(mockLoggerDebug).toHaveBeenCalledWith(
+      expect.objectContaining({ visibilityTimeout: 900 }),
+      'Extended SQS message visibility timeout'
+    )
+  })
+
+  test('uses configured visibility timeout when none is provided', async () => {
+    mockSend.mockResolvedValueOnce({})
+
+    await handler.extendVisibility(TEST_RECEIPT_HANDLE)
+
+    expect(mockSend).toHaveBeenCalledWith(
+      expect.objectContaining({ VisibilityTimeout: TEST_VISIBILITY_TIMEOUT })
+    )
+  })
+
+  test('logs warning but does not throw when send fails', async () => {
+    mockSend.mockRejectedValueOnce(new Error('visibility update failed'))
+
+    await expect(
+      handler.extendVisibility(TEST_RECEIPT_HANDLE, 900)
+    ).resolves.toBeUndefined()
+
+    expect(mockLoggerWarn).toHaveBeenCalledWith(
+      expect.objectContaining({ error: 'visibility update failed' }),
+      'Failed to extend SQS message visibility — processing will continue'
+    )
   })
 })
