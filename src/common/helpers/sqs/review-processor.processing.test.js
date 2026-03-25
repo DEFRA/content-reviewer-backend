@@ -86,7 +86,8 @@ describe('ReviewProcessor - processMessage - successful processing', () => {
     processor = new ReviewProcessor()
     messageHandler = {
       deleteMessage: mockDeleteMessage,
-      getReceiveCount: vi.fn().mockReturnValue(1)
+      getReceiveCount: vi.fn().mockReturnValue(1),
+      extendVisibility: vi.fn().mockResolvedValue(undefined)
     }
   })
 
@@ -139,7 +140,8 @@ describe('ReviewProcessor - processMessage - invalid messages', () => {
     processor = new ReviewProcessor()
     messageHandler = {
       deleteMessage: mockDeleteMessage,
-      getReceiveCount: vi.fn().mockReturnValue(1)
+      getReceiveCount: vi.fn().mockReturnValue(1),
+      extendVisibility: vi.fn().mockResolvedValue(undefined)
     }
   })
 
@@ -168,7 +170,8 @@ describe('ReviewProcessor - processMessage - error handling', () => {
     processor = new ReviewProcessor()
     messageHandler = {
       deleteMessage: mockDeleteMessage,
-      getReceiveCount: vi.fn().mockReturnValue(1)
+      getReceiveCount: vi.fn().mockReturnValue(1),
+      extendVisibility: vi.fn().mockResolvedValue(undefined)
     }
   })
 
@@ -197,5 +200,68 @@ describe('ReviewProcessor - processMessage - error handling', () => {
         expect.stringContaining('Failed to process SQS message')
       )
     })
+  })
+})
+
+describe('ReviewProcessor - processMessage - heartbeat', () => {
+  let processor
+  let messageHandler
+  const FOUR_MINUTES_MS = 4 * 60 * 1000
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.useFakeTimers()
+    processor = new ReviewProcessor()
+    messageHandler = {
+      deleteMessage: mockDeleteMessage,
+      getReceiveCount: vi.fn().mockReturnValue(1),
+      extendVisibility: vi.fn().mockResolvedValue(undefined)
+    }
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  test('calls extendVisibility after 4 minutes during long-running processing', async () => {
+    const message = {
+      MessageId: TEST_MESSAGE_ID,
+      Body: JSON.stringify({ uploadId: TEST_UPLOAD_ID }),
+      ReceiptHandle: TEST_RECEIPT_HANDLE
+    }
+
+    let resolveProcessing
+    mockExtractTextContent.mockReturnValue(
+      new Promise((resolve) => {
+        resolveProcessing = resolve
+      })
+    )
+
+    const processingPromise = processor.processMessage(message, messageHandler)
+
+    await vi.advanceTimersByTimeAsync(FOUR_MINUTES_MS)
+    expect(messageHandler.extendVisibility).toHaveBeenCalledWith(
+      TEST_RECEIPT_HANDLE,
+      900
+    )
+
+    resolveProcessing(TEST_SAMPLE_TEXT)
+    mockPerformBedrockReview.mockResolvedValue({
+      bedrockResponse: {
+        usage: {},
+        guardrailAssessment: null,
+        stopReason: 'end_turn'
+      },
+      bedrockDuration: 0
+    })
+    mockParseBedrockResponseData.mockResolvedValue({
+      parsedReview: {},
+      finalReviewContent: '',
+      parseDuration: 0
+    })
+    mockUpdateReviewStatus.mockResolvedValue()
+    mockSaveReviewResult.mockResolvedValue()
+
+    await processingPromise
   })
 })
