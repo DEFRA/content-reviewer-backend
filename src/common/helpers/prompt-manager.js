@@ -218,7 +218,7 @@ Each issue object must have exactly these five fields:
 - When an entire sentence is the issue (e.g. passive voice, overly long), mark the full sentence
 - When only a word or phrase is the issue (e.g. jargon, "words to avoid"), mark only that complete word/phrase
 - Each issue in [ISSUE_POSITIONS] must have a **corresponding [PRIORITY] entry** in [IMPROVEMENTS] linked by the matching REF number
-- The total number of entries in [ISSUE_POSITIONS] must match the total number of [PRIORITY] blocks — at least 3
+- The total number of entries in [ISSUE_POSITIONS] must match the total number of [PRIORITY] blocks — between 3 and 20. Never exceed 20 entries regardless of document length
 - **Every issue MUST reference text that exists verbatim in the document** — only flag content that is actually present in the text you received
 - Do NOT include issues for formatting (headings, lists, links) as these are not visible in plain text input
 - Do NOT raise issues about missing information or absent structure — only flag text that IS in the document but needs improvement
@@ -239,16 +239,19 @@ Full [ISSUE_POSITIONS] output for that example:
 
 ## PRIORITY IMPROVEMENTS SECTION
 
-Identify the **most significant issues** across all 5 review categories. You must produce **at least 3 improvements** — include as many as the content requires.
+Identify the **most significant issues** across all 5 review categories. You must produce **between 3 and 20 improvements** — no more than 20 regardless of document length.
 
 **Quality over quantity (mandatory):**
 - Only include an improvement if you can identify the exact verbatim text span in the document. If you cannot locate the text, do NOT include the improvement
 - Do NOT pad to reach the minimum — 3 high-quality, locatable improvements are better than 5 where 2 cannot be highlighted
-- Every improvement must have a specific, descriptive ISSUE title — never use generic titles like "Issue identified"
-- Every improvement must have a complete CURRENT: field — a full sentence or meaningful phrase, never a fragment
-- Every improvement must have a SUGGESTED: field — a concrete rewritten alternative that genuinely differs from CURRENT. Omitting SUGGESTED is not permitted
+- **Maximum 20 improvements total** — if you find more than 20 issues, include only the 20 most significant ones, prioritising by severity and impact on the reader
+- Every improvement must have a specific, descriptive ISSUE title that explains the actual problem — NEVER use "Issue identified" as a title; that is invalid and will be rejected
+- Every improvement must have a complete CURRENT: field — a full sentence or meaningful phrase (at least 5 words in context), never a single word, a fragment, or a reference code
+- **SUGGESTED is mandatory** — every improvement MUST have a SUGGESTED: field with a concrete rewritten alternative that genuinely differs from CURRENT. If you cannot write a specific suggested rewrite, do NOT include the improvement at all. An improvement without SUGGESTED will be discarded entirely
 - **SUGGESTED must never use placeholder text** — do NOT write things like "[current date]", "[correct term]", "[add specific detail here]", or any text in square brackets. Every SUGGESTED field must be a complete, specific, actionable rewrite that the content designer can copy and use directly
 - Focus on the most impactful issues — do not include trivial observations or issues where the fix is the same as the original text
+- **Do NOT flag alphanumeric reference codes, identifiers, or document references** (e.g. "AQ9(06)", "EPR 6.09", "BS EN 14181") as Plain English issues — these are standard identifiers required in technical and regulatory documents
+- **Do NOT flag single common words** ("chance", "delays", "risk") in isolation as issues — flag the full sentence containing the problem and explain the specific issue with that sentence
 
 **Category coverage rules (mandatory):**
 - You MUST include at least **1 improvement per category** for every category that has a score below 5, BUT ONLY if you can identify locatable text for that issue
@@ -390,10 +393,10 @@ If you see text patterns that suggest these elements exist (e.g., "1.", "2." for
 6. The [SCORES] section must contain **exactly five categories** in this order: Plain English, Clarity & Structure, Accessibility, GOV.UK Style Compliance, Content Completeness. Do NOT add an "Overall" row.
 7. Score notes must be **generic quality assessments only** — do NOT quote, name, or reference specific words, acronyms, phrases, or terminology from the input content
 8. Do **not** echo back or repeat the original input text anywhere in your response
-9. Provide **at least 3 improvements** in the [IMPROVEMENTS] section — include as many as the content genuinely requires. Only include improvements where you can identify the exact text span in the document. Do NOT pad to reach the minimum
+9. Provide **between 3 and 20 improvements** in the [IMPROVEMENTS] section — maximum 20 regardless of document length. Select only the most significant issues. Only include improvements where you can identify the exact text span in the document. Do NOT pad to reach the minimum
 10. Every [PRIORITY] block **must** include a complete SUGGESTED: field — a concrete rewritten alternative that genuinely differs from the CURRENT text. A block without SUGGESTED, or where SUGGESTED is identical to CURRENT, is invalid and must not be included
-11. Every [PRIORITY] block **must** have a CURRENT: field that is a complete sentence or phrase — never a truncated fragment
-12. Every [PRIORITY] block **must** have a specific ISSUE: title describing the actual problem — "Issue identified" is not acceptable
+11. Every [PRIORITY] block **must** have a CURRENT: field that is a complete sentence or meaningful phrase (at least 5 words in context) — never a single word, a fragment, or a reference code
+12. Every [PRIORITY] block **must** have a specific ISSUE: title describing the actual problem — "Issue identified" is NEVER acceptable and will be treated as an error. Write what the problem actually is (e.g. "Passive voice obscures responsibility", "Jargon term needs simpler alternative")
 13. Improvements must be **spread across all 5 categories** — at minimum 1 per category that scores below 5, and ONLY for categories that score below 5
 14. **SCORE–ISSUE CONSISTENCY**: Every category scoring below 5 MUST have at least one highlighted issue. Every category scoring 5 MUST have zero issues. Scores and issues must always agree
 15. **NO FALSE POSITIVES**: Never flag text that already complies with the standard being cited. If the current text and your suggested fix would be identical, do NOT include that issue

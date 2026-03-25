@@ -265,29 +265,6 @@ class BedrockClient {
    *   When provided the prompt is NOT injected into the messages array.
    * @returns {Promise<Object>} Response with content, usage stats, and guardrail metrics
    */
-  /**
-   * Returns true for errors that are safe to retry (throttling, transient
-   * service issues, timeouts). Other errors (auth, validation) fail fast.
-   * @private
-   */
-  _isRetryableError(error) {
-    return (
-      error.name === 'ThrottlingException' ||
-      error.name === 'ServiceUnavailableException' ||
-      error.name === 'TimeoutError' ||
-      error.code === 'ETIMEDOUT' ||
-      error.code === 'ECONNRESET'
-    )
-  }
-
-  /**
-   * Sleep for the given number of milliseconds.
-   * @private
-   */
-  _sleep(ms) {
-    return new Promise((resolve) => setTimeout(resolve, ms))
-  }
-
   async sendMessage(
     userMessage,
     conversationHistory = [],
