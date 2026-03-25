@@ -37,7 +37,7 @@ class BedrockClient {
     this.maxTokens = config.get('bedrock.maxTokens')
     this.temperature = config.get('bedrock.temperature')
     this.topP = config.get('bedrock.topP')
-    this.timeout = 180000 // 180 seconds timeout for Bedrock API calls
+    this.timeout = 360000 // 360 seconds — large documents (100k chars) can take 3-5 min
 
     this.client = new BedrockRuntimeClient({
       region: this.region,
@@ -243,6 +243,29 @@ class BedrockClient {
    *   When provided the prompt is NOT injected into the messages array.
    * @returns {Promise<Object>} Response with content, usage stats, and guardrail metrics
    */
+  /**
+   * Returns true for errors that are safe to retry (throttling, transient
+   * service issues, timeouts). Other errors (auth, validation) fail fast.
+   * @private
+   */
+  _isRetryableError(error) {
+    return (
+      error.name === 'ThrottlingException' ||
+      error.name === 'ServiceUnavailableException' ||
+      error.name === 'TimeoutError' ||
+      error.code === 'ETIMEDOUT' ||
+      error.code === 'ECONNRESET'
+    )
+  }
+
+  /**
+   * Sleep for the given number of milliseconds.
+   * @private
+   */
+  _sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms))
+  }
+
   async sendMessage(
     userMessage,
     conversationHistory = [],
@@ -252,34 +275,66 @@ class BedrockClient {
       throw new Error('Bedrock AI is not enabled')
     }
 
-    try {
-      const messages = this._buildMessages(userMessage, conversationHistory)
-      const guardrailConfig = this._buildGuardrailConfig()
-      const inferenceConfig = this._buildInferenceConfig()
+    // Retry up to 4 times on throttling / transient errors with exponential
+    // backoff: 30 s → 60 s → 120 s → 120 s (capped).
+    const MAX_RETRIES = 4
+    const BASE_BACKOFF_MS = 30_000
+    const MAX_BACKOFF_MS = 120_000
 
-      const commandInput = {
-        modelId: this.inferenceProfileArn,
-        messages,
-        inferenceConfig,
-        guardrailConfig
-      }
+    const messages = this._buildMessages(userMessage, conversationHistory)
+    const guardrailConfig = this._buildGuardrailConfig()
+    const inferenceConfig = this._buildInferenceConfig()
 
-      // Pass system prompt via the dedicated `system` parameter so it is
-      // treated as a true system instruction by the model rather than a
-      // conversation turn.
-      if (systemPrompt) {
-        commandInput.system = [{ text: systemPrompt }]
-      }
-
-      const command = new ConverseCommand(commandInput)
-
-      const response = await this.client.send(command)
-      return this._processResponse(response)
-    } catch (error) {
-      const errorDetails = this._extractErrorDetails(error)
-      logger.error('Bedrock API error', errorDetails)
-      return this._handleAwsError(error)
+    const commandInput = {
+      modelId: this.inferenceProfileArn,
+      messages,
+      inferenceConfig,
+      guardrailConfig
     }
+
+    if (systemPrompt) {
+      commandInput.system = [{ text: systemPrompt }]
+    }
+
+    let lastError
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        const command = new ConverseCommand(commandInput)
+        const response = await this.client.send(command)
+        return this._processResponse(response)
+      } catch (error) {
+        lastError = error
+
+        if (this._isRetryableError(error) && attempt < MAX_RETRIES) {
+          const backoffMs = Math.min(
+            BASE_BACKOFF_MS * Math.pow(2, attempt),
+            MAX_BACKOFF_MS
+          )
+          logger.warn(
+            {
+              attempt: attempt + 1,
+              maxRetries: MAX_RETRIES,
+              backoffMs,
+              errorName: error.name,
+              errorCode: error.code
+            },
+            `Bedrock ${error.name} — retrying in ${backoffMs / 1000}s (attempt ${attempt + 1}/${MAX_RETRIES})`
+          )
+          await this._sleep(backoffMs)
+          continue
+        }
+
+        // Non-retryable error or final attempt — log and convert
+        const errorDetails = this._extractErrorDetails(error)
+        logger.error('Bedrock API error', errorDetails)
+        return this._handleAwsError(error)
+      }
+    }
+
+    // Should not reach here, but guard against it
+    const exhaustedErrorDetails = this._extractErrorDetails(lastError)
+    logger.error('Bedrock API exhausted all retries', exhaustedErrorDetails)
+    return this._handleAwsError(lastError)
   }
 
   /**

@@ -10,9 +10,35 @@ vi.mock('./logging/logger.js', () => ({
 
 import { resultEnvelopeStore } from './result-envelope.js'
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// ── Shared constants ──────────────────────────────────────────────────────────
 
 const REVIEW_ID = 'review_test-uuid-1234'
+const SCORE_80 = 80
+const SCORE_60 = 60
+const SCORE_40 = 40
+const SCORE_20 = 20
+const SCORE_100 = 100
+const TOKEN_999 = 999
+const GOVUK_NOTE = 'Mostly compliant'
+
+// Single-issue fixture data — named to avoid repeated literal duplication
+const FIXTURE_ISSUE = {
+  start: 4,
+  end: 11,
+  type: 'plain-english',
+  text: 'utilise',
+  ref: 1
+}
+const FIXTURE_IMPROVEMENT_ISSUE_TEXT = 'Use simpler word'
+const FIXTURE_IMPROVEMENT = {
+  severity: 'medium',
+  category: 'plain-english',
+  issue: FIXTURE_IMPROVEMENT_ISSUE_TEXT,
+  why: '"utilise" should be "use"',
+  current: 'utilise',
+  suggested: 'use',
+  ref: 1
+}
 
 function makeParsedReview(overrides = {}) {
   return {
@@ -20,22 +46,11 @@ function makeParsedReview(overrides = {}) {
       'Plain English': { score: 4, note: 'Good use of plain language' },
       'Clarity & Structure': { score: 3, note: 'Could be clearer' },
       Accessibility: { score: 5, note: 'Excellent' },
-      'GovUK Style Compliance': { score: 4, note: 'Mostly compliant' },
+      'GovUK Style Compliance': { score: 4, note: GOVUK_NOTE },
       'Content Completeness': { score: 3, note: 'Missing some details' }
     },
-    reviewedContent: {
-      issues: [{ start: 4, end: 11, type: 'plain-english', text: 'utilise' }]
-    },
-    improvements: [
-      {
-        severity: 'medium',
-        category: 'plain-english',
-        issue: 'Use simpler word',
-        why: '"utilise" should be "use"',
-        current: 'utilise',
-        suggested: 'use'
-      }
-    ],
+    reviewedContent: { issues: [FIXTURE_ISSUE] },
+    improvements: [FIXTURE_IMPROVEMENT],
     ...overrides
   }
 }
@@ -56,11 +71,11 @@ describe('_mapScores', () => {
       'Content Completeness': { score: 1, note: 'Incomplete' }
     }
     const result = resultEnvelopeStore._mapScores(raw)
-    expect(result.plainEnglish).toBe(80)
-    expect(result.clarity).toBe(60)
-    expect(result.accessibility).toBe(100)
-    expect(result.govukStyle).toBe(40)
-    expect(result.completeness).toBe(20)
+    expect(result.plainEnglish).toBe(SCORE_80)
+    expect(result.clarity).toBe(SCORE_60)
+    expect(result.accessibility).toBe(SCORE_100)
+    expect(result.govukStyle).toBe(SCORE_40)
+    expect(result.completeness).toBe(SCORE_20)
   })
 
   it('stores note strings alongside scaled values', () => {
@@ -81,7 +96,7 @@ describe('_mapScores', () => {
     }
     const result = resultEnvelopeStore._mapScores(raw)
     // Only plainEnglish (80) and clarity (40) are non-zero → average = 60
-    expect(result.overall).toBe(60)
+    expect(result.overall).toBe(SCORE_60)
   })
 
   it('returns all zeros when scores object is empty', () => {
@@ -92,14 +107,12 @@ describe('_mapScores', () => {
   })
 
   it('maps GOV.UK Style Compliance key as output by Bedrock prompt template', () => {
-    // The prompt template tells Bedrock to output exactly "GOV.UK Style Compliance: X/5 - note"
-    // That lowercases to "gov.uk style compliance" (with dot) — must NOT return 0
     const raw = {
-      'GOV.UK Style Compliance': { score: 3, note: 'Mostly compliant' }
+      'GOV.UK Style Compliance': { score: 3, note: GOVUK_NOTE }
     }
     const result = resultEnvelopeStore._mapScores(raw)
-    expect(result.govukStyle).toBe(60)
-    expect(result.govukStyleNote).toBe('Mostly compliant')
+    expect(result.govukStyle).toBe(SCORE_60)
+    expect(result.govukStyleNote).toBe(GOVUK_NOTE)
   })
 
   it('falls back to legacy key aliases (style, tone)', () => {
@@ -108,9 +121,7 @@ describe('_mapScores', () => {
       Tone: { score: 4, note: '' }
     }
     const result = resultEnvelopeStore._mapScores(raw)
-    // govukStyle picks up 'style'
-    expect(result.govukStyle).toBe(60)
-    // clarity picks up 'tone' (or stays 0 if not matched)
+    expect(result.govukStyle).toBe(SCORE_60)
     expect(typeof result.clarity).toBe('number')
   })
 
@@ -160,21 +171,17 @@ describe('buildStubEnvelope', () => {
 
 // ── buildEnvelope ─────────────────────────────────────────────────────────────
 
-describe('buildEnvelope', () => {
-  const CANONICAL_TEXT =
-    'The department should utilise all resources available.'
-  const BEDROCK_USAGE = {
-    totalTokens: 500,
-    inputTokens: 400,
-    outputTokens: 100
-  }
+const CANONICAL_TEXT_BUILD =
+  'The department should utilise all resources available.'
+const BEDROCK_USAGE = { totalTokens: 500, inputTokens: 400, outputTokens: 100 }
 
+describe('buildEnvelope — shape and status', () => {
   it('returns a completed envelope with documentId and status', () => {
     const envelope = resultEnvelopeStore.buildEnvelope(
       REVIEW_ID,
       makeParsedReview(),
       BEDROCK_USAGE,
-      CANONICAL_TEXT
+      CANONICAL_TEXT_BUILD
     )
     expect(envelope.documentId).toBe(REVIEW_ID)
     expect(envelope.status).toBe('completed')
@@ -185,7 +192,7 @@ describe('buildEnvelope', () => {
       REVIEW_ID,
       makeParsedReview(),
       BEDROCK_USAGE,
-      CANONICAL_TEXT
+      CANONICAL_TEXT_BUILD
     )
     expect(typeof envelope.issueCount).toBe('number')
     expect(envelope.issueCount).toBeGreaterThanOrEqual(0)
@@ -196,7 +203,7 @@ describe('buildEnvelope', () => {
       REVIEW_ID,
       makeParsedReview(),
       BEDROCK_USAGE,
-      CANONICAL_TEXT
+      CANONICAL_TEXT_BUILD
     )
     expect(Array.isArray(envelope.annotatedSections)).toBe(true)
   })
@@ -206,29 +213,9 @@ describe('buildEnvelope', () => {
       REVIEW_ID,
       makeParsedReview(),
       BEDROCK_USAGE,
-      CANONICAL_TEXT
+      CANONICAL_TEXT_BUILD
     )
-    expect(envelope.canonicalText).toBe(CANONICAL_TEXT)
-  })
-
-  it('uses tokenUsed from bedrockUsage.totalTokens', () => {
-    const envelope = resultEnvelopeStore.buildEnvelope(
-      REVIEW_ID,
-      makeParsedReview(),
-      { totalTokens: 999 },
-      CANONICAL_TEXT
-    )
-    expect(envelope.tokenUsed).toBe(999)
-  })
-
-  it('defaults tokenUsed to 0 when bedrockUsage is null', () => {
-    const envelope = resultEnvelopeStore.buildEnvelope(
-      REVIEW_ID,
-      makeParsedReview(),
-      null,
-      CANONICAL_TEXT
-    )
-    expect(envelope.tokenUsed).toBe(0)
+    expect(envelope.canonicalText).toBe(CANONICAL_TEXT_BUILD)
   })
 
   it('accepts a custom status parameter', () => {
@@ -236,10 +223,32 @@ describe('buildEnvelope', () => {
       REVIEW_ID,
       makeParsedReview(),
       BEDROCK_USAGE,
-      CANONICAL_TEXT,
+      CANONICAL_TEXT_BUILD,
       'failed'
     )
     expect(envelope.status).toBe('failed')
+  })
+})
+
+describe('buildEnvelope — token and edge cases', () => {
+  it('uses tokenUsed from bedrockUsage.totalTokens', () => {
+    const envelope = resultEnvelopeStore.buildEnvelope(
+      REVIEW_ID,
+      makeParsedReview(),
+      { totalTokens: TOKEN_999 },
+      CANONICAL_TEXT_BUILD
+    )
+    expect(envelope.tokenUsed).toBe(TOKEN_999)
+  })
+
+  it('defaults tokenUsed to 0 when bedrockUsage is null', () => {
+    const envelope = resultEnvelopeStore.buildEnvelope(
+      REVIEW_ID,
+      makeParsedReview(),
+      null,
+      CANONICAL_TEXT_BUILD
+    )
+    expect(envelope.tokenUsed).toBe(0)
   })
 
   it('handles empty canonicalText gracefully', () => {
@@ -254,24 +263,9 @@ describe('buildEnvelope', () => {
   })
 })
 
-// ── buildCompleted (replaces saveCompleted) ───────────────────────────────────
-
-describe('buildEnvelope — completed', () => {
-  it('builds a completed envelope with correct status and documentId', () => {
-    const result = resultEnvelopeStore.buildEnvelope(
-      REVIEW_ID,
-      makeParsedReview(),
-      { totalTokens: 200 },
-      'Some canonical text about planning.'
-    )
-    expect(result.status).toBe('completed')
-    expect(result.documentId).toBe(REVIEW_ID)
-  })
-})
-
 // ── buildStubEnvelope (replaces saveStatus) ───────────────────────────────────
 
-describe('buildStubEnvelope', () => {
+describe('buildStubEnvelope — additional', () => {
   it('builds a stub envelope with the given status', () => {
     const result = resultEnvelopeStore.buildStubEnvelope(
       REVIEW_ID,
@@ -284,5 +278,234 @@ describe('buildStubEnvelope', () => {
     const result = resultEnvelopeStore.buildStubEnvelope(REVIEW_ID, 'failed')
     expect(result.status).toBe('failed')
     expect(result.issueCount).toBe(0)
+  })
+})
+
+// ── _hasRefFields ─────────────────────────────────────────────────────────────
+
+describe('_hasRefFields', () => {
+  it('returns true when all issues and at least one improvement have ref', () => {
+    const issues = [
+      { ref: 1, absStart: 0, absEnd: 5 },
+      { ref: 2, absStart: 10, absEnd: 15 }
+    ]
+    const improvements = [
+      { ref: 1, severity: 'high' },
+      { ref: 2, severity: 'medium' }
+    ]
+    expect(resultEnvelopeStore._hasRefFields(issues, improvements)).toBe(true)
+  })
+
+  it('returns false when issues array is empty', () => {
+    expect(resultEnvelopeStore._hasRefFields([], [{ ref: 1 }])).toBe(false)
+  })
+
+  it('returns false when any issue is missing ref', () => {
+    const issues = [
+      { ref: 1, absStart: 0, absEnd: 5 },
+      { absStart: 10, absEnd: 15 }
+    ]
+    const improvements = [{ ref: 1 }]
+    expect(resultEnvelopeStore._hasRefFields(issues, improvements)).toBe(false)
+  })
+
+  it('returns false when all improvements are missing ref', () => {
+    const issues = [{ ref: 1, absStart: 0, absEnd: 5 }]
+    const improvements = [{ severity: 'high' }]
+    expect(resultEnvelopeStore._hasRefFields(issues, improvements)).toBe(false)
+  })
+
+  it('returns false when improvements array is empty', () => {
+    const issues = [{ ref: 1, absStart: 0, absEnd: 5 }]
+    expect(resultEnvelopeStore._hasRefFields(issues, [])).toBe(false)
+  })
+
+  it('returns true when only one improvement has ref among several', () => {
+    const issues = [{ ref: 1, absStart: 0, absEnd: 5 }]
+    const improvements = [{ severity: 'high' }, { ref: 1, severity: 'medium' }]
+    expect(resultEnvelopeStore._hasRefFields(issues, improvements)).toBe(true)
+  })
+
+  it('returns false when issue ref is Number.NaN', () => {
+    const issues = [{ ref: Number.NaN, absStart: 0, absEnd: 5 }]
+    const improvements = [{ ref: 1 }]
+    expect(resultEnvelopeStore._hasRefFields(issues, improvements)).toBe(false)
+  })
+})
+
+// ── _snapToWordBoundary ───────────────────────────────────────────────────────
+
+const SNAP_TEXT = 'The department should utilise all resources.'
+// Character offsets for "utilise" within SNAP_TEXT: start=22, end=29
+const UTILISE_START = 22
+const UTILISE_END = 29
+const UTILISE_MID = 24
+const UTILISE_MID_END = 26
+const SHORT_TEXT_END = 5
+const TRAILING_SPACE_END = 7
+
+describe('_snapToWordBoundary', () => {
+  it('returns unchanged offsets when already on word boundaries', () => {
+    const result = resultEnvelopeStore._snapToWordBoundary(
+      SNAP_TEXT,
+      UTILISE_START,
+      UTILISE_END
+    )
+    expect(SNAP_TEXT.slice(result.start, result.end)).toBe('utilise')
+  })
+
+  it('expands start left to word boundary when offset lands mid-word', () => {
+    const result = resultEnvelopeStore._snapToWordBoundary(
+      SNAP_TEXT,
+      UTILISE_MID,
+      UTILISE_END
+    )
+    expect(result.start).toBeLessThanOrEqual(UTILISE_START)
+    expect(SNAP_TEXT.slice(result.start, result.end)).toContain('utilise')
+  })
+
+  it('expands end right to word boundary when offset lands mid-word', () => {
+    const result = resultEnvelopeStore._snapToWordBoundary(
+      SNAP_TEXT,
+      UTILISE_START,
+      UTILISE_MID_END
+    )
+    expect(result.end).toBeGreaterThanOrEqual(UTILISE_END)
+  })
+
+  it('does not expand beyond string boundaries', () => {
+    const text = 'short'
+    const result = resultEnvelopeStore._snapToWordBoundary(
+      text,
+      0,
+      SHORT_TEXT_END
+    )
+    expect(result.start).toBe(0)
+    expect(result.end).toBe(SHORT_TEXT_END)
+  })
+
+  it('trims trailing whitespace from expanded span', () => {
+    const text = 'word   nextword'
+    const result = resultEnvelopeStore._snapToWordBoundary(
+      text,
+      0,
+      TRAILING_SPACE_END
+    )
+    expect(text[result.end - 1]).not.toBe(' ')
+  })
+
+  it('trims leading whitespace from expanded span', () => {
+    const text = '   word'
+    const result = resultEnvelopeStore._snapToWordBoundary(
+      text,
+      0,
+      TRAILING_SPACE_END
+    )
+    expect(text[result.start]).not.toBe(' ')
+  })
+})
+
+// ── normalizeCategoryDisplay via _mapImprovement ───────────────────────────────
+
+describe('buildEnvelope — category normalization in improvements', () => {
+  const CANONICAL = 'The department should utilise all resources available.'
+  const USAGE = { totalTokens: 100, inputTokens: 80, outputTokens: 20 }
+
+  function buildReviewWithCategory(categoryRaw) {
+    return {
+      scores: {},
+      reviewedContent: { issues: [] },
+      improvements: [
+        {
+          severity: 'medium',
+          category: categoryRaw,
+          issue: 'Issue title',
+          why: 'Explanation',
+          current: 'Old text',
+          suggested: 'New text',
+          ref: undefined
+        }
+      ]
+    }
+  }
+
+  it('normalizes plain-english key to "Plain English" display name', () => {
+    const envelope = resultEnvelopeStore.buildEnvelope(
+      REVIEW_ID,
+      buildReviewWithCategory('plain-english'),
+      USAGE,
+      CANONICAL
+    )
+    expect(envelope.improvements[0].category).toBe('Plain English')
+  })
+
+  it('normalizes "plain english" key to "Plain English" display name', () => {
+    const envelope = resultEnvelopeStore.buildEnvelope(
+      REVIEW_ID,
+      buildReviewWithCategory('plain english'),
+      USAGE,
+      CANONICAL
+    )
+    expect(envelope.improvements[0].category).toBe('Plain English')
+  })
+
+  it('normalizes clarity key to "Clarity & Structure"', () => {
+    const envelope = resultEnvelopeStore.buildEnvelope(
+      REVIEW_ID,
+      buildReviewWithCategory('clarity'),
+      USAGE,
+      CANONICAL
+    )
+    expect(envelope.improvements[0].category).toBe('Clarity & Structure')
+  })
+
+  it('normalizes govuk-style key to "GOV.UK Style Compliance"', () => {
+    const envelope = resultEnvelopeStore.buildEnvelope(
+      REVIEW_ID,
+      buildReviewWithCategory('govuk-style'),
+      USAGE,
+      CANONICAL
+    )
+    expect(envelope.improvements[0].category).toBe('GOV.UK Style Compliance')
+  })
+
+  it('normalizes completeness key to "Content Completeness"', () => {
+    const envelope = resultEnvelopeStore.buildEnvelope(
+      REVIEW_ID,
+      buildReviewWithCategory('completeness'),
+      USAGE,
+      CANONICAL
+    )
+    expect(envelope.improvements[0].category).toBe('Content Completeness')
+  })
+
+  it('normalizes accessibility key to "Accessibility"', () => {
+    const envelope = resultEnvelopeStore.buildEnvelope(
+      REVIEW_ID,
+      buildReviewWithCategory('accessibility'),
+      USAGE,
+      CANONICAL
+    )
+    expect(envelope.improvements[0].category).toBe('Accessibility')
+  })
+
+  it('passes through unknown category values unchanged', () => {
+    const envelope = resultEnvelopeStore.buildEnvelope(
+      REVIEW_ID,
+      buildReviewWithCategory('custom-category'),
+      USAGE,
+      CANONICAL
+    )
+    expect(envelope.improvements[0].category).toBe('custom-category')
+  })
+
+  it('returns empty string for null category', () => {
+    const envelope = resultEnvelopeStore.buildEnvelope(
+      REVIEW_ID,
+      buildReviewWithCategory(null),
+      USAGE,
+      CANONICAL
+    )
+    expect(envelope.improvements[0].category).toBe('')
   })
 })

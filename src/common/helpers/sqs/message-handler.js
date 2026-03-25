@@ -1,7 +1,8 @@
 import {
   SQSClient,
   ReceiveMessageCommand,
-  DeleteMessageCommand
+  DeleteMessageCommand,
+  ChangeMessageVisibilityCommand
 } from '@aws-sdk/client-sqs'
 import { config } from '../../../config.js'
 import { createLogger } from '../logging/logger.js'
@@ -156,6 +157,36 @@ export class SQSMessageHandler {
     }
     const count = Number.parseInt(raw, 10)
     return Number.isFinite(count) && count > 0 ? count : 1
+  }
+
+  /**
+   * Extend the visibility timeout of a message that is still being processed.
+   * Call this periodically (heartbeat) for long-running jobs so the message
+   * does not become visible again before processing completes.
+   * @param {string} receiptHandle
+   * @param {number} [visibilityTimeout] - seconds; defaults to configured value
+   */
+  async extendVisibility(receiptHandle, visibilityTimeout) {
+    const timeout = visibilityTimeout ?? this.visibilityTimeout
+    const command = new ChangeMessageVisibilityCommand({
+      QueueUrl: this.queueUrl,
+      ReceiptHandle: receiptHandle,
+      VisibilityTimeout: timeout
+    })
+    try {
+      await this.sqsClient.send(command)
+      logger.debug(
+        { visibilityTimeout: timeout },
+        'Extended SQS message visibility timeout'
+      )
+    } catch (error) {
+      // Non-fatal — log and continue; worst case the message becomes visible
+      // again but the idempotent processing will handle it.
+      logger.warn(
+        { error: error.message },
+        'Failed to extend SQS message visibility — processing will continue'
+      )
+    }
   }
 
   /**

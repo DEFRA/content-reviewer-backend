@@ -150,26 +150,43 @@ export class ReviewProcessor {
   }
 
   /**
-   * Process a single message
+   * Process a single message.
+   * Runs a visibility-timeout heartbeat every 4 minutes so a long-running
+   * Bedrock call (100k-char documents can take 3-5 min) cannot cause the
+   * message to become visible again and trigger duplicate processing.
    */
   async processMessage(message, messageHandler) {
     const startTime = performance.now()
 
+    // Heartbeat: extend visibility every 4 minutes while processing.
+    const HEARTBEAT_INTERVAL_MS = 4 * 60 * 1000
+    const HEARTBEAT_VISIBILITY_SECONDS = 900
+    const heartbeat = setInterval(() => {
+      messageHandler
+        .extendVisibility(message.ReceiptHandle, HEARTBEAT_VISIBILITY_SECONDS)
+        .catch(
+          () => {} // extendVisibility already logs warnings internally
+        )
+    }, HEARTBEAT_INTERVAL_MS)
+
     try {
       const body = await this.validateAndParseMessage(message, messageHandler)
       if (!body) {
+        clearInterval(heartbeat)
         return
       }
 
       // Application-level dead-letter guard: stop processing if the message
       // has been delivered more times than maxReceiveCount.
       if (await this.isDeadLettered(message, messageHandler, body)) {
+        clearInterval(heartbeat)
         return
       }
 
       this.logMessageProcessingStart(message, body)
 
       await this.processContentReview(body)
+      clearInterval(heartbeat)
       await messageHandler.deleteMessage(message.ReceiptHandle)
 
       const duration = Math.round(performance.now() - startTime)
@@ -183,6 +200,7 @@ export class ReviewProcessor {
         `SQS message processed successfully in ${duration}ms`
       )
     } catch (error) {
+      clearInterval(heartbeat)
       const duration = Math.round(performance.now() - startTime)
       logger.error(
         {
@@ -290,6 +308,7 @@ export class ReviewProcessor {
         `Review status updated to processing in ${statusUpdateDuration}ms`
       )
 
+      // Status is tracked in reviews/{reviewId}.json via updateReviewStatus above
       // Status is tracked in reviews/{reviewId}.json via updateReviewStatus above
     } catch (statusError) {
       logger.error(
