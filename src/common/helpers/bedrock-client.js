@@ -332,8 +332,8 @@ class BedrockClient {
     }
 
     // Should not reach here, but guard against it
-    const errorDetails = this._extractErrorDetails(lastError)
-    logger.error('Bedrock API exhausted all retries', errorDetails)
+    const exhaustedErrorDetails = this._extractErrorDetails(lastError)
+    logger.error('Bedrock API exhausted all retries', exhaustedErrorDetails)
     return this._handleAwsError(lastError)
   }
 
