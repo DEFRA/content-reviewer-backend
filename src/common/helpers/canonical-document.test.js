@@ -524,4 +524,27 @@ describe('_redactAndNormalise URL source — stripHtmlTags branches', () => {
     // are preserved as structural separators — URL sources skip section stripping.
     expect(callArg).not.toMatch(/ {2,}/)
   })
+
+  it('converts <li> elements to bullet markers (• ) for list preservation', () => {
+    canonicalDocumentStore._redactAndNormalise({
+      text: '<ul><li>Item one</li><li>Item two</li></ul>',
+      sourceType: SOURCE_TYPES.URL
+    })
+    const callArg = MOCK_PII_REDACT.mock.calls[0][0]
+    expect(callArg).toContain('• Item one')
+    expect(callArg).toContain('• Item two')
+    // Consecutive bullet items must be grouped (separated by \n not \n\n)
+    expect(callArg).toMatch(/• Item one\n• Item two/)
+  })
+
+  it('keeps bullet items from the same list grouped on consecutive lines', () => {
+    // Whitespace between </li> and <li> must not create paragraph breaks
+    canonicalDocumentStore._redactAndNormalise({
+      text: '<ul>\n  <li>First</li>\n  <li>Second</li>\n  <li>Third</li>\n</ul>',
+      sourceType: SOURCE_TYPES.URL
+    })
+    const callArg = MOCK_PII_REDACT.mock.calls[0][0]
+    // All three items must appear on consecutive lines (no \n\n between them)
+    expect(callArg).toMatch(/• First\n• Second\n• Third/)
+  })
 })

@@ -99,8 +99,15 @@ function stripHtmlTags(input) {
       // Determine whether the tag we just closed is a block element.
       // tagBuf may start with '/' (closing tag) or end with '/' (void closing).
       // Strip those and any attributes to get a clean tag name.
+      const isClosingTag = tagBuf.startsWith('/')
       const rawName = tagBuf.split(/[\s/]/u)[0].replace(/^\//, '').toLowerCase()
-      if (BLOCK_TAG_NAMES.has(rawName)) {
+      if (rawName === 'li') {
+        // Opening <li> gets a bullet prefix so list structure is preserved.
+        // Closing </li> emits nothing — the next <li> or </ul> provides the break.
+        if (!isClosingTag) {
+          out.push('\n• ')
+        }
+      } else if (BLOCK_TAG_NAMES.has(rawName)) {
         out.push('\n')
       }
       inTag = false
@@ -345,6 +352,28 @@ class CanonicalDocumentStore {
         .join('\n')
         .replaceAll(/\n{3,}/gu, '\n\n')
         .trim()
+
+      // Collapse paragraph breaks between consecutive bullet lines into single
+      // newlines so that list items from the same <ul> element remain grouped
+      // in one block rather than being split into separate paragraphs.
+      workingText = workingText
+        .split('\n\n')
+        .reduce((acc, para) => {
+          const trimmedPara = para.trim()
+          if (!trimmedPara) return acc
+          const isBullet = trimmedPara.startsWith('• ')
+          if (acc.length > 0 && isBullet) {
+            const lastPara = acc[acc.length - 1]
+            const lastLine = lastPara.split('\n').findLast((l) => l.trim())
+            if (lastLine && lastLine.trim().startsWith('• ')) {
+              acc[acc.length - 1] = lastPara + '\n' + trimmedPara
+              return acc
+            }
+          }
+          acc.push(trimmedPara)
+          return acc
+        }, [])
+        .join('\n\n')
     }
 
     // ── Step 0b: Front-matter stripping (file sources only) ─────────────────
