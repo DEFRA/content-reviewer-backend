@@ -179,12 +179,12 @@ describe('_redactAndNormalise section stripping', () => {
     expect(MOCK_SECTION_STRIP).toHaveBeenCalledOnce()
   })
 
-  it('DOES strip for URL source type', () => {
+  it('does NOT strip for URL source type', () => {
     canonicalDocumentStore._redactAndNormalise({
       text: 'Some page content.',
       sourceType: SOURCE_TYPES.URL
     })
-    expect(MOCK_SECTION_STRIP).toHaveBeenCalledOnce()
+    expect(MOCK_SECTION_STRIP).not.toHaveBeenCalled()
   })
 
   it('passes stripped text to PII redactor', () => {

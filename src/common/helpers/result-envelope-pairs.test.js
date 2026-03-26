@@ -218,30 +218,25 @@ describe('_sortAndAlignPairs — ref-based (1:1 and ordering)', () => {
 })
 
 describe('_sortAndAlignPairs — ref-based (mismatch cases)', () => {
-  it('appends improvement as unmatched when its ref has no valid issue', () => {
+  it('discards improvement when its ref has no matching issue', () => {
     const issues = [makeIssue(UTILISE_START, UTILISE_END, 1)]
     const improvements = [makeImprovement(1), makeImprovement(UNMATCHED_REF)]
     const { sortedIssues, sortedImprovements } =
       resultEnvelopeStore._sortAndAlignPairs(PAIR_TEXT, issues, improvements)
 
     expect(sortedIssues).toHaveLength(1)
-    expect(sortedImprovements).toHaveLength(2)
-    const unmatched = sortedImprovements.find((imp) => imp.unmatched === true)
-    expect(unmatched).toBeDefined()
-    expect(unmatched.issue).toBe(`Issue ${UNMATCHED_REF}`)
+    expect(sortedImprovements).toHaveLength(1)
+    expect(sortedImprovements[0].ref).toBe(1)
   })
 
-  it('produces stub improvement when issue has no paired improvement', () => {
+  it('drops issue when no paired improvement exists', () => {
     const issues = [makeIssue(UTILISE_START, UTILISE_END, 1)]
     const improvements = [makeImprovement(UNMATCHED_REF)]
     const { sortedIssues, sortedImprovements } =
       resultEnvelopeStore._sortAndAlignPairs(PAIR_TEXT, issues, improvements)
 
-    expect(sortedIssues).toHaveLength(1)
-    expect(sortedImprovements[0].issueId).toBe(sortedIssues[0].issueId)
-    expect(sortedImprovements[0].issue).toBe(STUB_ISSUE_TEXT)
-    const unmatched = sortedImprovements.find((imp) => imp.unmatched === true)
-    expect(unmatched).toBeDefined()
+    expect(sortedIssues).toHaveLength(0)
+    expect(sortedImprovements).toHaveLength(0)
   })
 
   it('drops overlapping issue spans', () => {
@@ -298,7 +293,7 @@ describe('_sortAndAlignPairs — index-based fallback (1:1 and empty)', () => {
 })
 
 describe('_sortAndAlignPairs — index-based fallback (mismatch cases)', () => {
-  it('appends excess improvements without highlights when improvements > issues', () => {
+  it('discards excess improvements when improvements > issues', () => {
     const issues = [makeIssueNoRef(UTILISE_START, UTILISE_END)]
     const improvements = [
       makeImprovementNoRef('A'),
@@ -309,14 +304,11 @@ describe('_sortAndAlignPairs — index-based fallback (mismatch cases)', () => {
       resultEnvelopeStore._sortAndAlignPairs(PAIR_TEXT, issues, improvements)
 
     expect(sortedIssues).toHaveLength(1)
-    expect(sortedImprovements).toHaveLength(EXCESS_IMPROVEMENT_COUNT)
-    const unmatched = sortedImprovements.filter((imp) => imp.unmatched === true)
-    expect(unmatched).toHaveLength(2)
-    expect(unmatched[0].issue).toBe('B')
-    expect(unmatched[1].issue).toBe('C')
+    expect(sortedImprovements).toHaveLength(1)
+    expect(sortedImprovements[0].issue).toBe('A')
   })
 
-  it('produces stub improvements when issues > improvements', () => {
+  it('drops issue when paired improvement is missing', () => {
     const issues = [
       makeIssueNoRef(UTILISE_START, UTILISE_END),
       makeIssueNoRef(FORWARD_START, FORWARD_END)
@@ -325,10 +317,9 @@ describe('_sortAndAlignPairs — index-based fallback (mismatch cases)', () => {
     const { sortedIssues, sortedImprovements } =
       resultEnvelopeStore._sortAndAlignPairs(PAIR_TEXT, issues, improvements)
 
-    expect(sortedIssues).toHaveLength(2)
-    expect(sortedImprovements).toHaveLength(2)
-    expect(sortedImprovements[1].issue).toBe(STUB_ISSUE_TEXT)
-    expect(sortedImprovements[1].unmatched).toBeUndefined()
+    expect(sortedIssues).toHaveLength(1)
+    expect(sortedImprovements).toHaveLength(1)
+    expect(sortedImprovements[0].issue).toBe('A')
   })
 })
 
@@ -443,7 +434,7 @@ const MISMATCH_CANONICAL =
 const MISMATCH_USAGE = { totalTokens: MISMATCH_TOKENS }
 
 describe('buildEnvelope — mismatch: more improvements than issues', () => {
-  it('keeps all improvements when improvements > issues (ref-based)', () => {
+  it('discards unmatched improvements when improvements > issues (ref-based)', () => {
     const review = makeMismatchReview({
       reviewedContent: {
         issues: [
@@ -467,15 +458,11 @@ describe('buildEnvelope — mismatch: more improvements than issues', () => {
     )
 
     expect(envelope.issueCount).toBe(1)
-    expect(envelope.improvements).toHaveLength(2)
-    const unmatched = envelope.improvements.find(
-      (imp) => imp.unmatched === true
-    )
-    expect(unmatched).toBeDefined()
-    expect(unmatched.issue).toBe('Words to avoid')
+    expect(envelope.improvements).toHaveLength(1)
+    expect(envelope.improvements[0].issue).toBe('Use simpler word')
   })
 
-  it('keeps all improvements when improvements > issues (index fallback)', () => {
+  it('discards unmatched improvements when improvements > issues (index fallback)', () => {
     const review = makeMismatchReview({
       reviewedContent: {
         issues: [
@@ -498,13 +485,13 @@ describe('buildEnvelope — mismatch: more improvements than issues', () => {
     )
 
     expect(envelope.issueCount).toBe(1)
-    expect(envelope.improvements).toHaveLength(2)
+    expect(envelope.improvements).toHaveLength(1)
     expect(
       envelope.improvements.find((imp) => imp.unmatched === true)
-    ).toBeDefined()
+    ).toBeUndefined()
   })
 
-  it('unmatched improvements carry unmatched flag as true', () => {
+  it('discards improvements with no matching issue (ref-based)', () => {
     const unmatchedImp = {
       severity: 'low',
       category: 'completeness',
@@ -536,17 +523,16 @@ describe('buildEnvelope — mismatch: more improvements than issues', () => {
       MISMATCH_CANONICAL
     )
 
-    const unmatched = envelope.improvements.filter(
-      (imp) => imp.unmatched === true
-    )
-    expect(unmatched).toHaveLength(1)
-    expect(unmatched[0].issue).toBe('Missing contact')
-    expect(unmatched[0].severity).toBe('low')
+    expect(envelope.improvements).toHaveLength(1)
+    expect(envelope.improvements[0].issue).toBe('Use simpler word')
+    expect(
+      envelope.improvements.filter((imp) => imp.unmatched === true)
+    ).toHaveLength(0)
   })
 })
 
 describe('buildEnvelope — mismatch: more issues than improvements', () => {
-  it('produces stub improvement when issues > improvements (ref-based)', () => {
+  it('drops issue when no matching improvement exists (ref-based)', () => {
     const review = makeMismatchReview({
       reviewedContent: {
         issues: [
@@ -576,14 +562,14 @@ describe('buildEnvelope — mismatch: more issues than improvements', () => {
       MISMATCH_CANONICAL
     )
 
-    expect(envelope.issueCount).toBe(2)
-    expect(envelope.improvements).toHaveLength(2)
+    expect(envelope.issueCount).toBe(1)
+    expect(envelope.improvements).toHaveLength(1)
     expect(
       envelope.improvements.find((imp) => imp.issue === STUB_ISSUE_TEXT)
-    ).toBeDefined()
+    ).toBeUndefined()
   })
 
-  it('produces stub improvement when issues > improvements (index fallback)', () => {
+  it('drops issue when no matching improvement exists (index fallback)', () => {
     const review = makeMismatchReview({
       reviewedContent: {
         issues: [
@@ -611,9 +597,9 @@ describe('buildEnvelope — mismatch: more issues than improvements', () => {
       MISMATCH_CANONICAL
     )
 
-    expect(envelope.issueCount).toBe(2)
-    expect(envelope.improvements).toHaveLength(2)
-    expect(envelope.improvements[1].issue).toBe(STUB_ISSUE_TEXT)
+    expect(envelope.issueCount).toBe(1)
+    expect(envelope.improvements).toHaveLength(1)
+    expect(envelope.improvements[0].issue).toBe('Use simpler word')
   })
 })
 
