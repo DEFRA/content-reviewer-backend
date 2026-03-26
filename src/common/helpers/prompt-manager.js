@@ -108,44 +108,35 @@ Content Completeness: X/5 - Brief generic quality note
 [/SCORES]
 
 [ISSUE_POSITIONS]
-{"issues":[{"ref":1,"start":12,"end":19,"type":"plain-english","text":"service"},{"ref":2,"start":45,"end":98,"type":"clarity","text":"Use this online service to apply, pay and book an appointment at a passport office."},{"ref":3,"start":210,"end":235,"type":"govuk-style","text":"Adviceline"}]}
+{"issues":[{"ref":1,"start":22,"end":29,"type":"plain-english","text":"utilise"},{"ref":2,"start":45,"end":58,"type":"govuk-style","text":"going forward"},{"ref":3,"start":90,"end":140,"type":"clarity","text":"The policy has been implemented by the department"}]}
 [/ISSUE_POSITIONS]
 
 [IMPROVEMENTS]
-[PRIORITY: critical]
+[PRIORITY: high]
 REF: 1
 CATEGORY: Plain English
-ISSUE: Use of complex jargon
-WHY: Creates barriers for users who need clear, simple language
-CURRENT: utilize stakeholder engagement frameworks
-SUGGESTED: work with interested groups
-[/PRIORITY]
-
-[PRIORITY: high]
-REF: 2
-CATEGORY: Clarity & Structure
-ISSUE: Passive voice obscures meaning
-WHY: Makes it unclear who is responsible for actions
-CURRENT: The policy has been implemented by the department
-SUGGESTED: The department implemented the policy
+ISSUE: Jargon word — simpler alternative exists
+WHY: "utilise" is on the GOV.UK words-to-avoid list. Use "use" instead. In context: "The department should utilise all available resources."
+CURRENT: utilise
+SUGGESTED: The department should use all available resources.
 [/PRIORITY]
 
 [PRIORITY: medium]
-REF: 3
+REF: 2
 CATEGORY: GOV.UK Style Compliance
-ISSUE: Use of "words to avoid"
-WHY: Not in line with GOV.UK style guide
-CURRENT: going forward, we will leverage our resources
-SUGGESTED: in future, we will use our resources
+ISSUE: "Going forward" is a banned phrase
+WHY: "going forward" is on the GOV.UK words-to-avoid list and should be replaced with "in future". In context: "going forward, we will review all cases."
+CURRENT: going forward
+SUGGESTED: In future, we will review all cases.
 [/PRIORITY]
 
-[PRIORITY: low]
-REF: 4
-CATEGORY: Content Completeness
-ISSUE: Missing contact information
-WHY: Users need to know who to contact for help
-CURRENT: (end of document with no contact details)
-SUGGESTED: Add contact email or phone number for support
+[PRIORITY: high]
+REF: 3
+CATEGORY: Clarity & Structure
+ISSUE: Passive voice obscures who is responsible
+WHY: Passive constructions make it unclear who acts. Rewrite in active voice so the responsible party is clear.
+CURRENT: The policy has been implemented by the department
+SUGGESTED: The department implemented the policy
 [/PRIORITY]
 [/IMPROVEMENTS]
 \`\`\`
@@ -246,7 +237,7 @@ Identify the **most significant issues** across all 5 review categories. You mus
 - Do NOT pad to reach the minimum — 3 high-quality, locatable improvements are better than 5 where 2 cannot be highlighted
 - **Maximum 20 improvements total** — if you find more than 20 issues, include only the 20 most significant ones, prioritising by severity and impact on the reader
 - Every improvement must have a specific, descriptive ISSUE title that explains the actual problem — NEVER use "Issue identified" as a title; that is invalid and will be rejected
-- Every improvement must have a complete CURRENT: field — a full sentence or meaningful phrase (at least 5 words in context), never a single word, a fragment, or a reference code
+- Every improvement must have a CURRENT: field that is the **exact verbatim copy** of the highlighted span text from [ISSUE_POSITIONS] — it may be a single word, a phrase, or a full sentence depending on what was highlighted. Never paraphrase or expand it
 - **SUGGESTED is mandatory** — every improvement MUST have a SUGGESTED: field with a concrete rewritten alternative that genuinely differs from CURRENT. If you cannot write a specific suggested rewrite, do NOT include the improvement at all. An improvement without SUGGESTED will be discarded entirely
 - **SUGGESTED must never use placeholder text** — do NOT write things like "[current date]", "[correct term]", "[add specific detail here]", or any text in square brackets. Every SUGGESTED field must be a complete, specific, actionable rewrite that the content designer can copy and use directly
 - Focus on the most impactful issues — do not include trivial observations or issues where the fix is the same as the original text
@@ -264,9 +255,9 @@ Each improvement must include:
 2. **Severity level** - critical, high, medium, or low
 3. **Category** - which of the 5 categories this improvement addresses
 4. **Issue title** (clear, specific)
-5. **Why this matters** (user impact, GOV.UK compliance)
-6. **Current text** — the full sentence or complete meaningful phrase from the input that contains the problem. This gives users enough context to locate and understand the issue. It must contain the span text from [ISSUE_POSITIONS] but can be longer to provide full context (e.g. the whole sentence, not just the problematic word)
-7. **Suggested improvement** — the full corrected version of the CURRENT text, showing exactly what the replacement should look like
+5. **Why this matters** — explain the impact and GOV.UK compliance reason. If the highlighted span is a single word or short phrase, also quote the full surrounding sentence here so users have context (e.g. "In context: 'The department should utilise all resources.'")
+6. **Current text** — the **exact verbatim text** of the highlighted span from [ISSUE_POSITIONS]. This must be IDENTICAL to the \`text\` field of the corresponding issue entry — no more, no less. The WHY field provides wider context. Do NOT expand to a full sentence.
+7. **Suggested improvement** — a concrete, actionable rewrite. For single-word or short-phrase issues, show the corrected full sentence so the user has enough context to make the change. For sentence-level issues, show the rewritten sentence. Never use placeholders or reproduce the CURRENT text unchanged
 
 **Severity levels:**
 - **critical** - Blocks publication, must be fixed
@@ -388,14 +379,14 @@ If you see text patterns that suggest these elements exist (e.g., "1.", "2." for
    - Priority blocks: [PRIORITY: severity]
    - Field names: REF:, CATEGORY:, ISSUE:, WHY:, CURRENT:, SUGGESTED:
 3. In [ISSUE_POSITIONS], return a **single-line JSON object** — {"issues":[...]} — where each issue has ref (1-based integer), start, end (0-based char offsets **relative to the text inside \`<content_to_review>\`, not the full message**), type, and text (the exact verbatim characters at those offsets)
-4. Each issue entry's **ref** number must exactly match the **REF:** field of its corresponding [PRIORITY] block in [IMPROVEMENTS]. This is how issues are linked to improvements — NOT by array position
-5. The CURRENT: field in each [PRIORITY] block must be the **full sentence or complete meaningful phrase** containing the issue — the span text from [ISSUE_POSITIONS] must be contained within it (CURRENT can be longer for context, but must not be shorter)
+4. Each issue entry's **ref** number must exactly match the **REF:** field of its corresponding [PRIORITY] block in [IMPROVEMENTS]. This is how issues are linked to improvements — NOT by array position. **SELF-VERIFY before submitting**: for every ref=N in [ISSUE_POSITIONS], the [PRIORITY] block with REF: N in [IMPROVEMENTS] must have a CURRENT: field that contains the issue's \`text\` value verbatim (or closely paraphrased). If any pair does not match — e.g. ref=1 in [ISSUE_POSITIONS] refers to "overdue" but REF: 1 in [IMPROVEMENTS] refers to a different topic — you have a mismatch. Fix the REF numbers so each improvement's REF matches the ref of the issue it actually addresses
+5. The CURRENT: field in each [PRIORITY] block must be **exactly identical** to the \`text\` field of the corresponding entry in [ISSUE_POSITIONS] — copy it verbatim, character for character. Do NOT expand or paraphrase it
 6. The [SCORES] section must contain **exactly five categories** in this order: Plain English, Clarity & Structure, Accessibility, GOV.UK Style Compliance, Content Completeness. Do NOT add an "Overall" row.
 7. Score notes must be **generic quality assessments only** — do NOT quote, name, or reference specific words, acronyms, phrases, or terminology from the input content
 8. Do **not** echo back or repeat the original input text anywhere in your response
 9. Provide **between 3 and 20 improvements** in the [IMPROVEMENTS] section — maximum 20 regardless of document length. Select only the most significant issues. Only include improvements where you can identify the exact text span in the document. Do NOT pad to reach the minimum
 10. Every [PRIORITY] block **must** include a complete SUGGESTED: field — a concrete rewritten alternative that genuinely differs from the CURRENT text. A block without SUGGESTED, or where SUGGESTED is identical to CURRENT, is invalid and must not be included
-11. Every [PRIORITY] block **must** have a CURRENT: field that is a complete sentence or meaningful phrase (at least 5 words in context) — never a single word, a fragment, or a reference code
+11. Every [PRIORITY] block **must** have a CURRENT: field that is the **exact verbatim copy** of the corresponding \`text\` in [ISSUE_POSITIONS] — it may be a single word, a phrase, or a sentence, whatever the highlighted span is
 12. Every [PRIORITY] block **must** have a specific ISSUE: title describing the actual problem — "Issue identified" is NEVER acceptable and will be treated as an error. Write what the problem actually is (e.g. "Passive voice obscures responsibility", "Jargon term needs simpler alternative")
 13. Improvements must be **spread across all 5 categories** — at minimum 1 per category that scores below 5, and ONLY for categories that score below 5
 14. **SCORE–ISSUE CONSISTENCY**: Every category scoring below 5 MUST have at least one highlighted issue. Every category scoring 5 MUST have zero issues. Scores and issues must always agree
