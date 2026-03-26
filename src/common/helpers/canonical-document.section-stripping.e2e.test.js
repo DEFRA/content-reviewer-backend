@@ -114,13 +114,14 @@ describe('section stripping — FILE source strips front-matter', () => {
     expect(document.canonicalText).toContain('policy framework')
   })
 
-  it('removes the table of contents from URL source output', async () => {
+  it('preserves the table of contents in URL source output', async () => {
     const { document } = await canonicalDocumentStore.createCanonicalDocument({
       documentId: DOC_ID,
       text: DOCUMENT_WITH_FRONT_MATTER,
       sourceType: SOURCE_TYPES.URL
     })
-    expect(document.canonicalText).not.toMatch(/\.{4,}/)
+    // URL sources no longer call the section stripper, so dot-leader TOC is preserved
+    expect(document.canonicalText).toMatch(/\.{4,}/)
   })
 })
 

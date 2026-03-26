@@ -548,14 +548,23 @@ describe('buildEnvelope — category normalization in improvements', () => {
   function buildReviewWithCategory(categoryRaw) {
     return {
       scores: {},
-      reviewedContent: { issues: [] },
+      reviewedContent: {
+        issues: [
+          {
+            start: 22,
+            end: 29,
+            type: CATEGORY_PLAIN_ENGLISH_KEY,
+            text: CATEGORY_UTILISE_TEXT
+          }
+        ]
+      },
       improvements: [
         {
           severity: 'medium',
           category: categoryRaw,
           issue: 'Issue title',
           why: 'Explanation',
-          current: 'Old text',
+          current: CATEGORY_UTILISE_TEXT,
           suggested: 'New text',
           ref: undefined
         }
