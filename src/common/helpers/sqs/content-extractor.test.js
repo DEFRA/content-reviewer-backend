@@ -291,11 +291,17 @@ describe('ContentExtractor - extractTextContent', () => {
       messageBody
     )
 
-    expect(result).toBe(TEST_TEXT_EXTRACTED)
+    // extractTextContent now returns { canonicalText, displayText } for all paths
+    expect(result).toEqual({
+      canonicalText: TEST_TEXT_EXTRACTED,
+      displayText: null
+    })
+    expect(result.canonicalText).toBe(TEST_TEXT_EXTRACTED)
+    expect(result.displayText).toBeNull()
     expect(mockExtractText).toHaveBeenCalled()
   })
 
-  test('should route to extractTextFromS3 for text_review message type', async () => {
+  test('should route to extractTextFromCanonicalDocument for text_review message type', async () => {
     const messageBody = {
       messageType: 'text_review',
       s3Bucket: TEST_BUCKET,
@@ -311,7 +317,14 @@ describe('ContentExtractor - extractTextContent', () => {
       messageBody
     )
 
-    expect(result).toBe(TEST_TEXT_CONTENT)
+    // extractTextContent now always returns { canonicalText, displayText }
+    // Legacy plain-text keys (not documents/*.json) fall back to raw string as canonicalText
+    expect(result).toEqual({
+      canonicalText: TEST_TEXT_CONTENT,
+      displayText: null
+    })
+    expect(result.canonicalText).toBe(TEST_TEXT_CONTENT)
+    expect(result.displayText).toBeNull()
     expect(mockLoggerInfo).toHaveBeenCalledWith(
       expect.objectContaining({
         reviewId: TEST_REVIEW_ID
@@ -420,5 +433,158 @@ describe('ContentExtractor - extractTextFromS3', () => {
     await expect(
       extractor.extractTextFromS3(TEST_REVIEW_ID, messageBody)
     ).rejects.toThrow(TEST_ERROR_MESSAGE)
+  })
+})
+
+// ── extractTextFromCanonicalDocument ─────────────────────────────────────────
+
+describe('ContentExtractor - extractTextFromCanonicalDocument', () => {
+  let extractor
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    extractor = new ContentExtractor()
+  })
+
+  test('returns { canonicalText, displayText: null } for a canonical document without displayText', async () => {
+    const doc = {
+      documentId: TEST_REVIEW_ID,
+      canonicalText: TEST_TEXT_CONTENT,
+      charCount: TEST_TEXT_CONTENT.length,
+      tokenEst: 5,
+      sourceType: 'text',
+      status: 'pending'
+    }
+    const messageBody = {
+      s3Bucket: TEST_BUCKET,
+      s3Key: `documents/${TEST_REVIEW_ID}.json`
+    }
+    const mockBody = createMockAsyncBody([Buffer.from(JSON.stringify(doc))])
+    mockS3Send.mockResolvedValueOnce({ Body: mockBody })
+
+    const result = await extractor.extractTextFromCanonicalDocument(
+      TEST_REVIEW_ID,
+      messageBody
+    )
+
+    expect(result).toEqual({
+      canonicalText: TEST_TEXT_CONTENT,
+      displayText: null
+    })
+  })
+
+  test('returns { canonicalText, displayText } when canonical document includes displayText (URL source)', async () => {
+    const displayText =
+      'See [the guidance](https://www.gov.uk/guidance) for details.'
+    const canonicalText = 'See the guidance for details.'
+    const doc = {
+      documentId: TEST_REVIEW_ID,
+      canonicalText,
+      displayText,
+      charCount: canonicalText.length,
+      tokenEst: 7,
+      sourceType: 'url',
+      status: 'pending'
+    }
+    const messageBody = {
+      s3Bucket: TEST_BUCKET,
+      s3Key: `documents/${TEST_REVIEW_ID}.json`
+    }
+    const mockBody = createMockAsyncBody([Buffer.from(JSON.stringify(doc))])
+    mockS3Send.mockResolvedValueOnce({ Body: mockBody })
+
+    const result = await extractor.extractTextFromCanonicalDocument(
+      TEST_REVIEW_ID,
+      messageBody
+    )
+
+    expect(result.canonicalText).toBe(canonicalText)
+    expect(result.displayText).toBe(displayText)
+  })
+
+  test('falls back to raw string with displayText null for legacy plain-text S3 keys', async () => {
+    // Legacy key is NOT documents/*.json so the fallback code path is used
+    const messageBody = {
+      s3Bucket: TEST_BUCKET,
+      s3Key: 'content-uploads/review-123/Title.txt'
+    }
+    const mockBody = createMockAsyncBody([Buffer.from(TEST_TEXT_CONTENT)])
+    mockS3Send.mockResolvedValueOnce({ Body: mockBody })
+
+    const result = await extractor.extractTextFromCanonicalDocument(
+      TEST_REVIEW_ID,
+      messageBody
+    )
+
+    expect(result).toEqual({
+      canonicalText: TEST_TEXT_CONTENT,
+      displayText: null
+    })
+  })
+
+  test('falls back gracefully when canonicalText field is missing from parsed JSON', async () => {
+    // Malformed canonical document — missing canonicalText field
+    const doc = { documentId: TEST_REVIEW_ID, status: 'pending' }
+    const messageBody = {
+      s3Bucket: TEST_BUCKET,
+      s3Key: `documents/${TEST_REVIEW_ID}.json`
+    }
+    const mockBody = createMockAsyncBody([Buffer.from(JSON.stringify(doc))])
+    mockS3Send.mockResolvedValueOnce({ Body: mockBody })
+
+    const result = await extractor.extractTextFromCanonicalDocument(
+      TEST_REVIEW_ID,
+      messageBody
+    )
+
+    // Falls back to the raw JSON string, no displayText
+    expect(result.displayText).toBeNull()
+    expect(typeof result.canonicalText).toBe('string')
+  })
+
+  test('falls back gracefully when S3 body is not valid JSON', async () => {
+    const messageBody = {
+      s3Bucket: TEST_BUCKET,
+      s3Key: `documents/${TEST_REVIEW_ID}.json`
+    }
+    const mockBody = createMockAsyncBody([Buffer.from('not valid json {')])
+    mockS3Send.mockResolvedValueOnce({ Body: mockBody })
+
+    const result = await extractor.extractTextFromCanonicalDocument(
+      TEST_REVIEW_ID,
+      messageBody
+    )
+
+    expect(result.displayText).toBeNull()
+    expect(typeof result.canonicalText).toBe('string')
+  })
+
+  test('extractTextContent routes text_review to extractTextFromCanonicalDocument and returns { canonicalText, displayText }', async () => {
+    const displayText = 'See [GOV.UK](https://www.gov.uk) for info.'
+    const canonicalText = 'See GOV.UK for info.'
+    const doc = {
+      documentId: TEST_REVIEW_ID,
+      canonicalText,
+      displayText,
+      charCount: canonicalText.length,
+      tokenEst: 5,
+      sourceType: 'url',
+      status: 'pending'
+    }
+    const messageBody = {
+      messageType: 'text_review',
+      s3Bucket: TEST_BUCKET,
+      s3Key: `documents/${TEST_REVIEW_ID}.json`
+    }
+    const mockBody = createMockAsyncBody([Buffer.from(JSON.stringify(doc))])
+    mockS3Send.mockResolvedValueOnce({ Body: mockBody })
+
+    const result = await extractor.extractTextContent(
+      TEST_REVIEW_ID,
+      messageBody
+    )
+
+    expect(result.canonicalText).toBe(canonicalText)
+    expect(result.displayText).toBe(displayText)
   })
 })

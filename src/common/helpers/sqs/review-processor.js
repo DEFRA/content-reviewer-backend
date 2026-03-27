@@ -231,26 +231,26 @@ export class ReviewProcessor {
 
     try {
       await this.updateReviewStatusToProcessing(reviewId)
-      const textContent = await this.contentExtractor.extractTextContent(
-        reviewId,
-        messageBody
-      )
+      const { canonicalText, displayText } =
+        await this.contentExtractor.extractTextContent(reviewId, messageBody)
       const bedrockResult = await this.bedrockProcessor.performBedrockReview(
         reviewId,
-        textContent
+        canonicalText
       )
       const parseResult = await this.bedrockProcessor.parseBedrockResponseData(
         reviewId,
         bedrockResult,
-        textContent
+        canonicalText
       )
-      // Pass textContent (canonicalText) so the result envelope can build
-      // annotated sections by comparing positions against the normalised text
+      // Pass canonicalText (clean prose) and displayText (Markdown links intact)
+      // so the result envelope can build accurate annotated sections and also
+      // restore clickable links in plain (non-highlighted) sections.
       await this.saveReviewToRepository(
         reviewId,
         parseResult,
         bedrockResult,
-        textContent
+        canonicalText,
+        displayText
       )
 
       this.logReviewCompletion(
@@ -329,12 +329,15 @@ export class ReviewProcessor {
    * @param {Object} bedrockResult     - { bedrockResponse, bedrockDuration }
    * @param {string} canonicalText     - the normalised text from the canonical document;
    *                                     used to derive annotated sections in result envelope
+   * @param {string|null} displayText  - Markdown-link-preserved text for URL sources;
+   *                                     used to restore clickable links in plain sections
    */
   async saveReviewToRepository(
     reviewId,
     parseResult,
     bedrockResult,
-    canonicalText = ''
+    canonicalText = '',
+    displayText = null
   ) {
     // Build the spec-compliant envelope (annotatedSections, scores, improvements, etc.)
     // and embed it directly into reviews/{reviewId}.json — no separate S3 file needed.
@@ -343,7 +346,8 @@ export class ReviewProcessor {
       parseResult.parsedReview,
       bedrockResult.bedrockResponse.usage,
       canonicalText,
-      'completed'
+      'completed',
+      displayText
     )
 
     const saveStart = performance.now()
