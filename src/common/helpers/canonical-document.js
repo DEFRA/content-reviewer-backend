@@ -107,6 +107,8 @@ function stripHtmlTags(input) {
         out.push('\n• ')
       } else if (rawName !== 'li' && BLOCK_TAG_NAMES.has(rawName)) {
         out.push('\n')
+      } else {
+        // Inline tag or closing </li> — no output needed
       }
       inTag = false
       tagBuf = ''
