@@ -101,13 +101,11 @@ function stripHtmlTags(input) {
       // Strip those and any attributes to get a clean tag name.
       const isClosingTag = tagBuf.startsWith('/')
       const rawName = tagBuf.split(/[\s/]/u)[0].replace(/^\//, '').toLowerCase()
-      if (rawName === 'li') {
+      if (rawName === 'li' && !isClosingTag) {
         // Opening <li> gets a bullet prefix so list structure is preserved.
         // Closing </li> emits nothing — the next <li> or </ul> provides the break.
-        if (!isClosingTag) {
-          out.push('\n• ')
-        }
-      } else if (BLOCK_TAG_NAMES.has(rawName)) {
+        out.push('\n• ')
+      } else if (rawName !== 'li' && BLOCK_TAG_NAMES.has(rawName)) {
         out.push('\n')
       }
       inTag = false
@@ -360,13 +358,15 @@ class CanonicalDocumentStore {
         .split('\n\n')
         .reduce((acc, para) => {
           const trimmedPara = para.trim()
-          if (!trimmedPara) return acc
+          if (!trimmedPara) {
+            return acc
+          }
           const isBullet = trimmedPara.startsWith('• ')
           if (acc.length > 0 && isBullet) {
             const lastPara = acc[acc.length - 1]
             const lastLine = lastPara.split('\n').findLast((l) => l.trim())
-            if (lastLine && lastLine.trim().startsWith('• ')) {
-              acc[acc.length - 1] = lastPara + '\n' + trimmedPara
+            if (lastLine?.trim().startsWith('• ')) {
+              acc[acc.length - 1] = `${lastPara}\n${trimmedPara}`
               return acc
             }
           }
