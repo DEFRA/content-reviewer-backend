@@ -101,7 +101,11 @@ describe('ReviewProcessor - processContentReview - uploadId processing', () => {
       }
 
       mockUpdateReviewStatus.mockResolvedValue()
-      mockExtractTextContent.mockResolvedValue(TEST_SAMPLE_TEXT)
+      // extractTextContent now returns { canonicalText, displayText } — not a plain string
+      mockExtractTextContent.mockResolvedValue({
+        canonicalText: TEST_SAMPLE_TEXT,
+        displayText: null
+      })
       mockPerformBedrockReview.mockResolvedValue({
         bedrockResponse: {
           usage: { inputTokens: 100, outputTokens: 50 },
@@ -157,7 +161,11 @@ describe('ReviewProcessor - processContentReview - reviewId processing', () => {
       }
 
       mockUpdateReviewStatus.mockResolvedValue()
-      mockExtractTextContent.mockResolvedValue(TEST_SAMPLE_TEXT)
+      // extractTextContent now returns { canonicalText, displayText } — not a plain string
+      mockExtractTextContent.mockResolvedValue({
+        canonicalText: TEST_SAMPLE_TEXT,
+        displayText: null
+      })
       mockPerformBedrockReview.mockResolvedValue({
         bedrockResponse: {
           usage: {},
@@ -210,7 +218,11 @@ describe('ReviewProcessor - processContentReview - error handling', () => {
 
       const error = new Error('Bedrock error')
       mockUpdateReviewStatus.mockResolvedValue()
-      mockExtractTextContent.mockResolvedValue(TEST_SAMPLE_TEXT)
+      // extractTextContent now returns { canonicalText, displayText } — not a plain string
+      mockExtractTextContent.mockResolvedValue({
+        canonicalText: TEST_SAMPLE_TEXT,
+        displayText: null
+      })
       mockPerformBedrockReview.mockRejectedValue(error)
       mockFormatErrorForUI.mockReturnValue(TEST_USER_FRIENDLY_ERROR)
       mockSaveReviewError.mockResolvedValue()

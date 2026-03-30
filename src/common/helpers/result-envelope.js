@@ -608,13 +608,73 @@ class ResultEnvelopeStore {
    * issueIdx is the sequential 0-based index into both issues[] AND
    * improvements[] — guaranteed 1:1 because _sortAndAlignPairs produced them.
    *
+   * For plain (non-highlighted) spans, if displayText is provided the span
+   * text is sourced from displayText via a sequential scan so that Markdown
+   * link syntax [anchor](url) is preserved, allowing the frontend to render
+   * clickable links.  Highlighted spans always use canonicalText (clean prose)
+   * so that the highlight is accurate — links are not preserved in highlights
+   * (accepted trade-off).
+   *
    * @param {string} canonicalText
-   * @param {Array}  sortedIssues  - already-sorted, deduped spec issue objects
+   * @param {Array}  sortedIssues    - already-sorted, deduped spec issue objects
+   * @param {string|null} [displayText] - Markdown-link-preserved text (URL sources only)
    * @returns {Array}
    */
-  _buildAnnotatedSections(canonicalText, sortedIssues) {
+  _buildAnnotatedSections(canonicalText, sortedIssues, displayText = null) {
     if (!canonicalText) {
       return []
+    }
+
+    // When displayText is available, build a sequential cursor into it so we
+    // can extract plain-span text with Markdown links intact.
+    // The scan is sequential (not by offset) because displayText is longer
+    // than canonicalText wherever a Markdown link is present.  We walk both
+    // strings in lock-step, matching anchor text character-by-character.
+    const useDisplay = typeof displayText === 'string' && displayText.length > 0
+    let displayCursor = 0
+
+    /**
+     * Extract the displayText equivalent of canonicalText[from, to).
+     * Walks displayText forward from displayCursor, consuming characters that
+     * correspond to the plain-text characters in canonicalText[from, to).
+     * Markdown links in displayText are included whole when their anchor text
+     * is encountered — the (url) part is extra and advances displayCursor past
+     * the closing ')' without consuming canonicalText characters.
+     *
+     * Returns the displayText slice and advances displayCursor.
+     */
+    const extractDisplaySpan = (from, to) => {
+      if (!useDisplay) {
+        return canonicalText.slice(from, to)
+      }
+
+      const target = canonicalText.slice(from, to)
+      let canonIdx = 0
+      const out = []
+
+      while (canonIdx < target.length && displayCursor < displayText.length) {
+        // Check if displayText has a Markdown link starting here: [anchor](url)
+        if (displayText[displayCursor] === '[') {
+          // Try to match a complete [anchor](url) where anchor === remaining target
+          const linkMatch = /^\[([^\]]{0,2000})\]\([^)\s]{0,2048}\)/u.exec(
+            displayText.slice(displayCursor)
+          )
+          if (linkMatch && target.slice(canonIdx).startsWith(linkMatch[1])) {
+            // Consume the whole Markdown link from displayText
+            out.push(linkMatch[0])
+            displayCursor += linkMatch[0].length
+            canonIdx += linkMatch[1].length
+            continue
+          }
+        }
+
+        // Normal character — must match between both strings
+        out.push(displayText[displayCursor])
+        displayCursor++
+        canonIdx++
+      }
+
+      return out.join('')
     }
 
     const sections = []
@@ -623,16 +683,46 @@ class ResultEnvelopeStore {
     for (let seqIdx = 0; seqIdx < sortedIssues.length; seqIdx++) {
       const { absStart, absEnd, category } = sortedIssues[seqIdx]
 
-      // Plain text before this issue
+      // Plain text before this issue — source from displayText if available
       if (absStart > cursor) {
         sections.push({
-          text: canonicalText.slice(cursor, absStart),
+          text: extractDisplaySpan(cursor, absStart),
           issueIdx: null,
           category: null
         })
       }
 
-      // Highlighted span — issueIdx is the sequential index into issues[] and improvements[]
+      // Highlighted span — always use canonicalText (clean prose, accurate position)
+      // Advance displayCursor past the corresponding displayText region without
+      // collecting output, so the sequential scan stays in sync.
+      if (useDisplay) {
+        // Advance displayCursor past the characters in canonicalText[cursor, absEnd)
+        // that weren't already consumed by the plain-span extraction above.
+        // We need to skip the highlighted region in displayText.
+        const highlightCanon = canonicalText.slice(absStart, absEnd)
+        let hIdx = 0
+        while (
+          hIdx < highlightCanon.length &&
+          displayCursor < displayText.length
+        ) {
+          if (displayText[displayCursor] === '[') {
+            const linkMatch = /^\[([^\]]{0,2000})\]\([^)\s]{0,2048}\)/u.exec(
+              displayText.slice(displayCursor)
+            )
+            if (
+              linkMatch &&
+              highlightCanon.slice(hIdx).startsWith(linkMatch[1])
+            ) {
+              displayCursor += linkMatch[0].length
+              hIdx += linkMatch[1].length
+              continue
+            }
+          }
+          displayCursor++
+          hIdx++
+        }
+      }
+
       sections.push({
         text: canonicalText.slice(absStart, absEnd),
         issueIdx: seqIdx,
@@ -645,7 +735,7 @@ class ResultEnvelopeStore {
     // Remaining plain text after the last issue
     if (cursor < canonicalText.length) {
       sections.push({
-        text: canonicalText.slice(cursor),
+        text: extractDisplaySpan(cursor, canonicalText.length),
         issueIdx: null,
         category: null
       })
@@ -752,6 +842,9 @@ class ResultEnvelopeStore {
    * @param {Object} bedrockUsage   - { totalTokens, inputTokens, outputTokens }
    * @param {string} canonicalText  - normalised full text from documents/{reviewId}.json
    * @param {string} [status]       - defaults to "completed"
+   * @param {string|null} [displayText] - Markdown-link-preserved text for URL sources;
+   *                                      used to restore links in plain (non-highlighted)
+   *                                      annotated sections
    * @returns {Object} spec-compliant envelope
    */
   buildEnvelope(
@@ -759,7 +852,8 @@ class ResultEnvelopeStore {
     parsedReview,
     bedrockUsage,
     canonicalText,
-    status = 'completed'
+    status = 'completed',
+    displayText = null
   ) {
     const {
       scores = {},
@@ -806,7 +900,8 @@ class ResultEnvelopeStore {
     // Step 3: Build annotated sections using the sorted, re-indexed issues
     const annotatedSections = this._buildAnnotatedSections(
       canonicalText,
-      sortedIssues
+      sortedIssues,
+      displayText
     )
 
     const mappedScores = this._mapScores(scores)
