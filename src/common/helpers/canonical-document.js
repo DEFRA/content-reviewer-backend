@@ -238,6 +238,7 @@ class CanonicalDocumentStore {
     const {
       redactionResult,
       canonicalText,
+      displayText,
       normStats,
       sectionStripStats,
       charCount,
@@ -262,6 +263,7 @@ class CanonicalDocumentStore {
       sourceType,
       rawS3Key,
       canonicalText,
+      displayText,
       charCount,
       tokenEst,
       sourceMap,
@@ -376,6 +378,27 @@ class CanonicalDocumentStore {
         .join('\n\n')
     }
 
+    // ── Step 0a(ii): Capture displayText for URL sources ────────────────────
+    // displayText preserves Markdown link syntax [anchor](url) for use in the
+    // results page so plain (non-highlighted) sections remain clickable.
+    // canonicalText will have Markdown links stripped to anchor-text only so
+    // that Bedrock sees clean prose and character offsets are accurate.
+    //
+    // Both texts diverge only at this one point — everything before (HTML tag
+    // stripping, entity unescaping, whitespace normalisation) is identical, and
+    // everything after (PII redaction, text normalisation) is applied to both
+    // so they stay structurally in sync.
+    let displayText = null
+    if (sourceType === SOURCE_TYPES.URL) {
+      // Save the working text with Markdown links intact
+      displayText = workingText
+      // Strip Markdown links [anchor](url) → anchor for canonicalText only
+      workingText = workingText.replaceAll(
+        /\[([^\]]{0,2000})\]\([^)\s]{0,2048}\)/gu,
+        '$1'
+      )
+    }
+
     // ── Step 0b: Front-matter stripping (file sources only) ─────────────────
     // Title pages, copyright/imprint pages and tables of contents are structural
     // boilerplate found in PDFs/uploaded files that add noise for the AI.
@@ -398,9 +421,24 @@ class CanonicalDocumentStore {
     // ── Step 1: PII redaction ────────────────────────────────────────────────
     const redactionResult = piiRedactor.redactUserContent(workingText)
 
+    // Also redact PII from displayText (URL sources only) so that any PII
+    // in link anchor text is not surfaced in the rendered results page.
+    let redactedDisplayText = null
+    if (displayText !== null) {
+      redactedDisplayText =
+        piiRedactor.redactUserContent(displayText).redactedText
+    }
+
     // ── Step 2: Text normalisation ───────────────────────────────────────────
     const { normalisedText: canonicalText, stats: normStats } =
       textNormaliser.normalise(redactionResult.redactedText)
+
+    // Normalise displayText through the same pipeline so structural whitespace,
+    // ligatures and typographic characters are consistent with canonicalText.
+    const normalisedDisplayText =
+      redactedDisplayText !== null
+        ? textNormaliser.normalise(redactedDisplayText).normalisedText
+        : null
 
     const charCount = canonicalText.length
     const tokenEst = Math.round(charCount / 4)
@@ -418,6 +456,7 @@ class CanonicalDocumentStore {
     return {
       redactionResult,
       canonicalText,
+      displayText: normalisedDisplayText,
       normStats,
       sectionStripStats,
       charCount,
@@ -448,6 +487,7 @@ class CanonicalDocumentStore {
     sourceType,
     rawS3Key,
     canonicalText,
+    displayText,
     charCount,
     tokenEst,
     sourceMap,
@@ -459,6 +499,9 @@ class CanonicalDocumentStore {
       sourceType,
       ...(rawS3Key ? { rawS3Key } : {}),
       canonicalText,
+      ...(displayText !== null && displayText !== undefined
+        ? { displayText }
+        : {}),
       charCount,
       tokenEst,
       sourceMap,

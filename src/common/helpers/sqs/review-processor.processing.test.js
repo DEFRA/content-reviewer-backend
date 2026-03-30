@@ -99,7 +99,11 @@ describe('ReviewProcessor - processMessage - successful processing', () => {
         ReceiptHandle: TEST_RECEIPT_HANDLE
       }
 
-      mockExtractTextContent.mockResolvedValue(TEST_SAMPLE_TEXT)
+      // extractTextContent now returns { canonicalText, displayText } — not a plain string
+      mockExtractTextContent.mockResolvedValue({
+        canonicalText: TEST_SAMPLE_TEXT,
+        displayText: null
+      })
       mockPerformBedrockReview.mockResolvedValue({
         bedrockResponse: {
           usage: { inputTokens: 100, outputTokens: 50 },
@@ -245,7 +249,8 @@ describe('ReviewProcessor - processMessage - heartbeat', () => {
       900
     )
 
-    resolveProcessing(TEST_SAMPLE_TEXT)
+    // Resolve the pending promise with the correct { canonicalText, displayText } shape
+    resolveProcessing({ canonicalText: TEST_SAMPLE_TEXT, displayText: null })
     mockPerformBedrockReview.mockResolvedValue({
       bedrockResponse: {
         usage: {},

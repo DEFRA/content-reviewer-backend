@@ -51,10 +51,14 @@ export class ContentExtractor {
    * (documents/{reviewId}.json).  We read `canonicalText` from that JSON.
    * If the key still points to a legacy plain-text file (content-uploads/…)
    * we fall back to reading the buffer as UTF-8 so old messages keep working.
+   *
+   * Returns { canonicalText, displayText } where displayText is the Markdown-
+   * link-preserved version for URL sources (null for file/text sources).
    */
   async extractTextContent(reviewId, messageBody) {
     if (messageBody.messageType === 'file_review') {
-      return this.extractTextFromFile(reviewId, messageBody)
+      const text = await this.extractTextFromFile(reviewId, messageBody)
+      return { canonicalText: text, displayText: null }
     }
 
     if (messageBody.messageType === 'text_review') {
@@ -164,7 +168,7 @@ export class ContentExtractor {
           { reviewId, s3Key: messageBody.s3Key, error: parseError.message },
           'Failed to parse canonical document JSON — falling back to raw text'
         )
-        return rawString
+        return { canonicalText: rawString, displayText: null }
       }
 
       const canonicalText = canonicalDoc.canonicalText
@@ -179,7 +183,7 @@ export class ContentExtractor {
           },
           'Canonical document missing canonicalText field — falling back to raw document JSON'
         )
-        return rawString
+        return { canonicalText: rawString, displayText: null }
       }
 
       logger.info(
@@ -190,12 +194,16 @@ export class ContentExtractor {
           charCount: canonicalDoc.charCount,
           tokenEst: canonicalDoc.tokenEst,
           sourceType: canonicalDoc.sourceType,
+          hasDisplayText: !!canonicalDoc.displayText,
           durationMs: s3Duration
         },
         `Canonical document read successfully in ${s3Duration}ms — using canonicalText (${canonicalDoc.charCount} chars)`
       )
 
-      return canonicalText
+      return {
+        canonicalText,
+        displayText: canonicalDoc.displayText ?? null
+      }
     }
 
     // Legacy plain-text fallback (content-uploads/…/Title.txt)
@@ -209,7 +217,7 @@ export class ContentExtractor {
       `Legacy plain-text S3 content read in ${s3Duration}ms`
     )
 
-    return rawString
+    return { canonicalText: rawString, displayText: null }
   }
 
   /**
