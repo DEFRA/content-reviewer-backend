@@ -304,34 +304,33 @@ class BedrockClient {
       } catch (error) {
         lastError = error
 
-        if (this._isRetryableError(error) && attempt < MAX_RETRIES) {
-          const backoffMs = Math.min(
-            BASE_BACKOFF_MS * Math.pow(2, attempt),
-            MAX_BACKOFF_MS
-          )
-          logger.warn(
-            {
-              attempt: attempt + 1,
-              maxRetries: MAX_RETRIES,
-              backoffMs,
-              errorName: error.name,
-              errorCode: error.code
-            },
-            `Bedrock ${error.name} — retrying in ${backoffMs / 1000}s (attempt ${attempt + 1}/${MAX_RETRIES})`
-          )
-          await this._sleep(backoffMs)
-          continue
+        if (!this._isRetryableError(error) || attempt >= MAX_RETRIES) {
+          // Non-retryable error or final attempt — exit retry loop
+          break
         }
 
-        // Non-retryable error or final attempt — exit retry loop
-        break
+        const backoffMs = Math.min(
+          BASE_BACKOFF_MS * Math.pow(2, attempt),
+          MAX_BACKOFF_MS
+        )
+        logger.warn(
+          {
+            attempt: attempt + 1,
+            maxRetries: MAX_RETRIES,
+            backoffMs,
+            errorName: error.name,
+            errorCode: error.code
+          },
+          `Bedrock ${error.name} — retrying in ${backoffMs / 1000}s (attempt ${attempt + 1}/${MAX_RETRIES})`
+        )
+        await this._sleep(backoffMs)
       }
     }
 
     // All attempts exhausted or non-retryable error encountered
     const errorDetails = this._extractErrorDetails(lastError)
     logger.error('Bedrock API error', errorDetails)
-    this._handleAwsError(lastError)
+    return this._handleAwsError(lastError)
   }
 
   /**
