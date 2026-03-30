@@ -878,9 +878,9 @@ class ResultEnvelopeStore {
 
     const prelimIssues = rawIssues.map((rawIssue, idx) => {
       const pairedImp =
-        rawIssue.ref !== undefined
-          ? (improvByRef.get(rawIssue.ref) ?? parsedImprovements[idx] ?? null)
-          : (parsedImprovements[idx] ?? null)
+        rawIssue.ref === undefined
+          ? (parsedImprovements[idx] ?? null)
+          : (improvByRef.get(rawIssue.ref) ?? parsedImprovements[idx] ?? null)
       return this._mapIssue(rawIssue, pairedImp, idx, canonicalText)
     })
 
