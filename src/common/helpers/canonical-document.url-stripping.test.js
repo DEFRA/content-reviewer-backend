@@ -180,16 +180,40 @@ describe('_redactAndNormalise – URL HTML stripping: paragraph structure', () =
 })
 
 describe('_redactAndNormalise – URL HTML stripping: Markdown link placeholders', () => {
-  it('preserves [text](url) Markdown links through HTML stripping', () => {
-    // url-extractor converts <a> to [text](url) BEFORE the HTML is stored.
-    // The canonical-document stripping must not corrupt these placeholders.
+  it('strips Markdown links [text](url) from canonicalText so Bedrock sees clean prose', () => {
+    // The dual-text approach strips Markdown links from canonicalText (used by Bedrock)
+    // but preserves them in displayText (used for rendering plain sections).
     canonicalDocumentStore._redactAndNormalise({
       text: '<p>See [the guidance](https://www.gov.uk/guidance/test) for details.</p>',
       sourceType: SOURCE_TYPES.URL
     })
-    const textPassedToPii = MOCK_PII_REDACT.mock.calls[0][0]
-    expect(textPassedToPii).toContain(
+    // canonicalText path (first PII call) should have the link stripped to anchor text only
+    const canonicalPassedToPii = MOCK_PII_REDACT.mock.calls[0][0]
+    expect(canonicalPassedToPii).toContain('the guidance')
+    expect(canonicalPassedToPii).not.toContain(
       '[the guidance](https://www.gov.uk/guidance/test)'
     )
+  })
+
+  it('preserves [text](url) Markdown links in displayText for URL sources', () => {
+    // displayText is PII-redacted separately (second PII call) with links intact
+    canonicalDocumentStore._redactAndNormalise({
+      text: '<p>See [the guidance](https://www.gov.uk/guidance/test) for details.</p>',
+      sourceType: SOURCE_TYPES.URL
+    })
+    // displayText path (second PII call) must retain the full Markdown link
+    const displayPassedToPii = MOCK_PII_REDACT.mock.calls[1][0]
+    expect(displayPassedToPii).toContain(
+      '[the guidance](https://www.gov.uk/guidance/test)'
+    )
+  })
+
+  it('does not produce a second PII call for non-URL sources (no displayText)', () => {
+    // FILE and TEXT sources do not generate displayText, so only one PII call is made
+    canonicalDocumentStore._redactAndNormalise({
+      text: 'Plain text content without links.',
+      sourceType: SOURCE_TYPES.TEXT
+    })
+    expect(MOCK_PII_REDACT).toHaveBeenCalledTimes(1)
   })
 })
