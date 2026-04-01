@@ -231,7 +231,7 @@ export class ReviewProcessor {
 
     try {
       await this.updateReviewStatusToProcessing(reviewId)
-      const { canonicalText, displayText } =
+      const { canonicalText, linkMap } =
         await this.contentExtractor.extractTextContent(reviewId, messageBody)
       const bedrockResult = await this.bedrockProcessor.performBedrockReview(
         reviewId,
@@ -242,7 +242,7 @@ export class ReviewProcessor {
         bedrockResult,
         canonicalText
       )
-      // Pass canonicalText (clean prose) and displayText (Markdown links intact)
+      // Pass canonicalText (clean prose) and linkMap (offset-based link entries)
       // so the result envelope can build accurate annotated sections and also
       // restore clickable links in plain (non-highlighted) sections.
       await this.saveReviewToRepository(
@@ -250,7 +250,7 @@ export class ReviewProcessor {
         parseResult,
         bedrockResult,
         canonicalText,
-        displayText
+        linkMap
       )
 
       this.logReviewCompletion(
@@ -329,15 +329,16 @@ export class ReviewProcessor {
    * @param {Object} bedrockResult     - { bedrockResponse, bedrockDuration }
    * @param {string} canonicalText     - the normalised text from the canonical document;
    *                                     used to derive annotated sections in result envelope
-   * @param {string|null} displayText  - Markdown-link-preserved text for URL sources;
+   * @param {Array|null} linkMap       - offset-based link entries for URL sources;
    *                                     used to restore clickable links in plain sections
+   *                                     (null for file/text sources)
    */
   async saveReviewToRepository(
     reviewId,
     parseResult,
     bedrockResult,
     canonicalText = '',
-    displayText = null
+    linkMap = null
   ) {
     // Build the spec-compliant envelope (annotatedSections, scores, improvements, etc.)
     // and embed it directly into reviews/{reviewId}.json — no separate S3 file needed.
@@ -347,7 +348,7 @@ export class ReviewProcessor {
       bedrockResult.bedrockResponse.usage,
       canonicalText,
       'completed',
-      displayText
+      linkMap
     )
 
     const saveStart = performance.now()

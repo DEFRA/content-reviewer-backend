@@ -608,74 +608,30 @@ class ResultEnvelopeStore {
    * issueIdx is the sequential 0-based index into both issues[] AND
    * improvements[] — guaranteed 1:1 because _sortAndAlignPairs produced them.
    *
-   * For plain (non-highlighted) spans, if displayText is provided the span
-   * text is sourced from displayText via a sequential scan so that Markdown
-   * link syntax [anchor](url) is preserved, allowing the frontend to render
-   * clickable links.  Highlighted spans always use canonicalText (clean prose)
-   * so that the highlight is accurate — links are not preserved in highlights
-   * (accepted trade-off).
+   * For plain (non-highlighted) spans, if a linkMap is provided the span text
+   * is reconstructed with Markdown link syntax restored so that the frontend
+   * can render clickable links.  The linkMap is an array of
+   * { start, end, display } entries where start/end are char offsets into
+   * canonicalText and display is the full "[anchor](url)" string.
    *
-   * @param {string} canonicalText
-   * @param {Array}  sortedIssues    - already-sorted, deduped spec issue objects
-   * @param {string|null} [displayText] - Markdown-link-preserved text (URL sources only)
+   * Highlighted spans always use canonicalText (clean prose) so that the
+   * highlight is accurate — links are intentionally not preserved in
+   * highlights (accepted trade-off: link text within a highlighted issue would
+   * only add visual noise and make it harder to see what is flagged).
+   *
+   * @param {string}       canonicalText
+   * @param {Array}        sortedIssues   - already-sorted, deduped spec issue objects
+   * @param {Array|null}   [linkMap]      - array of { start, end, display } (URL sources only)
    * @returns {Array}
    */
-  _buildAnnotatedSections(canonicalText, sortedIssues, displayText = null) {
+  _buildAnnotatedSections(canonicalText, sortedIssues, linkMap = null) {
     if (!canonicalText) {
       return []
     }
 
-    // When displayText is available, build a sequential cursor into it so we
-    // can extract plain-span text with Markdown links intact.
-    // The scan is sequential (not by offset) because displayText is longer
-    // than canonicalText wherever a Markdown link is present.  We walk both
-    // strings in lock-step, matching anchor text character-by-character.
-    const useDisplay = typeof displayText === 'string' && displayText.length > 0
-    let displayCursor = 0
-
-    /**
-     * Extract the displayText equivalent of canonicalText[from, to).
-     * Walks displayText forward from displayCursor, consuming characters that
-     * correspond to the plain-text characters in canonicalText[from, to).
-     * Markdown links in displayText are included whole when their anchor text
-     * is encountered — the (url) part is extra and advances displayCursor past
-     * the closing ')' without consuming canonicalText characters.
-     *
-     * Returns the displayText slice and advances displayCursor.
-     */
-    const extractDisplaySpan = (from, to) => {
-      if (!useDisplay) {
-        return canonicalText.slice(from, to)
-      }
-
-      const target = canonicalText.slice(from, to)
-      let canonIdx = 0
-      const out = []
-
-      while (canonIdx < target.length && displayCursor < displayText.length) {
-        // Check if displayText has a Markdown link starting here: [anchor](url)
-        if (displayText[displayCursor] === '[') {
-          // Try to match a complete [anchor](url) where anchor === remaining target
-          const linkMatch = /^\[([^\]]{0,2000})\]\([^)\s]{0,2048}\)/u.exec(
-            displayText.slice(displayCursor)
-          )
-          if (linkMatch && target.slice(canonIdx).startsWith(linkMatch[1])) {
-            // Consume the whole Markdown link from displayText
-            out.push(linkMatch[0])
-            displayCursor += linkMatch[0].length
-            canonIdx += linkMatch[1].length
-            continue
-          }
-        }
-
-        // Normal character — must match between both strings
-        out.push(displayText[displayCursor])
-        displayCursor++
-        canonIdx++
-      }
-
-      return out.join('')
-    }
+    // Build a sorted, validated copy of the linkMap entries.
+    // We only use it for plain spans so this is safe.
+    const links = this._validatedLinks(canonicalText, linkMap)
 
     const sections = []
     let cursor = 0
@@ -683,46 +639,16 @@ class ResultEnvelopeStore {
     for (let seqIdx = 0; seqIdx < sortedIssues.length; seqIdx++) {
       const { absStart, absEnd, category } = sortedIssues[seqIdx]
 
-      // Plain text before this issue — source from displayText if available
+      // Plain text before this issue — restore links if linkMap is available
       if (absStart > cursor) {
         sections.push({
-          text: extractDisplaySpan(cursor, absStart),
+          text: this._buildPlainSpan(canonicalText, links, cursor, absStart),
           issueIdx: null,
           category: null
         })
       }
 
       // Highlighted span — always use canonicalText (clean prose, accurate position)
-      // Advance displayCursor past the corresponding displayText region without
-      // collecting output, so the sequential scan stays in sync.
-      if (useDisplay) {
-        // Advance displayCursor past the characters in canonicalText[cursor, absEnd)
-        // that weren't already consumed by the plain-span extraction above.
-        // We need to skip the highlighted region in displayText.
-        const highlightCanon = canonicalText.slice(absStart, absEnd)
-        let hIdx = 0
-        while (
-          hIdx < highlightCanon.length &&
-          displayCursor < displayText.length
-        ) {
-          if (displayText[displayCursor] === '[') {
-            const linkMatch = /^\[([^\]]{0,2000})\]\([^)\s]{0,2048}\)/u.exec(
-              displayText.slice(displayCursor)
-            )
-            if (
-              linkMatch &&
-              highlightCanon.slice(hIdx).startsWith(linkMatch[1])
-            ) {
-              displayCursor += linkMatch[0].length
-              hIdx += linkMatch[1].length
-              continue
-            }
-          }
-          displayCursor++
-          hIdx++
-        }
-      }
-
       sections.push({
         text: canonicalText.slice(absStart, absEnd),
         issueIdx: seqIdx,
@@ -735,13 +661,110 @@ class ResultEnvelopeStore {
     // Remaining plain text after the last issue
     if (cursor < canonicalText.length) {
       sections.push({
-        text: extractDisplaySpan(cursor, canonicalText.length),
+        text: this._buildPlainSpan(
+          canonicalText,
+          links,
+          cursor,
+          canonicalText.length
+        ),
         issueIdx: null,
         category: null
       })
     }
 
     return sections
+  }
+
+  /**
+   * Validate and sort linkMap entries for use in plain-span reconstruction.
+   * Entries with invalid types, out-of-range offsets, or empty display strings
+   * are discarded so downstream code can assume all entries are safe to use.
+   *
+   * @param {string}     canonicalText
+   * @param {Array|null} linkMap
+   * @returns {Array}   sorted array of valid { start, end, display } entries
+   */
+  _validatedLinks(canonicalText, linkMap) {
+    if (!Array.isArray(linkMap) || linkMap.length === 0) {
+      return []
+    }
+    return linkMap
+      .filter((e) => this._isValidLinkEntry(e, canonicalText.length))
+      .slice()
+      .sort((a, b) => a.start - b.start)
+  }
+
+  /**
+   * Return true when a linkMap entry has valid types and in-range offsets.
+   * Extracted from the filter predicate to keep conditional depth ≤ 5.
+   *
+   * @param {Object} e
+   * @param {number} textLength
+   * @returns {boolean}
+   */
+  _isValidLinkEntry(e, textLength) {
+    if (typeof e.start !== 'number' || typeof e.end !== 'number') {
+      return false
+    }
+    if (e.start < 0 || e.end <= e.start || e.end > textLength) {
+      return false
+    }
+    return typeof e.display === 'string' && e.display.length > 0
+  }
+
+  /**
+   * Reconstruct the display version of a plain slice [from, to) of
+   * canonicalText, substituting the Markdown link display strings for any
+   * link anchors that are wholly contained within the slice.
+   *
+   * A link entry { start, end, display } is applied only when:
+   *   entry.start >= from  AND  entry.end <= to
+   *
+   * Links that only partially overlap with the slice (shouldn't happen in a
+   * correctly-built linkMap, but we guard defensively) are silently skipped
+   * and the anchor text from canonicalText is used instead.
+   *
+   * @param {string} canonicalText
+   * @param {Array}  links   - validated, sorted link entries
+   * @param {number} from    - inclusive start offset in canonicalText
+   * @param {number} to      - exclusive end offset in canonicalText
+   * @returns {string}
+   */
+  _buildPlainSpan(canonicalText, links, from, to) {
+    if (links.length === 0) {
+      return canonicalText.slice(from, to)
+    }
+
+    const parts = []
+    let pos = from
+
+    for (const link of links) {
+      const afterRange = link.start >= to
+      const beforeRange = link.end <= from
+      const whollyWithin = link.start >= from && link.end <= to
+
+      if (afterRange) {
+        // Links are sorted; no further entries can be within range
+        break // eslint-disable-line no-restricted-syntax
+      }
+
+      if (!beforeRange && whollyWithin) {
+        // Link is wholly within [from, to) — emit gap then substitute display
+        if (link.start > pos) {
+          parts.push(canonicalText.slice(pos, link.start))
+        }
+        parts.push(link.display)
+        pos = link.end
+      }
+      // beforeRange or partial overlap — skip silently
+    }
+
+    // Emit any remaining plain text after the last applied link
+    if (pos < to) {
+      parts.push(canonicalText.slice(pos, to))
+    }
+
+    return parts.join('')
   }
 
   /**
@@ -837,14 +860,15 @@ class ResultEnvelopeStore {
    *   improvements         (from parsedReview.improvements)
    *   scores               (from parsedReview.scores)
    *
-   * @param {string} reviewId
-   * @param {Object} parsedReview   - { scores, reviewedContent, improvements }
-   * @param {Object} bedrockUsage   - { totalTokens, inputTokens, outputTokens }
-   * @param {string} canonicalText  - normalised full text from documents/{reviewId}.json
-   * @param {string} [status]       - defaults to "completed"
-   * @param {string|null} [displayText] - Markdown-link-preserved text for URL sources;
-   *                                      used to restore links in plain (non-highlighted)
-   *                                      annotated sections
+   * @param {string}     reviewId
+   * @param {Object}     parsedReview   - { scores, reviewedContent, improvements }
+   * @param {Object}     bedrockUsage   - { totalTokens, inputTokens, outputTokens }
+   * @param {string}     canonicalText  - normalised full text from documents/{reviewId}.json
+   * @param {string}     [status]       - defaults to "completed"
+   * @param {Array|null} [linkMap]      - array of { start, end, display } entries for URL
+   *                                      sources; used to restore clickable Markdown links
+   *                                      in plain (non-highlighted) annotated sections.
+   *                                      null for file/text sources and URL sources without links.
    * @returns {Object} spec-compliant envelope
    */
   buildEnvelope(
@@ -853,7 +877,7 @@ class ResultEnvelopeStore {
     bedrockUsage,
     canonicalText,
     status = 'completed',
-    displayText = null
+    linkMap = null
   ) {
     const {
       scores = {},
@@ -901,7 +925,7 @@ class ResultEnvelopeStore {
     const annotatedSections = this._buildAnnotatedSections(
       canonicalText,
       sortedIssues,
-      displayText
+      linkMap
     )
 
     const mappedScores = this._mapScores(scores)

@@ -179,10 +179,10 @@ describe('_redactAndNormalise – URL HTML stripping: paragraph structure', () =
   })
 })
 
-describe('_redactAndNormalise – URL HTML stripping: Markdown link placeholders', () => {
+describe('_redactAndNormalise – URL HTML stripping: linkMap building', () => {
   it('strips Markdown links [text](url) from canonicalText so Bedrock sees clean prose', () => {
-    // The dual-text approach strips Markdown links from canonicalText (used by Bedrock)
-    // but preserves them in displayText (used for rendering plain sections).
+    // The map-based approach strips Markdown links from canonicalText (used by Bedrock)
+    // and builds a linkMap recording their positions for rendering plain sections.
     canonicalDocumentStore._redactAndNormalise({
       text: '<p>See [the guidance](https://www.gov.uk/guidance/test) for details.</p>',
       sourceType: SOURCE_TYPES.URL
@@ -195,21 +195,47 @@ describe('_redactAndNormalise – URL HTML stripping: Markdown link placeholders
     )
   })
 
-  it('preserves [text](url) Markdown links in displayText for URL sources', () => {
-    // displayText is PII-redacted separately (second PII call) with links intact
+  it('preserves [text](url) Markdown links in the preStripText path (second PII call) for URL sources', () => {
+    // The preStripText path goes through a separate PII call with links intact
+    // so the linkMap can be built after normalisation
     canonicalDocumentStore._redactAndNormalise({
       text: '<p>See [the guidance](https://www.gov.uk/guidance/test) for details.</p>',
       sourceType: SOURCE_TYPES.URL
     })
-    // displayText path (second PII call) must retain the full Markdown link
-    const displayPassedToPii = MOCK_PII_REDACT.mock.calls[1][0]
-    expect(displayPassedToPii).toContain(
+    // preStripText path (second PII call) must retain the full Markdown link
+    const preStripPassedToPii = MOCK_PII_REDACT.mock.calls[1][0]
+    expect(preStripPassedToPii).toContain(
       '[the guidance](https://www.gov.uk/guidance/test)'
     )
   })
 
-  it('does not produce a second PII call for non-URL sources (no displayText)', () => {
-    // FILE and TEXT sources do not generate displayText, so only one PII call is made
+  it('returns a linkMap with correct offsets for URL sources with Markdown links', () => {
+    const result = canonicalDocumentStore._redactAndNormalise({
+      text: '<p>See [the guidance](https://www.gov.uk/guidance/test) for details.</p>',
+      sourceType: SOURCE_TYPES.URL
+    })
+    expect(Array.isArray(result.linkMap)).toBe(true)
+    expect(result.linkMap.length).toBe(1)
+    const entry = result.linkMap[0]
+    // The slice of canonicalText at [start, end) must equal the anchor text
+    expect(result.canonicalText.slice(entry.start, entry.end)).toBe(
+      'the guidance'
+    )
+    expect(entry.display).toContain(
+      '[the guidance](https://www.gov.uk/guidance/test)'
+    )
+  })
+
+  it('returns linkMap as null for URL sources without Markdown links', () => {
+    const result = canonicalDocumentStore._redactAndNormalise({
+      text: '<p>Plain text without any hyperlinks.</p>',
+      sourceType: SOURCE_TYPES.URL
+    })
+    expect(result.linkMap).toBeNull()
+  })
+
+  it('does not produce a second PII call for non-URL sources (no linkMap)', () => {
+    // FILE and TEXT sources do not generate a preStripText path, so only one PII call is made
     canonicalDocumentStore._redactAndNormalise({
       text: 'Plain text content without links.',
       sourceType: SOURCE_TYPES.TEXT

@@ -291,13 +291,13 @@ describe('ContentExtractor - extractTextContent', () => {
       messageBody
     )
 
-    // extractTextContent now returns { canonicalText, displayText } for all paths
+    // extractTextContent now returns { canonicalText, linkMap } for all paths
     expect(result).toEqual({
       canonicalText: TEST_TEXT_EXTRACTED,
-      displayText: null
+      linkMap: null
     })
     expect(result.canonicalText).toBe(TEST_TEXT_EXTRACTED)
-    expect(result.displayText).toBeNull()
+    expect(result.linkMap).toBeNull()
     expect(mockExtractText).toHaveBeenCalled()
   })
 
@@ -317,14 +317,14 @@ describe('ContentExtractor - extractTextContent', () => {
       messageBody
     )
 
-    // extractTextContent now always returns { canonicalText, displayText }
+    // extractTextContent now always returns { canonicalText, linkMap }
     // Legacy plain-text keys (not documents/*.json) fall back to raw string as canonicalText
     expect(result).toEqual({
       canonicalText: TEST_TEXT_CONTENT,
-      displayText: null
+      linkMap: null
     })
     expect(result.canonicalText).toBe(TEST_TEXT_CONTENT)
-    expect(result.displayText).toBeNull()
+    expect(result.linkMap).toBeNull()
     expect(mockLoggerInfo).toHaveBeenCalledWith(
       expect.objectContaining({
         reviewId: TEST_REVIEW_ID
@@ -446,7 +446,7 @@ describe('ContentExtractor - extractTextFromCanonicalDocument', () => {
     extractor = new ContentExtractor()
   })
 
-  test('returns { canonicalText, displayText: null } for a canonical document without displayText', async () => {
+  test('returns { canonicalText, linkMap: null } for a canonical document without linkMap', async () => {
     const doc = {
       documentId: TEST_REVIEW_ID,
       canonicalText: TEST_TEXT_CONTENT,
@@ -469,18 +469,23 @@ describe('ContentExtractor - extractTextFromCanonicalDocument', () => {
 
     expect(result).toEqual({
       canonicalText: TEST_TEXT_CONTENT,
-      displayText: null
+      linkMap: null
     })
   })
 
-  test('returns { canonicalText, displayText } when canonical document includes displayText (URL source)', async () => {
-    const displayText =
-      'See [the guidance](https://www.gov.uk/guidance) for details.'
+  test('returns { canonicalText, linkMap } when canonical document includes linkMap (URL source)', async () => {
+    const linkMap = [
+      {
+        start: 4,
+        end: 16,
+        display: '[the guidance](https://www.gov.uk/guidance)'
+      }
+    ]
     const canonicalText = 'See the guidance for details.'
     const doc = {
       documentId: TEST_REVIEW_ID,
       canonicalText,
-      displayText,
+      linkMap,
       charCount: canonicalText.length,
       tokenEst: 7,
       sourceType: 'url',
@@ -499,10 +504,10 @@ describe('ContentExtractor - extractTextFromCanonicalDocument', () => {
     )
 
     expect(result.canonicalText).toBe(canonicalText)
-    expect(result.displayText).toBe(displayText)
+    expect(result.linkMap).toEqual(linkMap)
   })
 
-  test('falls back to raw string with displayText null for legacy plain-text S3 keys', async () => {
+  test('falls back to raw string with linkMap null for legacy plain-text S3 keys', async () => {
     // Legacy key is NOT documents/*.json so the fallback code path is used
     const messageBody = {
       s3Bucket: TEST_BUCKET,
@@ -518,7 +523,7 @@ describe('ContentExtractor - extractTextFromCanonicalDocument', () => {
 
     expect(result).toEqual({
       canonicalText: TEST_TEXT_CONTENT,
-      displayText: null
+      linkMap: null
     })
   })
 
@@ -537,8 +542,8 @@ describe('ContentExtractor - extractTextFromCanonicalDocument', () => {
       messageBody
     )
 
-    // Falls back to the raw JSON string, no displayText
-    expect(result.displayText).toBeNull()
+    // Falls back to the raw JSON string, no linkMap
+    expect(result.linkMap).toBeNull()
     expect(typeof result.canonicalText).toBe('string')
   })
 
@@ -555,17 +560,19 @@ describe('ContentExtractor - extractTextFromCanonicalDocument', () => {
       messageBody
     )
 
-    expect(result.displayText).toBeNull()
+    expect(result.linkMap).toBeNull()
     expect(typeof result.canonicalText).toBe('string')
   })
 
-  test('extractTextContent routes text_review to extractTextFromCanonicalDocument and returns { canonicalText, displayText }', async () => {
-    const displayText = 'See [GOV.UK](https://www.gov.uk) for info.'
+  test('extractTextContent routes text_review to extractTextFromCanonicalDocument and returns { canonicalText, linkMap }', async () => {
+    const linkMap = [
+      { start: 4, end: 10, display: '[GOV.UK](https://www.gov.uk)' }
+    ]
     const canonicalText = 'See GOV.UK for info.'
     const doc = {
       documentId: TEST_REVIEW_ID,
       canonicalText,
-      displayText,
+      linkMap,
       charCount: canonicalText.length,
       tokenEst: 5,
       sourceType: 'url',
@@ -585,6 +592,6 @@ describe('ContentExtractor - extractTextFromCanonicalDocument', () => {
     )
 
     expect(result.canonicalText).toBe(canonicalText)
-    expect(result.displayText).toBe(displayText)
+    expect(result.linkMap).toEqual(linkMap)
   })
 })
