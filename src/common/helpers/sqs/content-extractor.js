@@ -52,13 +52,14 @@ export class ContentExtractor {
    * If the key still points to a legacy plain-text file (content-uploads/…)
    * we fall back to reading the buffer as UTF-8 so old messages keep working.
    *
-   * Returns { canonicalText, displayText } where displayText is the Markdown-
-   * link-preserved version for URL sources (null for file/text sources).
+   * Returns { canonicalText, linkMap } where linkMap is the array of
+   * { start, end, display } entries for URL sources that contain hyperlinks
+   * (null for file/text sources and URL sources without hyperlinks).
    */
   async extractTextContent(reviewId, messageBody) {
     if (messageBody.messageType === 'file_review') {
       const text = await this.extractTextFromFile(reviewId, messageBody)
-      return { canonicalText: text, displayText: null }
+      return { canonicalText: text, linkMap: null }
     }
 
     if (messageBody.messageType === 'text_review') {
@@ -168,7 +169,7 @@ export class ContentExtractor {
           { reviewId, s3Key: messageBody.s3Key, error: parseError.message },
           'Failed to parse canonical document JSON — falling back to raw text'
         )
-        return { canonicalText: rawString, displayText: null }
+        return { canonicalText: rawString, linkMap: null }
       }
 
       const canonicalText = canonicalDoc.canonicalText
@@ -183,7 +184,7 @@ export class ContentExtractor {
           },
           'Canonical document missing canonicalText field — falling back to raw document JSON'
         )
-        return { canonicalText: rawString, displayText: null }
+        return { canonicalText: rawString, linkMap: null }
       }
 
       logger.info(
@@ -194,7 +195,10 @@ export class ContentExtractor {
           charCount: canonicalDoc.charCount,
           tokenEst: canonicalDoc.tokenEst,
           sourceType: canonicalDoc.sourceType,
-          hasDisplayText: !!canonicalDoc.displayText,
+          hasLinkMap: Array.isArray(canonicalDoc.linkMap),
+          linkMapEntries: Array.isArray(canonicalDoc.linkMap)
+            ? canonicalDoc.linkMap.length
+            : 0,
           durationMs: s3Duration
         },
         `Canonical document read successfully in ${s3Duration}ms — using canonicalText (${canonicalDoc.charCount} chars)`
@@ -202,7 +206,9 @@ export class ContentExtractor {
 
       return {
         canonicalText,
-        displayText: canonicalDoc.displayText ?? null
+        linkMap: Array.isArray(canonicalDoc.linkMap)
+          ? canonicalDoc.linkMap
+          : null
       }
     }
 
@@ -217,7 +223,7 @@ export class ContentExtractor {
       `Legacy plain-text S3 content read in ${s3Duration}ms`
     )
 
-    return { canonicalText: rawString, displayText: null }
+    return { canonicalText: rawString, linkMap: null }
   }
 
   /**

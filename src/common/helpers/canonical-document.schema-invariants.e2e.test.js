@@ -237,19 +237,19 @@ describe('schema invariants — return envelope shape', () => {
   })
 })
 
-// ── displayText invariants ───────────────────────────────────────────────────
+// ── linkMap invariants ───────────────────────────────────────────────────────
 
-describe('schema invariants — displayText field (dual-text, URL sources only)', () => {
-  it('URL source: document includes displayText as a string', async () => {
+describe('schema invariants — linkMap field (map-based, URL sources only)', () => {
+  it('URL source with links: document includes linkMap as a non-empty array', async () => {
     const { document } = await canonicalDocumentStore.createCanonicalDocument({
       documentId: DOC_ID,
       text: '<p>See [the guidance](https://www.gov.uk/guidance) for details.</p>',
       sourceType: SOURCE_TYPES.URL
     })
-    // displayText must be present and be a string for URL sources with Markdown links
-    expect(document).toHaveProperty('displayText')
-    expect(typeof document.displayText).toBe('string')
-    expect(document.displayText.length).toBeGreaterThan(0)
+    // linkMap must be present and be a non-empty array for URL sources with Markdown links
+    expect(document).toHaveProperty('linkMap')
+    expect(Array.isArray(document.linkMap)).toBe(true)
+    expect(document.linkMap.length).toBeGreaterThan(0)
   })
 
   it('URL source: canonicalText has Markdown links stripped to anchor text', async () => {
@@ -263,44 +263,66 @@ describe('schema invariants — displayText field (dual-text, URL sources only)'
     expect(document.canonicalText).not.toMatch(/\[the guidance\]\(https?:\/\//)
   })
 
-  it('URL source: displayText preserves the Markdown link syntax', async () => {
+  it('URL source: each linkMap entry has valid start, end and display fields', async () => {
     const { document } = await canonicalDocumentStore.createCanonicalDocument({
       documentId: DOC_ID,
       text: '<p>See [the guidance](https://www.gov.uk/guidance) for details.</p>',
       sourceType: SOURCE_TYPES.URL
     })
-    // displayText must retain the full [anchor](url) syntax
-    expect(document.displayText).toMatch(/\[the guidance\]\(https?:\/\//)
+    for (const entry of document.linkMap) {
+      expect(typeof entry.start).toBe('number')
+      expect(typeof entry.end).toBe('number')
+      expect(entry.end).toBeGreaterThan(entry.start)
+      expect(typeof entry.display).toBe('string')
+      // display must retain the full [anchor](url) syntax
+      expect(entry.display).toMatch(/\[the guidance\]\(https?:\/\//)
+    }
   })
 
-  it('URL source without Markdown links: displayText equals canonicalText', async () => {
+  it('URL source: linkMap entry start/end correctly maps anchor text into canonicalText', async () => {
+    const { document } = await canonicalDocumentStore.createCanonicalDocument({
+      documentId: DOC_ID,
+      text: '<p>See [the guidance](https://www.gov.uk/guidance) for details.</p>',
+      sourceType: SOURCE_TYPES.URL
+    })
+    const entry = document.linkMap[0]
+    // The slice of canonicalText at [start, end) must equal the anchor text
+    const anchorInCanonical = document.canonicalText.slice(
+      entry.start,
+      entry.end
+    )
+    expect(anchorInCanonical).toBe('the guidance')
+  })
+
+  it('URL source without Markdown links: document does NOT include linkMap', async () => {
     const { document } = await canonicalDocumentStore.createCanonicalDocument({
       documentId: DOC_ID,
       text: '<p>Plain text without any hyperlinks.</p>',
       sourceType: SOURCE_TYPES.URL
     })
-    expect(document.canonicalText).toBe(document.displayText)
+    // No links → linkMap is omitted entirely (not present on the document)
+    expect(document).not.toHaveProperty('linkMap')
   })
 
-  it('TEXT source: document does NOT include displayText', async () => {
+  it('TEXT source: document does NOT include linkMap', async () => {
     const { document } = await canonicalDocumentStore.createCanonicalDocument({
       documentId: DOC_ID,
       text: 'Plain text paste without links.',
       sourceType: SOURCE_TYPES.TEXT
     })
-    expect(document).not.toHaveProperty('displayText')
+    expect(document).not.toHaveProperty('linkMap')
   })
 
-  it('FILE source: document does NOT include displayText', async () => {
+  it('FILE source: document does NOT include linkMap', async () => {
     const { document } = await canonicalDocumentStore.createCanonicalDocument({
       documentId: DOC_ID,
       text: 'Extracted text from an uploaded file.',
       sourceType: SOURCE_TYPES.FILE
     })
-    expect(document).not.toHaveProperty('displayText')
+    expect(document).not.toHaveProperty('linkMap')
   })
 
-  it('URL source: displayText and canonicalText share the same anchor text for each link', async () => {
+  it('URL source: linkMap entry display contains the full Markdown link for each anchor', async () => {
     const { document } = await canonicalDocumentStore.createCanonicalDocument({
       documentId: DOC_ID,
       text: '<p>Apply [online](https://apply.service.gov.uk) now.</p>',
@@ -308,13 +330,10 @@ describe('schema invariants — displayText field (dual-text, URL sources only)'
     })
     // canonicalText has "online" (plain)
     expect(document.canonicalText).toContain('online')
-    // displayText has "[online](https://apply.service.gov.uk)" (with link)
-    expect(document.displayText).toContain(
-      '[online](https://apply.service.gov.uk)'
-    )
-    // Both contain the anchor text; canonicalText is shorter (no URL part)
-    expect(document.canonicalText.length).toBeLessThan(
-      document.displayText.length
-    )
+    // linkMap entry display has "[online](https://apply.service.gov.uk)" (with link)
+    const entry = document.linkMap[0]
+    expect(entry.display).toContain('[online](https://apply.service.gov.uk)')
+    // The anchor slice in canonicalText must be "online"
+    expect(document.canonicalText.slice(entry.start, entry.end)).toBe('online')
   })
 })

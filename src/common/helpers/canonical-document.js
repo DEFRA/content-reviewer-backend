@@ -177,6 +177,15 @@ export const CANONICAL_STATUS = {
  *   sourceType:    string   - "file" | "url" | "text"
  *   rawS3Key:      string   - S3 key of the original raw upload (audit trail)
  *   canonicalText: string   - Normalised, PII-redacted, structure-preserving text
+ *                             (Markdown link syntax is stripped — clean prose for Bedrock)
+ *   linkMap:       array?   - Present only for URL sources that contain at least one
+ *                             hyperlink.  Each entry maps a hyperlink anchor back to its
+ *                             original Markdown syntax:
+ *                             { start: number, end: number, display: string }
+ *                             start/end are char offsets into canonicalText;
+ *                             display is the full "[anchor](url)" Markdown string.
+ *                             Used by the results page to restore clickable links in
+ *                             plain (non-highlighted) annotated sections.
  *   charCount:     number   - Length of canonicalText
  *   tokenEst:      number   - Approx charCount / 4
  *   sourceMap:     array    - Per-span offset entries:
@@ -238,7 +247,7 @@ class CanonicalDocumentStore {
     const {
       redactionResult,
       canonicalText,
-      displayText,
+      linkMap,
       normStats,
       sectionStripStats,
       charCount,
@@ -263,7 +272,7 @@ class CanonicalDocumentStore {
       sourceType,
       rawS3Key,
       canonicalText,
-      displayText,
+      linkMap,
       charCount,
       tokenEst,
       sourceMap,
@@ -314,107 +323,21 @@ class CanonicalDocumentStore {
    * @private
    */
   _redactAndNormalise({ text, sourceType }) {
-    // ── Step 0a: HTML tag stripping (URL sources only) ───────────────────────
-    // URL submissions arrive as a <!DOCTYPE html> document with <section>,
-    // <div>, <p>, <a> etc. tags.  We convert these to plain text before any
-    // further processing so that canonicalText is clean prose that Bedrock can
-    // read and annotate with character offsets.
-    //
-    // <a> tags are special: we keep their text content so link labels are
-    // preserved in the reviewed text (e.g. "read more about planning permission"
-    // rather than losing the link entirely).  The href values are stripped at
-    // this stage because they would pollute the character-offset calculations.
-    // The original HTML (with full href values) is stored in the raw S3 archive
-    // (content-uploads/{reviewId}/title.html) for reference.
-    let workingText = text
+    // ── Step 0: Prepare working text ─────────────────────────────────────────
+    // For URL sources: strip HTML tags, normalise whitespace, and keep a copy
+    // of the text *before* Markdown link syntax is stripped (preStripText).
+    // For FILE sources: front-matter stripping is deferred to step 0b below.
+    // For TEXT sources: the input is used as-is.
+    const { workingText: preparedText, preStripText } = this._prepareUrlText(
+      text,
+      sourceType
+    )
 
-    if (sourceType === SOURCE_TYPES.URL) {
-      // Strip HTML tags using a linear-time state machine instead of a regex
-      // so that malformed or adversarial input cannot trigger super-linear
-      // backtracking (SonarQube S5852).  Block-level tags (p, div, h1–h6 …)
-      // emit a newline so paragraph boundaries are preserved; inline tags
-      // (span, a, strong …) are removed without any separator so words that
-      // span tag boundaries are not split.
-      workingText = stripHtmlTags(workingText)
-        .replaceAll('&nbsp;', ' ')
-        .replaceAll('&amp;', '&')
-        .replaceAll('&lt;', '<')
-        .replaceAll('&gt;', '>')
-        .replaceAll('&quot;', '"')
-        .replaceAll('&#39;', "'")
-
-      // Normalise whitespace while preserving paragraph structure:
-      //  1. Collapse runs of horizontal whitespace (spaces/tabs) on each line
-      //     to a single space — but do NOT collapse newlines.
-      //  2. Collapse 3+ consecutive newlines to 2 (paragraph break) so the
-      //     output never has more blank lines than a single empty paragraph.
-      workingText = workingText
-        .split('\n')
-        .map((line) => line.replaceAll(/ {2,}/gu, ' ').trim())
-        .join('\n')
-        .replaceAll(/\n{3,}/gu, '\n\n')
-        .trim()
-
-      // Collapse paragraph breaks between consecutive bullet lines into single
-      // newlines so that list items from the same <ul> element remain grouped
-      // in one block rather than being split into separate paragraphs.
-      workingText = workingText
-        .split('\n\n')
-        .reduce((acc, para) => {
-          const trimmedPara = para.trim()
-          if (!trimmedPara) {
-            return acc
-          }
-          const isBullet = trimmedPara.startsWith('• ')
-          if (acc.length > 0 && isBullet) {
-            const lastPara = acc[acc.length - 1]
-            const lastLine = lastPara.split('\n').findLast((l) => l.trim())
-            if (lastLine?.trim().startsWith('• ')) {
-              acc[acc.length - 1] = `${lastPara}\n${trimmedPara}`
-              return acc
-            }
-          }
-          acc.push(trimmedPara)
-          return acc
-        }, [])
-        .join('\n\n')
-    }
-
-    // ── Step 0a(ii): Capture displayText for URL sources ────────────────────
-    // displayText preserves Markdown link syntax [anchor](url) for use in the
-    // results page so plain (non-highlighted) sections remain clickable.
-    // canonicalText will have Markdown links stripped to anchor-text only so
-    // that Bedrock sees clean prose and character offsets are accurate.
-    //
-    // Both texts diverge only at this one point — everything before (HTML tag
-    // stripping, entity unescaping, whitespace normalisation) is identical, and
-    // everything after (PII redaction, text normalisation) is applied to both
-    // so they stay structurally in sync.
-    let displayText = null
-    if (sourceType === SOURCE_TYPES.URL) {
-      // Save the working text with Markdown links intact
-      displayText = workingText
-      // Strip Markdown links [anchor](url) → anchor for canonicalText only
-      workingText = workingText.replaceAll(
-        /\[([^\]]{0,2000})\]\([^)\s]{0,2048}\)/gu,
-        '$1'
-      )
-    }
+    let workingText = preparedText
 
     // ── Step 0b: Front-matter stripping (file sources only) ─────────────────
-    // Title pages, copyright/imprint pages and tables of contents are structural
-    // boilerplate found in PDFs/uploaded files that add noise for the AI.
-    // URL sources are explicitly excluded: GOV.UK pages do not have PDF-style
-    // front-matter, and the section stripper would falsely classify the page
-    // H1 (short first "page") as a title page and the navigation contents list
-    // as a TOC, stripping legitimate reviewable content.
-    // Free-text pastes (SOURCE_TYPES.TEXT) are also skipped — direct user input
-    // must never be silently discarded.
     let sectionStripStats = null
-
-    const shouldStrip = sourceType === SOURCE_TYPES.FILE
-
-    if (shouldStrip) {
+    if (sourceType === SOURCE_TYPES.FILE) {
       const { strippedText, stats } = documentSectionStripper.strip(workingText)
       workingText = strippedText
       sectionStripStats = stats
@@ -423,24 +346,22 @@ class CanonicalDocumentStore {
     // ── Step 1: PII redaction ────────────────────────────────────────────────
     const redactionResult = piiRedactor.redactUserContent(workingText)
 
-    // Also redact PII from displayText (URL sources only) so that any PII
-    // in link anchor text is not surfaced in the rendered results page.
-    let redactedDisplayText = null
-    if (displayText !== null) {
-      redactedDisplayText =
-        piiRedactor.redactUserContent(displayText).redactedText
-    }
+    const redactedPreStripText =
+      preStripText === null
+        ? null
+        : piiRedactor.redactUserContent(preStripText).redactedText
 
     // ── Step 2: Text normalisation ───────────────────────────────────────────
     const { normalisedText: canonicalText, stats: normStats } =
       textNormaliser.normalise(redactionResult.redactedText)
 
-    // Normalise displayText through the same pipeline so structural whitespace,
-    // ligatures and typographic characters are consistent with canonicalText.
-    const normalisedDisplayText =
-      redactedDisplayText !== null
-        ? textNormaliser.normalise(redactedDisplayText).normalisedText
-        : null
+    const normalisedPreStripText =
+      redactedPreStripText === null
+        ? null
+        : textNormaliser.normalise(redactedPreStripText).normalisedText
+
+    // ── Step 2a: Build linkMap for URL sources ───────────────────────────────
+    const linkMap = this._buildLinkMap(normalisedPreStripText)
 
     const charCount = canonicalText.length
     const tokenEst = Math.round(charCount / 4)
@@ -458,7 +379,7 @@ class CanonicalDocumentStore {
     return {
       redactionResult,
       canonicalText,
-      displayText: normalisedDisplayText,
+      linkMap,
       normStats,
       sectionStripStats,
       charCount,
@@ -466,6 +387,123 @@ class CanonicalDocumentStore {
       createdAt,
       originType
     }
+  }
+
+  /**
+   * Step 0a: Prepare URL source text — strip HTML tags, normalise whitespace,
+   * and snapshot the text before Markdown link syntax is stripped.
+   *
+   * Returns { workingText, preStripText } where:
+   *   workingText  — text with HTML stripped AND Markdown links reduced to
+   *                  plain anchor text (ready for PII redaction)
+   *   preStripText — text with HTML stripped but Markdown links INTACT
+   *                  (used to build the linkMap after normalisation); null for
+   *                  non-URL sources
+   *
+   * @param {string} text
+   * @param {string} sourceType
+   * @returns {{ workingText: string, preStripText: string|null }}
+   * @private
+   */
+  _prepareUrlText(text, sourceType) {
+    if (sourceType !== SOURCE_TYPES.URL) {
+      return { workingText: text, preStripText: null }
+    }
+
+    // Strip HTML tags (linear-time state machine, ReDoS-safe)
+    let workingText = stripHtmlTags(text)
+      .replaceAll('&nbsp;', ' ')
+      .replaceAll('&amp;', '&')
+      .replaceAll('&lt;', '<')
+      .replaceAll('&gt;', '>')
+      .replaceAll('&quot;', '"')
+      .replaceAll('&#39;', "'")
+
+    // Collapse horizontal whitespace on each line and strip excessive newlines
+    workingText = workingText
+      .split('\n')
+      .map((line) => line.replaceAll(/ {2,}/gu, ' ').trim())
+      .join('\n')
+      .replaceAll(/\n{3,}/gu, '\n\n')
+      .trim()
+
+    // Merge consecutive bullet paragraphs into a single block
+    workingText = workingText
+      .split('\n\n')
+      .reduce((acc, para) => {
+        const trimmedPara = para.trim()
+        if (!trimmedPara) {
+          return acc
+        }
+        const isBullet = trimmedPara.startsWith('• ')
+        if (acc.length > 0 && isBullet) {
+          const lastPara = acc[acc.length - 1]
+          const lastLine = lastPara.split('\n').findLast((l) => l.trim())
+          if (lastLine?.trim().startsWith('• ')) {
+            acc[acc.length - 1] = `${lastPara}\n${trimmedPara}`
+            return acc
+          }
+        }
+        acc.push(trimmedPara)
+        return acc
+      }, [])
+      .join('\n\n')
+
+    // Snapshot the text with Markdown links still intact (for the linkMap)
+    const preStripText = workingText
+
+    // Strip Markdown links [anchor](url) → anchor for the canonical pipeline
+    workingText = workingText.replaceAll(
+      /\[([^\]]{0,2000})\]\([^)\s]{0,2048}\)/gu,
+      '$1'
+    )
+
+    return { workingText, preStripText }
+  }
+
+  /**
+   * Step 2a: Build a linkMap from normalisedPreStripText.
+   *
+   * Scans normalisedPreStripText for Markdown links and records each link's
+   * position in the corresponding canonicalText (which has the Markdown links
+   * stripped).  The parallel walk works because the two texts are byte-for-byte
+   * identical outside of the (url) parts of Markdown links.
+   *
+   * Returns null when normalisedPreStripText is null or contains no links.
+   *
+   * @param {string|null} normalisedPreStripText
+   * @returns {Array|null}  array of { start, end, display } or null
+   * @private
+   */
+  _buildLinkMap(normalisedPreStripText) {
+    if (normalisedPreStripText === null) {
+      return null
+    }
+
+    const LINK_SCAN_RE = /\[([^\]]{0,2000})\]\([^)\s]{0,2048}\)/gu
+    const entries = []
+    let canonicalOffset = 0
+    let lastPreStripPos = 0
+
+    for (const match of normalisedPreStripText.matchAll(LINK_SCAN_RE)) {
+      const matchStart = match.index
+      const fullMatch = match[0] // "[anchor text](https://...)"
+      const anchor = match[1] // "anchor text"
+
+      // Gap characters are identical in both texts — advance both offsets
+      canonicalOffset += matchStart - lastPreStripPos
+
+      entries.push({
+        start: canonicalOffset,
+        end: canonicalOffset + anchor.length,
+        display: fullMatch
+      })
+
+      canonicalOffset += anchor.length
+      lastPreStripPos = matchStart + fullMatch.length
+    }
+
+    return entries.length > 0 ? entries : null
   }
 
   /**
@@ -489,7 +527,7 @@ class CanonicalDocumentStore {
     sourceType,
     rawS3Key,
     canonicalText,
-    displayText,
+    linkMap,
     charCount,
     tokenEst,
     sourceMap,
@@ -501,9 +539,10 @@ class CanonicalDocumentStore {
       sourceType,
       ...(rawS3Key ? { rawS3Key } : {}),
       canonicalText,
-      ...(displayText !== null && displayText !== undefined
-        ? { displayText }
-        : {}),
+      // linkMap is only present for URL sources that contain at least one hyperlink.
+      // Each entry: { start, end, display } where start/end are char offsets into
+      // canonicalText and display is the full [anchor](url) Markdown string.
+      ...(Array.isArray(linkMap) && linkMap.length > 0 ? { linkMap } : {}),
       charCount,
       tokenEst,
       sourceMap,

@@ -736,22 +736,30 @@ describe('_buildAnnotatedSections — single issue, no displayText', () => {
   })
 })
 
-describe('_buildAnnotatedSections — with displayText (URL sources)', () => {
-  it('uses displayText for plain spans and canonicalText for highlighted spans', () => {
-    // canonicalText has Markdown links stripped; displayText has them intact
+// ── _buildAnnotatedSections — linkMap (map-based, URL sources) ───────────────
+
+describe('_buildAnnotatedSections — with linkMap (URL sources)', () => {
+  it('uses linkMap entries for plain spans and canonicalText for highlighted spans', () => {
+    // canonicalText has Markdown links stripped; linkMap records their positions
     const canonicalText = 'See the guidance for details.'
-    const displayText =
-      'See [the guidance](https://www.gov.uk/guidance) for details.'
+    // "the guidance" is chars 4–16 in canonicalText
+    const linkMap = [
+      {
+        start: 4,
+        end: 16,
+        display: '[the guidance](https://www.gov.uk/guidance)'
+      }
+    ]
     // Issue covers "the guidance" in canonicalText (chars 4–16)
     const issues = [{ absStart: 4, absEnd: 16, category: 'clarity' }]
 
     const sections = resultEnvelopeStore._buildAnnotatedSections(
       canonicalText,
       issues,
-      displayText
+      linkMap
     )
 
-    // Plain span before the highlight — should come from displayText (just "See ")
+    // Plain span before the highlight — "See " (no link within this range)
     expect(sections[0].text).toBe('See ')
     expect(sections[0].issueIdx).toBeNull()
 
@@ -760,23 +768,24 @@ describe('_buildAnnotatedSections — with displayText (URL sources)', () => {
     expect(sections[1].issueIdx).toBe(0)
     expect(sections[1].text).not.toContain('https://')
 
-    // Plain span after the highlight — from displayText
+    // Plain span after the highlight — from canonicalText (no link in trailing range)
     expect(sections[2].text).toBe(' for details.')
     expect(sections[2].issueIdx).toBeNull()
   })
 
   it('preserves a Markdown link that falls entirely in a plain span before the highlight', () => {
     const canonicalText = 'Visit the site and use plain words.'
-    // displayText has a link around "the site" (chars 6–14 in canonicalText)
-    const displayText =
-      'Visit [the site](https://example.com) and use plain words.'
+    // "the site" is chars 6–14 in canonicalText
+    const linkMap = [
+      { start: 6, end: 14, display: '[the site](https://example.com)' }
+    ]
     // "plain words" in canonicalText: starts at 23, ends at 34
     const issues = [{ absStart: 23, absEnd: 34, category: 'plain-english' }]
 
     const sections = resultEnvelopeStore._buildAnnotatedSections(
       canonicalText,
       issues,
-      displayText
+      linkMap
     )
 
     // Pre-highlight plain span should contain the Markdown link
@@ -788,15 +797,22 @@ describe('_buildAnnotatedSections — with displayText (URL sources)', () => {
 
   it('preserves a Markdown link that falls entirely in a plain span after the highlight', () => {
     const canonicalText = 'Use simple words and visit the site.'
-    const displayText =
-      'Use simple words and visit [the site](https://example.com).'
+    // "the site" is chars 27–35 in canonicalText (0-indexed)
+    const theSiteIdx = canonicalText.indexOf('the site')
+    const linkMap = [
+      {
+        start: theSiteIdx,
+        end: theSiteIdx + 8,
+        display: '[the site](https://example.com)'
+      }
+    ]
     // Issue covers "simple words" (chars 4–16)
     const issues = [{ absStart: 4, absEnd: 16, category: 'plain-english' }]
 
     const sections = resultEnvelopeStore._buildAnnotatedSections(
       canonicalText,
       issues,
-      displayText
+      linkMap
     )
 
     // Post-highlight plain span should contain the Markdown link
@@ -805,18 +821,22 @@ describe('_buildAnnotatedSections — with displayText (URL sources)', () => {
     expect(lastSection.issueIdx).toBeNull()
   })
 
-  it('does not show raw URLs in highlighted spans even when displayText has a link there', () => {
+  it('does not show raw URLs in highlighted spans even when linkMap has a link there', () => {
     const canonicalText = 'Read more about planning permission here.'
-    // displayText has a Markdown link around "planning permission" (chars 16–35 in canonicalText)
-    const displayText =
-      'Read more about [planning permission](https://www.gov.uk/planning) here.'
-    // "planning permission" starts at 16, ends at 35
+    // "planning permission" starts at 16, ends at 35 in canonicalText
+    const linkMap = [
+      {
+        start: 16,
+        end: 35,
+        display: '[planning permission](https://www.gov.uk/planning)'
+      }
+    ]
     const issues = [{ absStart: 16, absEnd: 35, category: 'govuk-style' }]
 
     const sections = resultEnvelopeStore._buildAnnotatedSections(
       canonicalText,
       issues,
-      displayText
+      linkMap
     )
 
     const highlight = sections.find((s) => s.issueIdx === 0)
@@ -826,7 +846,7 @@ describe('_buildAnnotatedSections — with displayText (URL sources)', () => {
     expect(highlight.text).not.toContain('(https://')
   })
 
-  it('falls back to canonicalText for all spans when displayText is null', () => {
+  it('falls back to canonicalText for all spans when linkMap is null', () => {
     const canonicalText = 'The department should utilise all resources.'
     const issues = [{ absStart: 22, absEnd: 29, category: 'plain-english' }]
 
@@ -843,7 +863,7 @@ describe('_buildAnnotatedSections — with displayText (URL sources)', () => {
     })
   })
 
-  it('falls back to canonicalText for all spans when displayText is undefined', () => {
+  it('falls back to canonicalText for all spans when linkMap is undefined', () => {
     const canonicalText = 'The department should utilise all resources.'
     const issues = [{ absStart: 22, absEnd: 29, category: 'plain-english' }]
     // Calling without the third argument
@@ -857,12 +877,24 @@ describe('_buildAnnotatedSections — with displayText (URL sources)', () => {
 
   it('handles multiple plain spans all with Markdown links', () => {
     // canonicalText: "Apply online and check your eligibility before you start."
-    // displayText: "Apply [online](url1) and check [your eligibility](url2) before you start."
     const canonicalText =
       'Apply online and check your eligibility before you start.'
-    const displayText =
-      'Apply [online](https://a.com) and check [your eligibility](https://b.com) before you start.'
-    // Issue: "before you start" (chars 39–55 in canonicalText — adjust to actual)
+    // "online" = chars 6–12, "your eligibility" = chars 23–39
+    const onlineIdx = canonicalText.indexOf('online')
+    const eligIdx = canonicalText.indexOf('your eligibility')
+    const linkMap = [
+      {
+        start: onlineIdx,
+        end: onlineIdx + 6,
+        display: '[online](https://a.com)'
+      },
+      {
+        start: eligIdx,
+        end: eligIdx + 16,
+        display: '[your eligibility](https://b.com)'
+      }
+    ]
+    // Issue: "before you start"
     const beforeIdx = canonicalText.indexOf('before you start')
     const issues = [
       {
@@ -875,7 +907,7 @@ describe('_buildAnnotatedSections — with displayText (URL sources)', () => {
     const sections = resultEnvelopeStore._buildAnnotatedSections(
       canonicalText,
       issues,
-      displayText
+      linkMap
     )
 
     // Plain span before issue should contain both links
@@ -892,13 +924,15 @@ describe('_buildAnnotatedSections — with displayText (URL sources)', () => {
   })
 })
 
-describe('buildEnvelope — displayText passed through to annotatedSections', () => {
-  it('passes displayText to _buildAnnotatedSections so plain spans carry links', () => {
-    // Set up a canonical text with a Markdown link stripped (what Bedrock sees)
-    // and a displayText with the link preserved (what the results page shows)
+describe('buildEnvelope — linkMap passed through to annotatedSections', () => {
+  it('passes linkMap to _buildAnnotatedSections so plain spans carry links', () => {
+    // canonicalText has Markdown link stripped (what Bedrock sees)
+    // linkMap records the link position (what the results page uses)
     const canonical = 'See the guidance for details about utilise.'
-    const display =
-      'See [the guidance](https://www.gov.uk/) for details about utilise.'
+    // "the guidance" is chars 4–16 in canonical
+    const linkMap = [
+      { start: 4, end: 16, display: '[the guidance](https://www.gov.uk/)' }
+    ]
 
     const parsedReview = {
       scores: {},
@@ -932,7 +966,7 @@ describe('buildEnvelope — displayText passed through to annotatedSections', ()
       { totalTokens: 100 },
       canonical,
       'completed',
-      display
+      linkMap
     )
 
     // Find the plain span before the highlight
@@ -940,7 +974,7 @@ describe('buildEnvelope — displayText passed through to annotatedSections', ()
       (s) => s.issueIdx === null && envelope.annotatedSections.indexOf(s) === 0
     )
     expect(plainBefore).toBeDefined()
-    // Plain section should have Markdown link from displayText
+    // Plain section should have Markdown link from linkMap
     expect(plainBefore.text).toContain('[the guidance](https://www.gov.uk/)')
 
     // Find the highlighted span
@@ -951,10 +985,8 @@ describe('buildEnvelope — displayText passed through to annotatedSections', ()
     expect(highlight.text).not.toContain('https://')
   })
 
-  it('produces identical annotatedSections regardless of displayText when no links present', () => {
+  it('produces identical annotatedSections regardless of linkMap when no links present', () => {
     const canonical = 'The department should utilise all resources.'
-    // displayText with no Markdown links — should produce same result
-    const display = 'The department should utilise all resources.'
 
     const parsedReview = {
       scores: {},
@@ -976,15 +1008,15 @@ describe('buildEnvelope — displayText passed through to annotatedSections', ()
       ]
     }
 
-    const withDisplay = resultEnvelopeStore.buildEnvelope(
+    const withLinkMap = resultEnvelopeStore.buildEnvelope(
       REVIEW_ID,
       parsedReview,
       { totalTokens: 50 },
       canonical,
       'completed',
-      display
+      [] // empty linkMap
     )
-    const withoutDisplay = resultEnvelopeStore.buildEnvelope(
+    const withoutLinkMap = resultEnvelopeStore.buildEnvelope(
       REVIEW_ID,
       parsedReview,
       { totalTokens: 50 },
@@ -993,9 +1025,9 @@ describe('buildEnvelope — displayText passed through to annotatedSections', ()
       null
     )
 
-    // When no Markdown links exist the section texts should be identical
-    expect(withDisplay.annotatedSections.map((s) => s.text)).toEqual(
-      withoutDisplay.annotatedSections.map((s) => s.text)
+    // When no links exist the section texts should be identical
+    expect(withLinkMap.annotatedSections.map((s) => s.text)).toEqual(
+      withoutLinkMap.annotatedSections.map((s) => s.text)
     )
   })
 })
