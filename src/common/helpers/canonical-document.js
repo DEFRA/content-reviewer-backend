@@ -427,6 +427,38 @@ class CanonicalDocumentStore {
       .replaceAll(/\n{3,}/gu, '\n\n')
       .trim()
 
+    // Re-join orphaned bullet markers.
+    //
+    // GOV.UK pages sometimes produce a bare '•' paragraph separated from its
+    // text by '\n\n'.  This happens when <li> content is wrapped in a block
+    // element (e.g. <li><p>text</p></li> or <li><a href="…">text</a></li>
+    // inside a contents list): stripHtmlTags emits '\n• ' for <li> and then
+    // '\n' for the nested block tag; after line-trimming the '• ' line becomes
+    // just '•' (trailing space removed) and the subsequent \n{3,} collapse
+    // leaves '\n\n' between the bare '•' and the item text below it.
+    //
+    // Fix: split by '\n\n', and wherever a paragraph is exactly '•', merge it
+    // with the following paragraph by prepending '• ' to that paragraph's text.
+    // This handles both the '\n\n' separation and the missing space in one pass,
+    // and runs before the consecutive-bullet merge so those bullets are then
+    // correctly grouped into a single block.
+    {
+      const paras = workingText.split('\n\n')
+      const merged = []
+      let i = 0
+      while (i < paras.length) {
+        if (paras[i].trim() === '•' && i + 1 < paras.length) {
+          // Orphaned bullet — attach to the following paragraph
+          merged.push(`• ${paras[i + 1].trim()}`)
+          i += 2
+        } else {
+          merged.push(paras[i])
+          i += 1
+        }
+      }
+      workingText = merged.join('\n\n')
+    }
+
     // Merge consecutive bullet paragraphs into a single block
     workingText = workingText
       .split('\n\n')
