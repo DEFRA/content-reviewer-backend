@@ -429,26 +429,24 @@ class CanonicalDocumentStore {
 
     // Re-join orphaned bullet markers.
     //
-    // GOV.UK pages sometimes produce a bare '•' paragraph separated from its
-    // text by '\n\n'.  This happens when <li> content is wrapped in a block
-    // element (e.g. <li><p>text</p></li> or <li><a href="…">text</a></li>
-    // inside a contents list): stripHtmlTags emits '\n• ' for <li> and then
-    // '\n' for the nested block tag; after line-trimming the '• ' line becomes
-    // just '•' (trailing space removed) and the subsequent \n{3,} collapse
-    // leaves '\n\n' between the bare '•' and the item text below it.
+    // GOV.UK pages sometimes produce a bare '•' separated from its text by
+    // either '\n\n' or '\n'.  Both arise from the same root cause: <li>
+    // content is wrapped in a block element so stripHtmlTags emits '\n• '
+    // for <li> and then '\n' for the nested block tag.  After line-trimming,
+    // the '• ' line loses its trailing space and becomes just '•'.  Depending
+    // on whether a surrounding block tag (e.g. <ul>) added a further '\n',
+    // the separator between the bare '•' and its text is either '\n\n' or '\n'.
     //
-    // Fix: split by '\n\n', and wherever a paragraph is exactly '•', merge it
-    // with the following paragraph by prepending '• ' to that paragraph's text.
-    // This handles both the '\n\n' separation and the missing space in one pass,
-    // and runs before the consecutive-bullet merge so those bullets are then
-    // correctly grouped into a single block.
+    // Pass A — '\n\n'-separated orphans: split into paragraphs; wherever a
+    // paragraph is exactly '•', prepend '• ' to the following paragraph's text
+    // and drop the bare-bullet paragraph.
     {
       const paras = workingText.split('\n\n')
       const merged = []
       let i = 0
       while (i < paras.length) {
         if (paras[i].trim() === '•' && i + 1 < paras.length) {
-          // Orphaned bullet — attach to the following paragraph
+          // Orphaned bullet separated by a blank line — attach to next paragraph
           merged.push(`• ${paras[i + 1].trim()}`)
           i += 2
         } else {
@@ -457,6 +455,31 @@ class CanonicalDocumentStore {
         }
       }
       workingText = merged.join('\n\n')
+    }
+
+    // Pass B — '\n'-separated orphans: within each paragraph, wherever a line
+    // is exactly '•', join it with the following line as '• <next line>'.
+    // This handles the same GOV.UK pattern when no surrounding block tag adds
+    // the extra newline that Pass A catches.
+    {
+      const paras = workingText.split('\n\n')
+      const fixed = paras.map((para) => {
+        const lines = para.split('\n')
+        const merged = []
+        let i = 0
+        while (i < lines.length) {
+          if (lines[i].trim() === '•' && i + 1 < lines.length) {
+            // Orphaned bullet on its own line — attach to the next line
+            merged.push(`• ${lines[i + 1].trim()}`)
+            i += 2
+          } else {
+            merged.push(lines[i])
+            i += 1
+          }
+        }
+        return merged.join('\n')
+      })
+      workingText = fixed.join('\n\n')
     }
 
     // Merge consecutive bullet paragraphs into a single block
