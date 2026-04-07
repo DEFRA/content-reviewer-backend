@@ -562,7 +562,10 @@ describe('bedrockClient._isRetryableError', () => {
 
 describe('bedrockClient._sleep', () => {
   it('resolves after the given delay', async () => {
-    await expect(bedrockClient._sleep(0)).resolves.toBeUndefined()
+    // Get the original _sleep from the prototype to bypass any active spy
+    const proto = Object.getPrototypeOf(bedrockClient)
+    const originalSleep = proto._sleep
+    await expect(originalSleep.call(bedrockClient, 0)).resolves.toBeUndefined()
   })
 })
 
@@ -645,5 +648,37 @@ describe('bedrockClient.sendMessage - retry on retryable errors', () => {
 
     const sentCommand = MOCK_SEND.mock.calls[0][0]
     expect(sentCommand.system).toBeUndefined()
+  })
+})
+
+// ── _sleep (line 255) ─────────────────────────────────────────────────────────
+describe('BedrockClient - _sleep', () => {
+  it('resolves after the given number of milliseconds', async () => {
+    await expect(bedrockClient._sleep(0)).resolves.toBeUndefined()
+  })
+})
+
+// ── disabled branch (lines 29-31) ─────────────────────────────────────────────
+describe('BedrockClient - disabled branch (bedrock.enabled = false)', () => {
+  it('sets enabled = false and returns early when bedrock is disabled', async () => {
+    const { config: mockConfig } = await import('../../config.js')
+    const originalGet = mockConfig.get
+
+    // Make bedrock.enabled return false for this one test
+    mockConfig.get = vi.fn((key) => {
+      if (key === CONFIG_KEYS.BEDROCK_ENABLED) return false
+      return originalGet(key)
+    })
+
+    // BedrockClient is not exported directly — access via singleton prototype
+    const mod = await import('./bedrock-client.js')
+    const Ctor = Object.getPrototypeOf(mod.bedrockClient).constructor
+    const disabledInstance = new Ctor()
+
+    expect(disabledInstance.enabled).toBe(false)
+    expect(disabledInstance.client).toBeUndefined()
+
+    // Restore original config getter
+    mockConfig.get = originalGet
   })
 })
