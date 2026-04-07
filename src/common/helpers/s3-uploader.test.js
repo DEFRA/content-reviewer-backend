@@ -511,3 +511,70 @@ describe('s3Uploader - S3 command verification', () => {
     }
   })
 })
+
+// ── Static getters ─────────────────────────────────────────────────────────
+describe('s3Uploader - static content type getters', () => {
+  test('textContentType returns text/plain', () => {
+    const Ctor = Object.getPrototypeOf(s3Uploader).constructor
+    expect(Ctor.textContentType).toBe('text/plain')
+  })
+
+  test('htmlContentType returns text/html', () => {
+    const Ctor = Object.getPrototypeOf(s3Uploader).constructor
+    expect(Ctor.htmlContentType).toBe('text/html')
+  })
+})
+
+// Helper to access the class (the module only exports the singleton)
+function _getS3UploaderClass() {
+  // The singleton exposes the static getters via the class reference
+  return { S3Uploader: Object.getPrototypeOf(s3Uploader).constructor }
+}
+
+// ── Constructor: mock mode ─────────────────────────────────────────────────
+describe('s3Uploader singleton - constructor behaviour', () => {
+  test('s3Client is null in mock mode', () => {
+    // Override config to enable mock mode
+    config.get.mockImplementation((key) => {
+      const vals = {
+        [CONFIG_KEYS.MOCK_MODE]: true,
+        [CONFIG_KEYS.S3_BUCKET]: TEST_DATA.BUCKET,
+        [CONFIG_KEYS.AWS_REGION]: TEST_DATA.REGION,
+        [CONFIG_KEYS.AWS_ENDPOINT]: null
+      }
+      return vals[key] === undefined ? null : vals[key]
+    })
+
+    const Ctor = Object.getPrototypeOf(s3Uploader).constructor
+    const instance = new Ctor()
+
+    expect(instance.mockMode).toBe(true)
+    expect(instance.s3Client).toBeNull()
+  })
+
+  test('s3Config uses LocalStack endpoint when aws.endpoint is set', () => {
+    // Set up a proper constructor mock for S3Client (must be callable with `new`)
+    S3Client.mockImplementation(function (cfg) {
+      this._cfg = cfg
+      this.send = vi.fn()
+    })
+
+    config.get.mockImplementation((key) => {
+      const vals = {
+        [CONFIG_KEYS.MOCK_MODE]: false,
+        [CONFIG_KEYS.S3_BUCKET]: TEST_DATA.BUCKET,
+        [CONFIG_KEYS.AWS_REGION]: TEST_DATA.REGION,
+        [CONFIG_KEYS.AWS_ENDPOINT]: TEST_DATA.ENDPOINT
+      }
+      return vals[key] === undefined ? null : vals[key]
+    })
+
+    const Ctor = Object.getPrototypeOf(s3Uploader).constructor
+    new Ctor() // triggers the LocalStack endpoint branch
+
+    // Verify S3Client was called with endpoint and forcePathStyle
+    const lastCallArgs = S3Client.mock.calls[S3Client.mock.calls.length - 1][0]
+    expect(lastCallArgs.endpoint).toBe(TEST_DATA.ENDPOINT)
+    expect(lastCallArgs.forcePathStyle).toBe(true)
+  })
+})

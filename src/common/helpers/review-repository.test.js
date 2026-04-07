@@ -643,3 +643,92 @@ describe('reviewRepository.deleteOldReviews', () => {
     expect(result).toBe(DELETED_COUNT)
   })
 })
+
+// ============ savePositions ============
+
+describe('reviewRepository.savePositions', () => {
+  it('saves position data to S3 under positions/{reviewId}.json', async () => {
+    MOCK_S3_SEND.mockResolvedValueOnce({})
+
+    const reviewedContent = {
+      plainText: 'Some content',
+      issues: [{ start: 0, end: 4, type: 'clarity', text: 'Some' }]
+    }
+
+    await reviewRepository.savePositions(REVIEW_ID, reviewedContent)
+
+    expect(MOCK_S3_SEND).toHaveBeenCalledTimes(1)
+    const command = MOCK_S3_SEND.mock.calls[0][0]
+    expect(command.Key).toBe(`positions/${REVIEW_ID}.json`)
+    expect(command.Bucket).toBe(S3_BUCKET)
+  })
+
+  it('includes plainText and issues in the saved payload', async () => {
+    MOCK_S3_SEND.mockResolvedValueOnce({})
+
+    const reviewedContent = {
+      plainText: 'My review text',
+      issues: [{ start: 3, end: 9, type: 'plain-english', text: 'review' }]
+    }
+
+    await reviewRepository.savePositions(REVIEW_ID, reviewedContent)
+
+    const command = MOCK_S3_SEND.mock.calls[0][0]
+    const body = JSON.parse(command.Body)
+    expect(body.plainText).toBe('My review text')
+    expect(body.issues).toHaveLength(1)
+    expect(body.reviewId).toBe(REVIEW_ID)
+  })
+
+  it('handles empty issues array gracefully', async () => {
+    MOCK_S3_SEND.mockResolvedValueOnce({})
+
+    await reviewRepository.savePositions(REVIEW_ID, {
+      plainText: 'text',
+      issues: []
+    })
+
+    const command = MOCK_S3_SEND.mock.calls[0][0]
+    const body = JSON.parse(command.Body)
+    expect(body.issues).toHaveLength(0)
+    expect(command.Metadata.issueCount).toBe('0')
+  })
+
+  it('throws when S3 send fails', async () => {
+    MOCK_S3_SEND.mockRejectedValueOnce(new Error('S3 write failed'))
+
+    await expect(
+      reviewRepository.savePositions(REVIEW_ID, { plainText: '', issues: [] })
+    ).rejects.toThrow('S3 write failed')
+  })
+})
+
+// ============ ReviewRepositoryS3 constructor - LocalStack endpoint ============
+
+describe('ReviewRepositoryS3 constructor', () => {
+  it('uses custom endpoint when aws.endpoint is configured', async () => {
+    const { S3Client: S3ClientMock } = await import('@aws-sdk/client-s3')
+    const { config: configMock } = await import('../../config.js')
+
+    configMock.get.mockImplementation((key) => {
+      const localStackVals = {
+        'aws.region': AWS_REGION,
+        'aws.endpoint': AWS_ENDPOINT,
+        's3.bucket': S3_BUCKET
+      }
+      return localStackVals[key] ?? null
+    })
+
+    // Access the class through the exported singleton's prototype chain
+    const mod = await import('./review-repository.js')
+    const Ctor = Object.getPrototypeOf(mod.reviewRepository).constructor
+
+    new Ctor() // triggers the LocalStack endpoint branch
+
+    // Verify S3Client was constructed with the LocalStack endpoint
+    const lastCall =
+      S3ClientMock.mock.calls[S3ClientMock.mock.calls.length - 1][0]
+    expect(lastCall.endpoint).toBe(AWS_ENDPOINT)
+    expect(lastCall.forcePathStyle).toBe(true)
+  })
+})
