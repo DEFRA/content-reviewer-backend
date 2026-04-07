@@ -130,6 +130,67 @@ export class ContentExtractor {
   }
 
   /**
+   * Parse a canonical document JSON string and return { canonicalText, linkMap }.
+   * Falls back to { canonicalText: rawString, linkMap: null } on parse errors or
+   * when the expected fields are absent.
+   *
+   * @param {string} rawString   - raw UTF-8 content read from S3
+   * @param {string} reviewId
+   * @param {string} s3Key
+   * @param {number} s3Duration  - download time in ms (for logging)
+   * @returns {{ canonicalText: string, linkMap: Array|null }}
+   */
+  _processCanonicalJson(rawString, reviewId, s3Key, s3Duration) {
+    let canonicalDoc
+    try {
+      canonicalDoc = JSON.parse(rawString)
+    } catch (parseError) {
+      logger.error(
+        { reviewId, s3Key, error: parseError.message },
+        'Failed to parse canonical document JSON — falling back to raw text'
+      )
+      return { canonicalText: rawString, linkMap: null }
+    }
+
+    const canonicalText = canonicalDoc.canonicalText
+
+    if (!canonicalText || typeof canonicalText !== 'string') {
+      logger.error(
+        {
+          reviewId,
+          s3Key,
+          documentId: canonicalDoc.documentId,
+          status: canonicalDoc.status
+        },
+        'Canonical document missing canonicalText field — falling back to raw document JSON'
+      )
+      return { canonicalText: rawString, linkMap: null }
+    }
+
+    logger.info(
+      {
+        reviewId,
+        s3Key,
+        documentId: canonicalDoc.documentId,
+        charCount: canonicalDoc.charCount,
+        tokenEst: canonicalDoc.tokenEst,
+        sourceType: canonicalDoc.sourceType,
+        hasLinkMap: Array.isArray(canonicalDoc.linkMap),
+        linkMapEntries: Array.isArray(canonicalDoc.linkMap)
+          ? canonicalDoc.linkMap.length
+          : 0,
+        durationMs: s3Duration
+      },
+      `Canonical document read successfully in ${s3Duration}ms — using canonicalText (${canonicalDoc.charCount} chars)`
+    )
+
+    return {
+      canonicalText,
+      linkMap: Array.isArray(canonicalDoc.linkMap) ? canonicalDoc.linkMap : null
+    }
+  }
+
+  /**
    * Extract text from a canonical document stored in S3 as
    * documents/{reviewId}.json.
    *
@@ -161,55 +222,12 @@ export class ContentExtractor {
       messageBody.s3Key.endsWith('.json')
 
     if (isCanonicalDocument) {
-      let canonicalDoc
-      try {
-        canonicalDoc = JSON.parse(rawString)
-      } catch (parseError) {
-        logger.error(
-          { reviewId, s3Key: messageBody.s3Key, error: parseError.message },
-          'Failed to parse canonical document JSON — falling back to raw text'
-        )
-        return { canonicalText: rawString, linkMap: null }
-      }
-
-      const canonicalText = canonicalDoc.canonicalText
-
-      if (!canonicalText || typeof canonicalText !== 'string') {
-        logger.error(
-          {
-            reviewId,
-            s3Key: messageBody.s3Key,
-            documentId: canonicalDoc.documentId,
-            status: canonicalDoc.status
-          },
-          'Canonical document missing canonicalText field — falling back to raw document JSON'
-        )
-        return { canonicalText: rawString, linkMap: null }
-      }
-
-      logger.info(
-        {
-          reviewId,
-          s3Key: messageBody.s3Key,
-          documentId: canonicalDoc.documentId,
-          charCount: canonicalDoc.charCount,
-          tokenEst: canonicalDoc.tokenEst,
-          sourceType: canonicalDoc.sourceType,
-          hasLinkMap: Array.isArray(canonicalDoc.linkMap),
-          linkMapEntries: Array.isArray(canonicalDoc.linkMap)
-            ? canonicalDoc.linkMap.length
-            : 0,
-          durationMs: s3Duration
-        },
-        `Canonical document read successfully in ${s3Duration}ms — using canonicalText (${canonicalDoc.charCount} chars)`
+      return this._processCanonicalJson(
+        rawString,
+        reviewId,
+        messageBody.s3Key,
+        s3Duration
       )
-
-      return {
-        canonicalText,
-        linkMap: Array.isArray(canonicalDoc.linkMap)
-          ? canonicalDoc.linkMap
-          : null
-      }
     }
 
     // Legacy plain-text fallback (content-uploads/…/Title.txt)

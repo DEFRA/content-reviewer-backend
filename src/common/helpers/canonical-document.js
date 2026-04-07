@@ -390,6 +390,121 @@ class CanonicalDocumentStore {
   }
 
   /**
+   * Replace common HTML entities with their plain-text equivalents.
+   * @param {string} text
+   * @returns {string}
+   * @private
+   */
+  _stripEntities(text) {
+    return text
+      .replaceAll('&nbsp;', ' ')
+      .replaceAll('&amp;', '&')
+      .replaceAll('&lt;', '<')
+      .replaceAll('&gt;', '>')
+      .replaceAll('&quot;', '"')
+      .replaceAll('&#39;', "'")
+  }
+
+  /**
+   * Collapse runs of horizontal whitespace within lines and remove excessive
+   * blank lines (3+ consecutive newlines → 2).
+   * @param {string} text
+   * @returns {string}
+   * @private
+   */
+  _collapseWhitespace(text) {
+    return text
+      .split('\n')
+      .map((line) => line.replaceAll(/ {2,}/gu, ' ').trim())
+      .join('\n')
+      .replaceAll(/\n{3,}/gu, '\n\n')
+      .trim()
+  }
+
+  /**
+   * Pass A — re-join orphaned bullet markers separated from their text by a
+   * blank line ('\n\n').  A paragraph that is exactly '•' is merged with the
+   * following paragraph.
+   * @param {string} text
+   * @returns {string}
+   * @private
+   */
+  _mergeOrphanedBulletsPassA(text) {
+    const paras = text.split('\n\n')
+    const merged = []
+    let i = 0
+    while (i < paras.length) {
+      if (paras[i].trim() === '•' && i + 1 < paras.length) {
+        merged.push(`• ${paras[i + 1].trim()}`)
+        i += 2
+      } else {
+        merged.push(paras[i])
+        i += 1
+      }
+    }
+    return merged.join('\n\n')
+  }
+
+  /**
+   * Pass B — re-join orphaned bullet markers separated from their text by a
+   * single newline ('\n').  Within each paragraph, a line that is exactly '•'
+   * is merged with the following line.
+   * @param {string} text
+   * @returns {string}
+   * @private
+   */
+  _mergeOrphanedBulletsPassB(text) {
+    return text
+      .split('\n\n')
+      .map((para) => {
+        const lines = para.split('\n')
+        const merged = []
+        let i = 0
+        while (i < lines.length) {
+          if (lines[i].trim() === '•' && i + 1 < lines.length) {
+            merged.push(`• ${lines[i + 1].trim()}`)
+            i += 2
+          } else {
+            merged.push(lines[i])
+            i += 1
+          }
+        }
+        return merged.join('\n')
+      })
+      .join('\n\n')
+  }
+
+  /**
+   * Merge consecutive bullet paragraphs (lines starting with '• ') that are
+   * separated by blank lines into a single contiguous block.
+   * @param {string} text
+   * @returns {string}
+   * @private
+   */
+  _mergeConsecutiveBullets(text) {
+    return text
+      .split('\n\n')
+      .reduce((acc, para) => {
+        const trimmedPara = para.trim()
+        if (!trimmedPara) {
+          return acc
+        }
+        const isBullet = trimmedPara.startsWith('• ')
+        if (acc.length > 0 && isBullet) {
+          const lastPara = acc[acc.length - 1]
+          const lastLine = lastPara.split('\n').findLast((l) => l.trim())
+          if (lastLine?.trim().startsWith('• ')) {
+            acc[acc.length - 1] = `${lastPara}\n${trimmedPara}`
+            return acc
+          }
+        }
+        acc.push(trimmedPara)
+        return acc
+      }, [])
+      .join('\n\n')
+  }
+
+  /**
    * Step 0a: Prepare URL source text — strip HTML tags, normalise whitespace,
    * and snapshot the text before Markdown link syntax is stripped.
    *
@@ -410,99 +525,18 @@ class CanonicalDocumentStore {
       return { workingText: text, preStripText: null }
     }
 
-    // Strip HTML tags (linear-time state machine, ReDoS-safe)
-    let workingText = stripHtmlTags(text)
-      .replaceAll('&nbsp;', ' ')
-      .replaceAll('&amp;', '&')
-      .replaceAll('&lt;', '<')
-      .replaceAll('&gt;', '>')
-      .replaceAll('&quot;', '"')
-      .replaceAll('&#39;', "'")
+    // Strip HTML tags (linear-time state machine, ReDoS-safe) then entities
+    let workingText = this._stripEntities(stripHtmlTags(text))
 
-    // Collapse horizontal whitespace on each line and strip excessive newlines
-    workingText = workingText
-      .split('\n')
-      .map((line) => line.replaceAll(/ {2,}/gu, ' ').trim())
-      .join('\n')
-      .replaceAll(/\n{3,}/gu, '\n\n')
-      .trim()
+    // Collapse horizontal whitespace and excessive blank lines
+    workingText = this._collapseWhitespace(workingText)
 
-    // Re-join orphaned bullet markers.
-    //
-    // GOV.UK pages sometimes produce a bare '•' separated from its text by
-    // either '\n\n' or '\n'.  Both arise from the same root cause: <li>
-    // content is wrapped in a block element so stripHtmlTags emits '\n• '
-    // for <li> and then '\n' for the nested block tag.  After line-trimming,
-    // the '• ' line loses its trailing space and becomes just '•'.  Depending
-    // on whether a surrounding block tag (e.g. <ul>) added a further '\n',
-    // the separator between the bare '•' and its text is either '\n\n' or '\n'.
-    //
-    // Pass A — '\n\n'-separated orphans: split into paragraphs; wherever a
-    // paragraph is exactly '•', prepend '• ' to the following paragraph's text
-    // and drop the bare-bullet paragraph.
-    {
-      const paras = workingText.split('\n\n')
-      const merged = []
-      let i = 0
-      while (i < paras.length) {
-        if (paras[i].trim() === '•' && i + 1 < paras.length) {
-          // Orphaned bullet separated by a blank line — attach to next paragraph
-          merged.push(`• ${paras[i + 1].trim()}`)
-          i += 2
-        } else {
-          merged.push(paras[i])
-          i += 1
-        }
-      }
-      workingText = merged.join('\n\n')
-    }
-
-    // Pass B — '\n'-separated orphans: within each paragraph, wherever a line
-    // is exactly '•', join it with the following line as '• <next line>'.
-    // This handles the same GOV.UK pattern when no surrounding block tag adds
-    // the extra newline that Pass A catches.
-    {
-      const paras = workingText.split('\n\n')
-      const fixed = paras.map((para) => {
-        const lines = para.split('\n')
-        const merged = []
-        let i = 0
-        while (i < lines.length) {
-          if (lines[i].trim() === '•' && i + 1 < lines.length) {
-            // Orphaned bullet on its own line — attach to the next line
-            merged.push(`• ${lines[i + 1].trim()}`)
-            i += 2
-          } else {
-            merged.push(lines[i])
-            i += 1
-          }
-        }
-        return merged.join('\n')
-      })
-      workingText = fixed.join('\n\n')
-    }
+    // Re-join orphaned bullet markers (two-pass: blank-line then single-line)
+    workingText = this._mergeOrphanedBulletsPassA(workingText)
+    workingText = this._mergeOrphanedBulletsPassB(workingText)
 
     // Merge consecutive bullet paragraphs into a single block
-    workingText = workingText
-      .split('\n\n')
-      .reduce((acc, para) => {
-        const trimmedPara = para.trim()
-        if (!trimmedPara) {
-          return acc
-        }
-        const isBullet = trimmedPara.startsWith('• ')
-        if (acc.length > 0 && isBullet) {
-          const lastPara = acc[acc.length - 1]
-          const lastLine = lastPara.split('\n').findLast((l) => l.trim())
-          if (lastLine?.trim().startsWith('• ')) {
-            acc[acc.length - 1] = `${lastPara}\n${trimmedPara}`
-            return acc
-          }
-        }
-        acc.push(trimmedPara)
-        return acc
-      }, [])
-      .join('\n\n')
+    workingText = this._mergeConsecutiveBullets(workingText)
 
     // Snapshot the text with Markdown links still intact (for the linkMap)
     const preStripText = workingText
