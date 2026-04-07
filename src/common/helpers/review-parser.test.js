@@ -560,3 +560,171 @@ describe('parseBedrockResponse - [ISSUE_POSITIONS] edge cases', () => {
     expect(result.reviewedContent.issues).toEqual([])
   })
 })
+
+// ── parseIssuePositions: empty text → return plainText/issues [] (line 102) ─
+describe('parseBedrockResponse - empty [ISSUE_POSITIONS] content (line 102)', () => {
+  it('returns empty issues when [ISSUE_POSITIONS] section is whitespace only', () => {
+    // The section exists but its content is blank → line 102 fires
+    const response = '[ISSUE_POSITIONS]   \n[/ISSUE_POSITIONS]'
+    const result = parseBedrockResponse(response, undefined, 'original text')
+    expect(result.reviewedContent.issues).toEqual([])
+    expect(result.reviewedContent.plainText).toBe('original text')
+  })
+})
+
+// ── parseScoreLine: afterColon fails /^\d\/5/ (line 157) ─────────────────
+describe('parseBedrockResponse - malformed score line (line 157)', () => {
+  it('skips score line where value does not match digit/5 pattern', () => {
+    // "Clarity: great/5 - Good" → afterColon = "great/5 - Good" fails /^\d\/5/
+    const response = [
+      '[SCORES]',
+      'Clarity: great/5 - Not a valid score',
+      '[/SCORES]'
+    ].join('\n')
+    const result = parseBedrockResponse(response)
+    expect(result.scores.clarity).toBeUndefined()
+  })
+})
+
+// ── parseScoreLine: no dash found → return null (line 164) ───────────────
+describe('parseBedrockResponse - score line with no dash (line 164)', () => {
+  it('skips score line where there is no dash after position 3', () => {
+    // "Clarity: 3/5 NoDashHere" → dashIndex === -1 → returns null at line 164
+    const response = ['[SCORES]', 'Clarity: 3/5 NoDashHere', '[/SCORES]'].join(
+      '\n'
+    )
+    const result = parseBedrockResponse(response)
+    expect(result.scores.clarity).toBeUndefined()
+  })
+})
+
+// ── extractValue: no newline in block → lineEnd = block.length (line 330) ─
+describe('parseBedrockResponse - improvement block with no trailing newline (line 330)', () => {
+  it('extracts the last field value when the block has no trailing newline', () => {
+    // Build the improvements section so that after splitting on [PRIORITY:
+    // the resulting block ends with "SUGGESTED: new" and no trailing \n,
+    // forcing lineEnd = block.length (line 330).
+    // We do this by having the SUGGESTED field be the very last thing before
+    // [/IMPROVEMENTS] with no newline between them.
+    const response =
+      '[IMPROVEMENTS]\n[PRIORITY: medium]\nCATEGORY: Clarity\nISSUE: Use simpler words\nWHY: Easier to read\nCURRENT: old\nSUGGESTED: new[/IMPROVEMENTS]'
+    const result = parseBedrockResponse(response)
+    // The improvement may or may not parse cleanly, but it must not throw
+    expect(result.improvements).toBeDefined()
+  })
+})
+
+// ── extractScores: no [SCORES] section → return {} (line 479) ────────────
+describe('parseBedrockResponse - extractScores fallback (line 479)', () => {
+  it('returns empty scores when [IMPROVEMENTS] is present but [SCORES] is absent', () => {
+    // hasMarkers is true because [IMPROVEMENTS] is present,
+    // but extractScores finds no [SCORES] tag → returns {} at line 479
+    const response = [
+      '[IMPROVEMENTS]',
+      '[PRIORITY: medium]',
+      'CATEGORY: Clarity',
+      'WHY: Needs work',
+      'CURRENT: old text',
+      'SUGGESTED: new text',
+      '[/IMPROVEMENTS]'
+    ].join('\n')
+
+    const result = parseBedrockResponse(response)
+
+    // scores should be empty since there was no [SCORES] section
+    expect(result.scores).toEqual({})
+  })
+})
+describe('parseBedrockResponse - plain text fallback (no markers)', () => {
+  it('returns a result for a response with no section markers', () => {
+    const plainResponse = 'This content needs improvement in plain English.'
+
+    const result = parseBedrockResponse(plainResponse)
+
+    // parsePlainTextReview path — should not throw and should return shape
+    expect(result).toHaveProperty('scores')
+    expect(result).toHaveProperty('reviewedContent')
+    expect(result).toHaveProperty('improvements')
+  })
+})
+
+// ── extractReviewedContent fallback: no ISSUE_POSITIONS, no REVIEWED_CONTENT (line 512) ─
+describe('parseBedrockResponse - extractReviewedContent fallback (line 512)', () => {
+  it('returns empty issues when [SCORES] present but no ISSUE_POSITIONS or REVIEWED_CONTENT', () => {
+    const response = [
+      '[SCORES]',
+      'Clarity: 3/5 - Good',
+      '[/SCORES]',
+      '[IMPROVEMENTS]',
+      '[PRIORITY: medium]',
+      'CATEGORY: Clarity',
+      'WHY: Needs work',
+      'CURRENT: old text',
+      'SUGGESTED: new text',
+      '[/IMPROVEMENTS]'
+    ].join('\n')
+
+    const result = parseBedrockResponse(response, undefined, 'original text')
+
+    expect(result.reviewedContent.issues).toEqual([])
+    expect(result.reviewedContent.plainText).toBe('original text')
+  })
+})
+
+// ── extractImprovements fallback: no [IMPROVEMENTS] section (line 533) ────
+describe('parseBedrockResponse - extractImprovements fallback (line 533)', () => {
+  it('returns empty improvements array when no [IMPROVEMENTS] section present', () => {
+    const response = [
+      '[SCORES]',
+      'Clarity: 3/5 - Good',
+      '[/SCORES]',
+      '[REVIEWED_CONTENT]',
+      'Some reviewed content',
+      '[/REVIEWED_CONTENT]'
+    ].join('\n')
+
+    const result = parseBedrockResponse(response)
+
+    expect(result.improvements).toEqual([])
+  })
+})
+
+// ── parseBedrockResponse error handler (lines 604-605) ───────────────────
+describe('parseBedrockResponse - error catch path (lines 604-605)', () => {
+  it('returns fallback result when response parsing throws internally', () => {
+    // Pass an object whose .includes() throws to force the catch path.
+    // resolveResponseToParse returns the object because obj?.trim() is undefined
+    // (falsy) and fallback is also undefined → returns fallback || '' = ''.
+    // Actually to hit catch we need includes() to throw on the result.
+    // So pass an object as primary that has a truthy .trim() but bad .includes():
+    const badResponse = {
+      trim: () => 'something',
+      includes: () => {
+        throw new Error('deliberate test error')
+      }
+    }
+
+    const result = parseBedrockResponse(badResponse)
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        scores: {},
+        improvements: []
+      })
+    )
+    expect(result.reviewedContent).toBeDefined()
+    expect(Array.isArray(result.reviewedContent.issues)).toBe(true)
+  })
+})
+
+// ── parseScoreLine (plain-text): dashIndex <= 0 → return null (line 410) ─
+describe('parseBedrockResponse - plain-text score line no dash (line 410)', () => {
+  it('skips plain-text score line where there is no dash after the value', () => {
+    // Plain-text response (no markers) with a score line that has no dash
+    // "Clarity: 3/5" with no " - note" → dashIndex === -1 → returns null
+    const response = 'Clarity: 3/5\nContent looks readable overall.'
+    const result = parseBedrockResponse(response)
+    // Should not throw; clarity score will be absent or zero
+    expect(result.scores).toBeDefined()
+  })
+})

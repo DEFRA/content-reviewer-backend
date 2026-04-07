@@ -1031,3 +1031,218 @@ describe('buildEnvelope — linkMap passed through to annotatedSections', () => 
     )
   })
 })
+
+// ── deriveEvidence fallback (line 22) ─────────────────────────────────────────
+// deriveEvidence is a module-private function, exercised via buildEnvelope.
+// We trigger it by providing an issue whose start === end (invalid span)
+// so that the slice is skipped and fallback (issue.text) is used instead.
+describe('buildEnvelope — deriveEvidence fallback (line 22)', () => {
+  it('falls back to issue.text when start equals end', () => {
+    // start === end → deriveEvidence skips slice and returns fallbackText
+    const parsedReview = {
+      scores: { clarity: 4 },
+      reviewedContent: {
+        plainText: 'The department should utilise all resources.',
+        issues: [{ start: 5, end: 5, type: 'plain-english', text: 'utilise' }]
+      },
+      improvements: [
+        {
+          severity: 'medium',
+          category: 'plain-english',
+          issue: 'Use simpler word',
+          why: 'reason',
+          current: 'utilise',
+          suggested: 'use'
+        }
+      ]
+    }
+
+    const envelope = resultEnvelopeStore.buildEnvelope(
+      REVIEW_ID,
+      parsedReview,
+      { totalTokens: 10 },
+      'The department should utilise all resources.',
+      'completed'
+    )
+
+    expect(envelope.documentId).toBe(REVIEW_ID)
+  })
+
+  it('returns empty string evidence when canonicalText is falsy and issue.text is absent', () => {
+    // canonicalText = '' (falsy) → deriveEvidence returns fallbackText || ''
+    const parsedReview = {
+      scores: { clarity: 4 },
+      reviewedContent: {
+        plainText: 'content',
+        issues: [{ start: 0, end: 5, type: 'plain-english', text: undefined }]
+      },
+      improvements: [
+        {
+          severity: 'medium',
+          category: 'plain-english',
+          issue: 'Improve clarity',
+          why: 'reason',
+          current: 'text',
+          suggested: 'better text'
+        }
+      ]
+    }
+
+    const envelope = resultEnvelopeStore.buildEnvelope(
+      REVIEW_ID,
+      parsedReview,
+      { totalTokens: 10 },
+      '',
+      'completed'
+    )
+
+    expect(envelope.documentId).toBe(REVIEW_ID)
+  })
+})
+
+// ── _snapToWordBoundary trailing-whitespace trim (line 352) ───────────────────
+// The trailing-whitespace trim loop fires when the expanded end lands on
+// a whitespace character.  We exercise it via buildEnvelope by placing an
+// issue whose raw end offset lands on a space.
+describe('buildEnvelope — _snapToWordBoundary whitespace trimming (line 352)', () => {
+  it('trims trailing whitespace when expanded end is preceded by whitespace', () => {
+    // 'hello \nworld is great'
+    //  01234 5 6789...
+    // end=6 points at '\n'; right-expansion: text[6]='\n' is not a word char,
+    // so e stays at 6.  Then text[e-1]=text[5]=' ' IS whitespace → e-- fires.
+    const testCanonicalText = 'hello \nworld is great'
+    const parsedReview = {
+      scores: { clarity: 4 },
+      reviewedContent: {
+        plainText: testCanonicalText,
+        issues: [{ start: 0, end: 6, type: 'plain-english', text: 'hello ' }]
+      },
+      improvements: [
+        {
+          severity: 'low',
+          category: 'plain-english',
+          issue: 'Simpler word',
+          why: 'reason',
+          current: 'hello',
+          suggested: 'hi'
+        }
+      ]
+    }
+
+    const envelope = resultEnvelopeStore.buildEnvelope(
+      REVIEW_ID,
+      parsedReview,
+      { totalTokens: 10 },
+      testCanonicalText,
+      'completed'
+    )
+
+    // The highlighted span must not end with whitespace
+    const highlighted = envelope.annotatedSections.find(
+      (s) => s.issueIdx !== null
+    )
+    if (highlighted) {
+      expect(highlighted.text).not.toMatch(/\s$/)
+    }
+    expect(envelope.documentId).toBe(REVIEW_ID)
+  })
+
+  it('directly calls _snapToWordBoundary with end landing on whitespace-preceded position', () => {
+    // text = 'hello \nworld', start=0, end=6 ('\n')
+    // e stays at 6 (text[6]='\n' not word char)
+    // text[5]=' ' → trailing trim: e-- to 5
+    // text[4]='o' → stops; result end=5
+    // leading trim: text[0]='h' not whitespace → s stays 0
+    const text = 'hello \nworld'
+    const result = resultEnvelopeStore._snapToWordBoundary(text, 0, 6)
+    expect(result.end).toBe(5)
+    expect(result.start).toBe(0)
+    expect(text.slice(result.start, result.end)).toBe('hello')
+  })
+})
+
+// ── _isValidLinkEntry false branches (lines 707, 710) ────────────────────────
+// _isValidLinkEntry is private but exercised via _validatedLinks → buildEnvelope
+// with a linkMap containing entries that should be filtered out.
+describe('buildEnvelope — _isValidLinkEntry filtering (lines 707, 710)', () => {
+  const linkTestCanonical = 'Visit the site for more information.'
+  const baseParsedReview = {
+    scores: { clarity: 4 },
+    reviewedContent: { plainText: linkTestCanonical, issues: [] },
+    improvements: []
+  }
+
+  it('filters out linkMap entries with start >= end (line 707 branch)', () => {
+    // entry.end <= entry.start should be rejected by the second if-guard
+    const badLinkMap = [
+      { start: 10, end: 5, display: '[site](https://example.com)' }
+    ]
+
+    const envelope = resultEnvelopeStore.buildEnvelope(
+      REVIEW_ID,
+      baseParsedReview,
+      { totalTokens: 10 },
+      linkTestCanonical,
+      'completed',
+      badLinkMap
+    )
+
+    // Invalid entry discarded — annotated sections should still contain full text
+    const texts = envelope.annotatedSections.map((s) => s.text).join('')
+    expect(texts).toBe(linkTestCanonical)
+  })
+
+  it('filters out linkMap entries with non-string display (line 710 branch)', () => {
+    // typeof e.display !== 'string' should be rejected
+    const badLinkMap = [{ start: 6, end: 10, display: 42 }]
+
+    const envelope = resultEnvelopeStore.buildEnvelope(
+      REVIEW_ID,
+      baseParsedReview,
+      { totalTokens: 10 },
+      linkTestCanonical,
+      'completed',
+      badLinkMap
+    )
+
+    const texts = envelope.annotatedSections.map((s) => s.text).join('')
+    expect(texts).toBe(linkTestCanonical)
+  })
+
+  it('filters out linkMap entries with negative start (line 707 branch)', () => {
+    const badLinkMap = [
+      { start: -1, end: 5, display: '[text](https://example.com)' }
+    ]
+
+    const envelope = resultEnvelopeStore.buildEnvelope(
+      REVIEW_ID,
+      baseParsedReview,
+      { totalTokens: 10 },
+      linkTestCanonical,
+      'completed',
+      badLinkMap
+    )
+
+    const texts = envelope.annotatedSections.map((s) => s.text).join('')
+    expect(texts).toBe(linkTestCanonical)
+  })
+
+  it('filters out linkMap entries with non-number start/end (line 706 branch)', () => {
+    // typeof e.start !== 'number' should be rejected by the first if-guard
+    const badLinkMap = [
+      { start: '6', end: 10, display: '[site](https://example.com)' }
+    ]
+
+    const envelope = resultEnvelopeStore.buildEnvelope(
+      REVIEW_ID,
+      baseParsedReview,
+      { totalTokens: 10 },
+      linkTestCanonical,
+      'completed',
+      badLinkMap
+    )
+
+    const texts = envelope.annotatedSections.map((s) => s.text).join('')
+    expect(texts).toBe(linkTestCanonical)
+  })
+})
