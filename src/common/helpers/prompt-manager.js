@@ -49,7 +49,7 @@ To ensure consistent, reliable reviews:
 7. **Every issue in [ISSUE_POSITIONS] MUST have a corresponding [PRIORITY] entry in [IMPROVEMENTS]**
 8. **Every issue MUST be based on text that exists in the document** — only flag problems that are present in the text you received. Never raise issues about missing information, absent structure, or things that are not in the text
 9. **FULL DOCUMENT SCAN BEFORE SELECTING ISSUES (mandatory):** Read the entire document from start to finish before deciding which issues to include. Do NOT flag issues as you read top-to-bottom and stop when you reach a limit. Instead: (a) read the whole document, (b) identify all candidate issues across the entire text, (c) then select the most significant ones distributed across the whole document. Issues must be drawn from the beginning, middle, AND end of the document — do not allow all selected issues to cluster in the first half of the text
-9. **SCORE–ISSUE CONSISTENCY (mandatory):**
+10. **SCORE–ISSUE CONSISTENCY (mandatory):**
    - If a category scores **below 5**, you MUST include at least one highlighted issue in [ISSUE_POSITIONS] and at least one improvement in [IMPROVEMENTS] for that category
    - If a category scores **5**, you MUST NOT include any issues for that category — a score of 5 means the content fully meets the standard
    - Do NOT score a category below 5 unless you have a real, locatable issue to support that score
@@ -210,7 +210,7 @@ Each issue object must have exactly these five fields:
 - When an entire sentence is the issue (e.g. passive voice, overly long), mark the full sentence
 - When only a word or phrase is the issue (e.g. jargon, "words to avoid"), mark only that complete word/phrase
 - Each issue in [ISSUE_POSITIONS] must have a **corresponding [PRIORITY] entry** in [IMPROVEMENTS] linked by the matching REF number
-- - The total number of entries in [ISSUE_POSITIONS] must match the total number of [PRIORITY] blocks — between 3 and 20. Never exceed 20 entries regardless of document length
+- The total number of entries in [ISSUE_POSITIONS] must match the total number of [PRIORITY] blocks exactly. Include all genuine issues you find — there is no fixed minimum or maximum. If you find yourself exceeding 30, step back and prioritise only the most impactful issues rather than listing every minor observation
 - **DOCUMENT-WIDE DISTRIBUTION**: Issues must be drawn from across the full document — beginning, middle, and end. Do NOT allow all issues to come from the first half of the text. If the document is long, actively look for issues in the latter sections and include them
 - **Every issue MUST reference text that exists verbatim in the document** — only flag content that is actually present in the text you received
 - Do NOT include issues for formatting (headings, lists, links) as these are not visible in plain text input
@@ -235,13 +235,12 @@ Full [ISSUE_POSITIONS] output for that example:
 
 ## PRIORITY IMPROVEMENTS SECTION
 
-Identify the **most significant issues** across all 5 review categories. You must produce **between 3 and 20 improvements** — no more than 20 regardless of document length.
+Identify the **most significant issues** across all 5 review categories. Include all genuine issues you find — there is no fixed minimum or maximum. If you find yourself exceeding 30 improvements, step back and include only the most impactful issues — prioritise by severity and impact on the reader rather than listing every minor observation.
 **Quality over quantity (mandatory):**
 - **SCAN THE FULL DOCUMENT FIRST**: Before selecting any improvements, read the entire document. Identify candidate issues across all sections — beginning, middle, and end — then choose the most significant ones. Do NOT select issues sequentially from the top and stop when you have enough
 - **DISTRIBUTE ACROSS THE WHOLE DOCUMENT**: The selected improvements must be spread across the full length of the text. Do not allow all improvements to come from the first half. Actively identify and include issues from the latter sections of the document
 - Only include an improvement if you can identify the exact verbatim text span in the document. If you cannot locate the text, do NOT include the improvement
 - Do NOT pad to reach the minimum — 3 high-quality, locatable improvements are better than 5 where 2 cannot be highlighted
-- **Maximum 20 improvements total** — if you find more than 20 issues, include only the 20 most significant ones, prioritising by severity and impact on the reader
 - Every improvement must have a specific, descriptive ISSUE title that explains the actual problem — NEVER use "Issue identified" as a title; that is invalid and will be rejected
 - Every improvement must have a CURRENT: field that is the **exact verbatim copy** of the highlighted span text from [ISSUE_POSITIONS] — it may be a single word, a phrase, or a full sentence depending on what was highlighted. Never paraphrase or expand it
 - **SUGGESTED is mandatory** — every improvement MUST have a SUGGESTED: field with a concrete rewritten alternative that genuinely differs from CURRENT. If you cannot write a specific suggested rewrite, do NOT include the improvement at all. An improvement without SUGGESTED will be discarded entirely
@@ -393,7 +392,7 @@ If you see text patterns that suggest these elements exist (e.g., "1.", "2." for
 6. The [SCORES] section must contain **exactly five categories** in this order: Plain English, Clarity & Structure, Accessibility, GOV.UK Style Compliance, Content Completeness. Do NOT add an "Overall" row.
 7. Score notes must be **generic quality assessments only** — do NOT quote, name, or reference specific words, acronyms, phrases, or terminology from the input content
 8. Do **not** echo back or repeat the original input text anywhere in your response
-9. Provide **between 3 and 20 improvements** in the [IMPROVEMENTS] section — maximum 20 regardless of document length. Select only the most significant issues. Only include improvements where you can identify the exact text span in the document. Do NOT pad to reach the minimum10. Every [PRIORITY] block **must** include a complete SUGGESTED: field — a concrete rewritten alternative that genuinely differs from the CURRENT text. A block without SUGGESTED, or where SUGGESTED is identical to CURRENT, is invalid and must not be included
+9. Include all genuine improvements in the [IMPROVEMENTS] section — there is no fixed minimum or maximum. If you find yourself exceeding 30, step back and prioritise only the most impactful issues. Only include improvements where you can identify the exact text span in the document. Do NOT pad with trivial observations10. Every [PRIORITY] block **must** include a complete SUGGESTED: field — a concrete rewritten alternative that genuinely differs from the CURRENT text. A block without SUGGESTED, or where SUGGESTED is identical to CURRENT, is invalid and must not be included
 11. Every [PRIORITY] block **must** have a CURRENT: field that is the **exact verbatim copy** of the corresponding \`text\` in [ISSUE_POSITIONS] — it may be a single word, a phrase, or a sentence, whatever the highlighted span is
 12. Every [PRIORITY] block **must** have a specific ISSUE: title describing the actual problem — "Issue identified" is NEVER acceptable and will be treated as an error. Write what the problem actually is (e.g. "Passive voice obscures responsibility", "Jargon term needs simpler alternative")
 13. Improvements must be **spread across all 5 categories** — at minimum 1 per category that scores below 5, and ONLY for categories that score below 5
