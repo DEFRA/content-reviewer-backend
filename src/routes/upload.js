@@ -146,6 +146,115 @@ async function runPipeline(
 }
 
 /**
+ * Validates the uploaded file and extracts its text content.
+ * Returns `{ errorResponse }` on any validation failure, or
+ * `{ filename, mimeType, buffer, extractedText }` on success.
+ */
+async function validateAndPrepareContent(file, logger, h) {
+  if (!file?.hapi) {
+    return {
+      errorResponse: h
+        .response({ success: false, message: ERROR_MESSAGES.NO_FILE })
+        .code(HTTP_STATUS.BAD_REQUEST)
+    }
+  }
+
+  const { filename, mimeType, filenameLower } = getFileMetadata(file)
+  logger.info(
+    { filename, mimeType, endpoint: ENDPOINT_UPLOAD },
+    'File upload request received'
+  )
+
+  if (!isAcceptedType(mimeType, filenameLower)) {
+    return {
+      errorResponse: h
+        .response({ success: false, message: ERROR_MESSAGES.INVALID_TYPE })
+        .code(HTTP_STATUS.BAD_REQUEST)
+    }
+  }
+
+  const buffer = await streamToBuffer(file)
+  const bufferError = validateBuffer(buffer, h)
+  if (bufferError) {
+    return { errorResponse: bufferError }
+  }
+
+  const extractedText = await textExtractor.extractText(
+    buffer,
+    mimeType,
+    filename
+  )
+  if (!extractedText?.trim()) {
+    return {
+      errorResponse: h
+        .response({ success: false, message: ERROR_MESSAGES.NO_TEXT })
+        .code(HTTP_STATUS.BAD_REQUEST)
+    }
+  }
+
+  return { filename, mimeType, buffer, extractedText }
+}
+
+/**
+ * Logs the pipeline completion and returns the 202 Accepted response.
+ */
+function respondSuccess(
+  logger,
+  h,
+  reviewId,
+  filename,
+  mimeType,
+  pipelineResult,
+  totalDuration
+) {
+  logger.info(
+    {
+      reviewId,
+      filename,
+      mimeType,
+      s3Key: pipelineResult.s3Result.key,
+      canonicalKey: pipelineResult.canonicalResult?.s3?.key,
+      totalDurationMs: totalDuration,
+      s3UploadDuration: pipelineResult.s3UploadDuration,
+      canonicalDuration: pipelineResult.canonicalDuration,
+      dbCreateDuration: pipelineResult.dbCreateDuration,
+      sqsSendDuration: pipelineResult.sqsSendDuration,
+      endpoint: ENDPOINT_UPLOAD
+    },
+    `[UPLOAD PHASE] File review queued successfully — TOTAL: ${totalDuration}ms`
+  )
+  return h
+    .response({
+      success: true,
+      reviewId,
+      status: REVIEW_STATUSES.PENDING,
+      message: 'File uploaded and queued for review'
+    })
+    .code(HTTP_STATUS.ACCEPTED)
+}
+
+/**
+ * Logs the error and returns a 500 response.
+ */
+function respondError(error, logger, totalDuration, h) {
+  logger.error(
+    {
+      error: error.message,
+      errorName: error.name,
+      stack: error.stack,
+      durationMs: totalDuration
+    },
+    `Failed to process file upload after ${totalDuration}ms`
+  )
+  return h
+    .response({
+      success: false,
+      message: error.message || ERROR_MESSAGES.PIPELINE_FAILED
+    })
+    .code(HTTP_STATUS.INTERNAL_SERVER_ERROR)
+}
+
+/**
  * POST /api/upload handler
  * Accepts a multipart file upload (PDF or DOCX), extracts the text and feeds
  * it through the standard S3 → canonical document → DB → SQS pipeline.
@@ -154,43 +263,16 @@ const handleFileUpload = async (request, h) => {
   const requestStartTime = performance.now()
 
   try {
-    const file = request.payload?.file
-
-    if (!file?.hapi) {
-      return h
-        .response({ success: false, message: ERROR_MESSAGES.NO_FILE })
-        .code(HTTP_STATUS.BAD_REQUEST)
-    }
-
-    const { filename, mimeType, filenameLower } = getFileMetadata(file)
-
-    request.logger.info(
-      { filename, mimeType, endpoint: ENDPOINT_UPLOAD },
-      'File upload request received'
+    const prepared = await validateAndPrepareContent(
+      request.payload?.file,
+      request.logger,
+      h
     )
-
-    if (!isAcceptedType(mimeType, filenameLower)) {
-      return h
-        .response({ success: false, message: ERROR_MESSAGES.INVALID_TYPE })
-        .code(HTTP_STATUS.BAD_REQUEST)
+    if (prepared.errorResponse) {
+      return prepared.errorResponse
     }
 
-    const buffer = await streamToBuffer(file)
-    const bufferError = validateBuffer(buffer, h)
-    if (bufferError) return bufferError
-
-    const extractedText = await textExtractor.extractText(
-      buffer,
-      mimeType,
-      filename
-    )
-
-    if (!extractedText?.trim()) {
-      return h
-        .response({ success: false, message: ERROR_MESSAGES.NO_TEXT })
-        .code(HTTP_STATUS.BAD_REQUEST)
-    }
-
+    const { filename, mimeType, buffer, extractedText } = prepared
     const maxCharLength = config.get('contentReview.maxCharLength')
     const content = extractedText.substring(0, maxCharLength)
     const reviewId = randomUUID()
@@ -218,53 +300,20 @@ const handleFileUpload = async (request, h) => {
       request.headers,
       request.logger
     )
-
     const totalDuration = Math.round(performance.now() - requestStartTime)
 
-    request.logger.info(
-      {
-        reviewId,
-        filename,
-        mimeType,
-        s3Key: pipelineResult.s3Result.key,
-        canonicalKey: pipelineResult.canonicalResult?.s3?.key,
-        totalDurationMs: totalDuration,
-        s3UploadDuration: pipelineResult.s3UploadDuration,
-        canonicalDuration: pipelineResult.canonicalDuration,
-        dbCreateDuration: pipelineResult.dbCreateDuration,
-        sqsSendDuration: pipelineResult.sqsSendDuration,
-        endpoint: ENDPOINT_UPLOAD
-      },
-      `[UPLOAD PHASE] File review queued successfully — TOTAL: ${totalDuration}ms`
+    return respondSuccess(
+      request.logger,
+      h,
+      reviewId,
+      filename,
+      mimeType,
+      pipelineResult,
+      totalDuration
     )
-
-    return h
-      .response({
-        success: true,
-        reviewId,
-        status: REVIEW_STATUSES.PENDING,
-        message: 'File uploaded and queued for review'
-      })
-      .code(HTTP_STATUS.ACCEPTED)
   } catch (error) {
     const totalDuration = Math.round(performance.now() - requestStartTime)
-
-    request.logger.error(
-      {
-        error: error.message,
-        errorName: error.name,
-        stack: error.stack,
-        durationMs: totalDuration
-      },
-      `Failed to process file upload after ${totalDuration}ms`
-    )
-
-    return h
-      .response({
-        success: false,
-        message: error.message || ERROR_MESSAGES.PIPELINE_FAILED
-      })
-      .code(HTTP_STATUS.INTERNAL_SERVER_ERROR)
+    return respondError(error, request.logger, totalDuration, h)
   }
 }
 
