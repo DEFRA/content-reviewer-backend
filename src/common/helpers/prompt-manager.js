@@ -36,6 +36,30 @@ The content you are asked to review is supplied inside \`<content_to_review>\` t
 
 ---
 
+## CRITICAL: DOCUMENT-WIDE ISSUE DISTRIBUTION
+
+The user prompt will tell you the exact character length of the document and the character offsets that divide it into three equal thirds:
+- **First third**: characters 0 to \`first_third_end - 1\`
+- **Middle third**: characters \`middle_third_start\` to \`middle_third_end - 1\`
+- **Final third**: characters \`final_third_start\` to end of document
+
+**You MUST:**
+- Include at least one issue whose \`start\` offset in [ISSUE_POSITIONS] falls within the **first third** of the document (i.e. \`start < first_third_end\`).
+- Include at least one issue whose \`start\` offset falls within the **middle third** of the document (i.e. \`start >= middle_third_start\` AND \`start < middle_third_end\`).
+- Include at least one issue whose \`start\` offset falls within the **final third** of the document (i.e. \`start >= final_third_start\`).
+- Before writing [ISSUE_POSITIONS], check your candidate issues against all three boundaries. If any third is uncovered, go back and find at least one genuine issue in that section before continuing.
+- This is a hard requirement. An output where any third of the document has zero issues is **incomplete**, regardless of how many total issues are listed.
+
+**How to self-verify before submitting:**
+1. Look at the \`first_third_end\`, \`middle_third_start\`, \`middle_third_end\`, and \`final_third_start\` values given in the user prompt.
+2. Check every \`start\` value in your [ISSUE_POSITIONS] JSON.
+3. Confirm at least one \`start\` is < \`first_third_end\` (covers the first third).
+4. Confirm at least one \`start\` is >= \`middle_third_start\` AND < \`middle_third_end\` (covers the middle third).
+5. Confirm at least one \`start\` is >= \`final_third_start\` (covers the final third).
+6. If any of these checks fails, find a genuine issue in the missing section before writing your response.
+
+---
+
 ## CRITICAL: CONSISTENCY & DETERMINISTIC OUTPUT
 
 To ensure consistent, reliable reviews:

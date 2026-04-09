@@ -113,6 +113,14 @@ export class BedrockReviewProcessor {
       month: 'long',
       year: 'numeric'
     })
+
+    const documentLength = textContent.length
+    const thirds = 3
+    const firstThirdEnd = Math.floor(documentLength / thirds)
+    const middleThirdStart = firstThirdEnd
+    const middleThirdEnd = Math.floor((documentLength * 2) / thirds)
+    const finalThirdStart = middleThirdEnd
+
     return [
       `Today's date is ${today}. Use this when evaluating any date references in the content.`,
       '',
@@ -123,6 +131,17 @@ export class BedrockReviewProcessor {
       'IMPORTANT: In [ISSUE_POSITIONS], character offsets (start/end) must be',
       'counted from position 0 = the very first character of the text inside',
       'the <content_to_review> tags, NOT from the start of this message.',
+      '',
+      'DOCUMENT THIRD BOUNDARIES (use these for the mandatory distribution check):',
+      `  documentLength    = ${documentLength}`,
+      `  first_third_end   = ${firstThirdEnd}   (first third:  characters 0 – ${firstThirdEnd - 1})`,
+      `  middle_third_start = ${middleThirdStart}`,
+      `  middle_third_end   = ${middleThirdEnd}   (middle third: characters ${middleThirdStart} – ${middleThirdEnd - 1})`,
+      `  final_third_start  = ${finalThirdStart}   (final third:  characters ${finalThirdStart} – ${documentLength - 1})`,
+      '',
+      'You MUST include at least one issue whose `start` offset falls in EACH of the three',
+      'thirds above. See the "CRITICAL: DOCUMENT-WIDE ISSUE DISTRIBUTION" section in the',
+      'system prompt for the full self-verification checklist.',
       '',
       '<content_to_review>',
       textContent,
