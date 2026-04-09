@@ -379,9 +379,7 @@ describe('handleFileUpload — successful upload', () => {
       'report.pdf', // title
       expect.any(Number), // content.length
       expect.any(Object), // logger
-      'user-123', // userId from header
-      'application/pdf', // mimeType
-      'file' // SOURCE_TYPE_FILE
+      { userId: 'user-123', mimeType: 'application/pdf', dbSourceType: 'file' }
     )
   })
 
@@ -434,9 +432,7 @@ describe('handleFileUpload — successful upload', () => {
       expect.any(String),
       expect.any(Number),
       expect.any(Object),
-      null, // no x-user-id
-      expect.any(String),
-      'file'
+      { userId: null, mimeType: expect.any(String), dbSourceType: 'file' }
     )
   })
 

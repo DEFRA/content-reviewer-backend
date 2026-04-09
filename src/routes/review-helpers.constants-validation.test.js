@@ -303,7 +303,7 @@ describe('createReviewRecord', () => {
       'My Title',
       FILE_SIZE_LARGE,
       logger,
-      'user-42'
+      { userId: 'user-42' }
     )
 
     expect(reviewRepository.createReview).toHaveBeenCalledWith(
