@@ -13,8 +13,8 @@ import {
 } from './review-helpers.js'
 
 const ENDPOINT_UPLOAD = '/api/upload'
-
 const MAX_FILE_BYTES = 10 * 1024 * 1024 // 10 MB
+const SOURCE_TYPE_FILE = 'file'
 
 const ACCEPTED_MIME_TYPES = {
   'application/pdf': true,
@@ -23,12 +23,21 @@ const ACCEPTED_MIME_TYPES = {
 
 const ACCEPTED_EXTENSIONS = ['.pdf', '.docx']
 
+const ERROR_MESSAGES = {
+  NO_FILE: 'No file provided',
+  INVALID_TYPE: 'The selected file must be a PDF or Word document',
+  EMPTY_FILE: 'The uploaded file is empty',
+  FILE_TOO_LARGE: 'The file must be smaller than 10 MB',
+  NO_TEXT: 'No text could be extracted from the file',
+  PIPELINE_FAILED: 'Failed to process file upload'
+}
+
 /**
  * Read a Hapi multipart stream field into a Buffer.
  * @param {import('stream').Readable} stream
  * @returns {Promise<Buffer>}
  */
-function streamToBuffer(stream) {
+export function streamToBuffer(stream) {
   return new Promise((resolve, reject) => {
     const chunks = []
     stream.on('data', (chunk) => chunks.push(chunk))
@@ -38,7 +47,106 @@ function streamToBuffer(stream) {
 }
 
 /**
- * POST /api/upload
+ * Extract filename, MIME type and lower-cased filename from a Hapi file field.
+ */
+function getFileMetadata(file) {
+  const { filename, headers: fileHeaders } = file.hapi
+  const mimeType = fileHeaders?.['content-type'] ?? ''
+  const filenameLower = (filename ?? '').toLowerCase()
+  return { filename, mimeType, filenameLower }
+}
+
+/**
+ * Returns true when the file passes either MIME-type or extension validation.
+ */
+function isAcceptedType(mimeType, filenameLower) {
+  const hasValidMime = Object.prototype.hasOwnProperty.call(
+    ACCEPTED_MIME_TYPES,
+    mimeType
+  )
+  const hasValidExt = ACCEPTED_EXTENSIONS.some((ext) =>
+    filenameLower.endsWith(ext)
+  )
+  return hasValidMime || hasValidExt
+}
+
+/**
+ * Validates buffer size. Returns a Hapi response on failure, null on success.
+ */
+function validateBuffer(buffer, h) {
+  if (buffer.length === 0) {
+    return h
+      .response({ success: false, message: ERROR_MESSAGES.EMPTY_FILE })
+      .code(HTTP_STATUS.BAD_REQUEST)
+  }
+  if (buffer.length > MAX_FILE_BYTES) {
+    return h
+      .response({ success: false, message: ERROR_MESSAGES.FILE_TOO_LARGE })
+      .code(HTTP_STATUS.BAD_REQUEST)
+  }
+  return null
+}
+
+/**
+ * Runs the S3 upload → canonical document → DB record → SQS queue pipeline.
+ */
+async function runPipeline(
+  content,
+  reviewId,
+  title,
+  mimeType,
+  userId,
+  headers,
+  logger
+) {
+  const { s3Result, s3UploadDuration } = await uploadTextToS3(
+    content,
+    reviewId,
+    title,
+    logger
+  )
+
+  const { canonicalResult, canonicalDuration } = await createCanonicalDocument(
+    content,
+    reviewId,
+    title,
+    logger,
+    CANONICAL_SOURCE_TYPES.FILE,
+    s3Result.key
+  )
+
+  const dbCreateDuration = await createReviewRecord(
+    reviewId,
+    s3Result,
+    title,
+    content.length,
+    logger,
+    userId,
+    mimeType,
+    SOURCE_TYPE_FILE
+  )
+
+  const sqsSendDuration = await queueReviewJob(
+    reviewId,
+    s3Result,
+    title,
+    content.length,
+    headers,
+    logger
+  )
+
+  return {
+    s3Result,
+    canonicalResult,
+    s3UploadDuration,
+    canonicalDuration,
+    dbCreateDuration,
+    sqsSendDuration
+  }
+}
+
+/**
+ * POST /api/upload handler
  * Accepts a multipart file upload (PDF or DOCX), extracts the text and feeds
  * it through the standard S3 → canonical document → DB → SQS pipeline.
  */
@@ -48,77 +156,43 @@ const handleFileUpload = async (request, h) => {
   try {
     const file = request.payload?.file
 
-    if (!file || !file.hapi) {
+    if (!file?.hapi) {
       return h
-        .response({ success: false, message: 'No file provided' })
+        .response({ success: false, message: ERROR_MESSAGES.NO_FILE })
         .code(HTTP_STATUS.BAD_REQUEST)
     }
 
-    const { filename, headers: fileHeaders } = file.hapi
-    const mimeType = fileHeaders?.['content-type'] ?? ''
-    const filenameLower = (filename ?? '').toLowerCase()
+    const { filename, mimeType, filenameLower } = getFileMetadata(file)
 
     request.logger.info(
       { filename, mimeType, endpoint: ENDPOINT_UPLOAD },
       'File upload request received'
     )
 
-    // Validate file type by MIME and extension
-    const hasValidMime = Object.prototype.hasOwnProperty.call(
-      ACCEPTED_MIME_TYPES,
-      mimeType
-    )
-    const hasValidExt = ACCEPTED_EXTENSIONS.some((ext) =>
-      filenameLower.endsWith(ext)
-    )
-
-    if (!hasValidMime && !hasValidExt) {
+    if (!isAcceptedType(mimeType, filenameLower)) {
       return h
-        .response({
-          success: false,
-          message: 'The selected file must be a PDF or Word document'
-        })
+        .response({ success: false, message: ERROR_MESSAGES.INVALID_TYPE })
         .code(HTTP_STATUS.BAD_REQUEST)
     }
 
-    // Read the stream into a buffer so we can validate size and extract text
     const buffer = await streamToBuffer(file)
+    const bufferError = validateBuffer(buffer, h)
+    if (bufferError) return bufferError
 
-    if (buffer.length === 0) {
-      return h
-        .response({ success: false, message: 'The uploaded file is empty' })
-        .code(HTTP_STATUS.BAD_REQUEST)
-    }
-
-    if (buffer.length > MAX_FILE_BYTES) {
-      return h
-        .response({
-          success: false,
-          message: 'The file must be smaller than 10 MB'
-        })
-        .code(HTTP_STATUS.BAD_REQUEST)
-    }
-
-    // Extract text from PDF or DOCX
     const extractedText = await textExtractor.extractText(
       buffer,
       mimeType,
       filename
     )
 
-    if (!extractedText || extractedText.trim().length === 0) {
+    if (!extractedText?.trim()) {
       return h
-        .response({
-          success: false,
-          message: 'No text could be extracted from the file'
-        })
+        .response({ success: false, message: ERROR_MESSAGES.NO_TEXT })
         .code(HTTP_STATUS.BAD_REQUEST)
     }
 
-    // Truncate to the configured maximum character length
     const maxCharLength = config.get('contentReview.maxCharLength')
     const content = extractedText.substring(0, maxCharLength)
-
     const reviewId = randomUUID()
     const title = filename || 'Uploaded file'
     const userId = request.headers['x-user-id'] || null
@@ -135,43 +209,12 @@ const handleFileUpload = async (request, h) => {
       '[STEP 1/6] File validated and text extracted — starting pipeline'
     )
 
-    // STEP 2: Upload raw extracted text to S3
-    const { s3Result, s3UploadDuration } = await uploadTextToS3(
+    const pipelineResult = await runPipeline(
       content,
       reviewId,
       title,
-      request.logger
-    )
-
-    // STEP 3: Create canonical document in S3
-    const { canonicalResult, canonicalDuration } =
-      await createCanonicalDocument(
-        content,
-        reviewId,
-        title,
-        request.logger,
-        CANONICAL_SOURCE_TYPES.FILE,
-        s3Result.key
-      )
-
-    // STEP 4: Create review record in the DB/S3 repository
-    const dbCreateDuration = await createReviewRecord(
-      reviewId,
-      s3Result,
-      title,
-      content.length,
-      request.logger,
-      userId,
       mimeType,
-      'file' // SOURCE_TYPES.FILE
-    )
-
-    // STEP 5–6: Queue the review job via SQS
-    const sqsSendDuration = await queueReviewJob(
-      reviewId,
-      s3Result,
-      title,
-      content.length,
+      userId,
       request.headers,
       request.logger
     )
@@ -183,13 +226,13 @@ const handleFileUpload = async (request, h) => {
         reviewId,
         filename,
         mimeType,
-        s3Key: s3Result.key,
-        canonicalKey: canonicalResult?.s3?.key,
+        s3Key: pipelineResult.s3Result.key,
+        canonicalKey: pipelineResult.canonicalResult?.s3?.key,
         totalDurationMs: totalDuration,
-        s3UploadDuration,
-        canonicalDuration,
-        dbCreateDuration,
-        sqsSendDuration,
+        s3UploadDuration: pipelineResult.s3UploadDuration,
+        canonicalDuration: pipelineResult.canonicalDuration,
+        dbCreateDuration: pipelineResult.dbCreateDuration,
+        sqsSendDuration: pipelineResult.sqsSendDuration,
         endpoint: ENDPOINT_UPLOAD
       },
       `[UPLOAD PHASE] File review queued successfully — TOTAL: ${totalDuration}ms`
@@ -219,7 +262,7 @@ const handleFileUpload = async (request, h) => {
     return h
       .response({
         success: false,
-        message: error.message || 'Failed to process file upload'
+        message: error.message || ERROR_MESSAGES.PIPELINE_FAILED
       })
       .code(HTTP_STATUS.INTERNAL_SERVER_ERROR)
   }
