@@ -1,5 +1,6 @@
 import { health } from '../routes/health.js'
 import { reviewRoutes } from '../routes/review.js'
+import { uploadRoutes } from '../routes/upload.js'
 import { results } from '../routes/results.js'
 import { sqsWorkerStatus } from '../routes/sqs-worker-status.js'
 import { resultEnvelope } from '../routes/result-envelope.js'
@@ -12,6 +13,7 @@ const router = {
       server.route([health, sqsWorkerStatus])
       await server.register([
         reviewRoutes,
+        uploadRoutes,
         results,
         resultEnvelope,
         adminRoutes

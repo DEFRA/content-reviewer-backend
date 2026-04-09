@@ -184,12 +184,13 @@ export async function createReviewRecord(
   contentLength,
   logger,
   userId = null,
-  mimeType = CONTENT_TYPES.TEXT_PLAIN
+  mimeType = CONTENT_TYPES.TEXT_PLAIN,
+  dbSourceType = SOURCE_TYPES.TEXT
 ) {
   const dbCreateStart = performance.now()
   await reviewRepository.createReview({
     id: reviewId,
-    sourceType: SOURCE_TYPES.TEXT,
+    sourceType: dbSourceType,
     fileName: title || CONTENT_DEFAULTS.TITLE,
     fileSize: contentLength,
     mimeType,
