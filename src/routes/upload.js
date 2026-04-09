@@ -146,6 +146,56 @@ async function runPipeline(
 }
 
 /**
+ * Validates the uploaded file and extracts its text content.
+ * Returns `{ errorResponse }` on any validation failure, or
+ * `{ filename, mimeType, buffer, extractedText }` on success.
+ */
+async function validateAndPrepareContent(file, logger, h) {
+  if (!file?.hapi) {
+    return {
+      errorResponse: h
+        .response({ success: false, message: ERROR_MESSAGES.NO_FILE })
+        .code(HTTP_STATUS.BAD_REQUEST)
+    }
+  }
+
+  const { filename, mimeType, filenameLower } = getFileMetadata(file)
+  logger.info(
+    { filename, mimeType, endpoint: ENDPOINT_UPLOAD },
+    'File upload request received'
+  )
+
+  if (!isAcceptedType(mimeType, filenameLower)) {
+    return {
+      errorResponse: h
+        .response({ success: false, message: ERROR_MESSAGES.INVALID_TYPE })
+        .code(HTTP_STATUS.BAD_REQUEST)
+    }
+  }
+
+  const buffer = await streamToBuffer(file)
+  const bufferError = validateBuffer(buffer, h)
+  if (bufferError) {
+    return { errorResponse: bufferError }
+  }
+
+  const extractedText = await textExtractor.extractText(
+    buffer,
+    mimeType,
+    filename
+  )
+  if (!extractedText?.trim()) {
+    return {
+      errorResponse: h
+        .response({ success: false, message: ERROR_MESSAGES.NO_TEXT })
+        .code(HTTP_STATUS.BAD_REQUEST)
+    }
+  }
+
+  return { filename, mimeType, buffer, extractedText }
+}
+
+/**
  * POST /api/upload handler
  * Accepts a multipart file upload (PDF or DOCX), extracts the text and feeds
  * it through the standard S3 → canonical document → DB → SQS pipeline.
@@ -154,43 +204,16 @@ const handleFileUpload = async (request, h) => {
   const requestStartTime = performance.now()
 
   try {
-    const file = request.payload?.file
-
-    if (!file?.hapi) {
-      return h
-        .response({ success: false, message: ERROR_MESSAGES.NO_FILE })
-        .code(HTTP_STATUS.BAD_REQUEST)
-    }
-
-    const { filename, mimeType, filenameLower } = getFileMetadata(file)
-
-    request.logger.info(
-      { filename, mimeType, endpoint: ENDPOINT_UPLOAD },
-      'File upload request received'
+    const prepared = await validateAndPrepareContent(
+      request.payload?.file,
+      request.logger,
+      h
     )
-
-    if (!isAcceptedType(mimeType, filenameLower)) {
-      return h
-        .response({ success: false, message: ERROR_MESSAGES.INVALID_TYPE })
-        .code(HTTP_STATUS.BAD_REQUEST)
+    if (prepared.errorResponse) {
+      return prepared.errorResponse
     }
 
-    const buffer = await streamToBuffer(file)
-    const bufferError = validateBuffer(buffer, h)
-    if (bufferError) return bufferError
-
-    const extractedText = await textExtractor.extractText(
-      buffer,
-      mimeType,
-      filename
-    )
-
-    if (!extractedText?.trim()) {
-      return h
-        .response({ success: false, message: ERROR_MESSAGES.NO_TEXT })
-        .code(HTTP_STATUS.BAD_REQUEST)
-    }
-
+    const { filename, mimeType, buffer, extractedText } = prepared
     const maxCharLength = config.get('contentReview.maxCharLength')
     const content = extractedText.substring(0, maxCharLength)
     const reviewId = randomUUID()
@@ -218,7 +241,6 @@ const handleFileUpload = async (request, h) => {
       request.headers,
       request.logger
     )
-
     const totalDuration = Math.round(performance.now() - requestStartTime)
 
     request.logger.info(
