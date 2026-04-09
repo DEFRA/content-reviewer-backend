@@ -60,10 +60,7 @@ function getFileMetadata(file) {
  * Returns true when the file passes either MIME-type or extension validation.
  */
 function isAcceptedType(mimeType, filenameLower) {
-  const hasValidMime = Object.prototype.hasOwnProperty.call(
-    ACCEPTED_MIME_TYPES,
-    mimeType
-  )
+  const hasValidMime = Object.hasOwn(ACCEPTED_MIME_TYPES, mimeType)
   const hasValidExt = ACCEPTED_EXTENSIONS.some((ext) =>
     filenameLower.endsWith(ext)
   )
@@ -121,9 +118,7 @@ async function runPipeline(
     title,
     content.length,
     logger,
-    userId,
-    mimeType,
-    SOURCE_TYPE_FILE
+    { userId, mimeType, dbSourceType: SOURCE_TYPE_FILE }
   )
 
   const sqsSendDuration = await queueReviewJob(

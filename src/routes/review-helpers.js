@@ -183,9 +183,11 @@ export async function createReviewRecord(
   title,
   contentLength,
   logger,
-  userId = null,
-  mimeType = CONTENT_TYPES.TEXT_PLAIN,
-  dbSourceType = SOURCE_TYPES.TEXT
+  {
+    userId = null,
+    mimeType = CONTENT_TYPES.TEXT_PLAIN,
+    dbSourceType = SOURCE_TYPES.TEXT
+  } = {}
 ) {
   const dbCreateStart = performance.now()
   await reviewRepository.createReview({
@@ -411,8 +413,7 @@ export async function processTextReviewSubmission(payload, headers, logger) {
     title,
     content.length,
     logger,
-    userId,
-    mimeType
+    { userId, mimeType }
   )
 
   // STEP 5: Queue SQS job pointing to canonical document so the processor reads canonicalText

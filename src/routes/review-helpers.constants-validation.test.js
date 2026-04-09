@@ -80,7 +80,6 @@ vi.mock('../common/helpers/logging/logger.js', () => ({
 import { config } from '../config.js'
 import { reviewRepository } from '../common/helpers/review-repository.js'
 import { s3Uploader } from '../common/helpers/s3-uploader.js'
-import { resultEnvelopeStore } from '../common/helpers/result-envelope.js'
 import {
   HTTP_STATUS,
   ENDPOINTS,
@@ -303,7 +302,7 @@ describe('createReviewRecord', () => {
       'My Title',
       FILE_SIZE_LARGE,
       logger,
-      'user-42'
+      { userId: 'user-42' }
     )
 
     expect(reviewRepository.createReview).toHaveBeenCalledWith(
