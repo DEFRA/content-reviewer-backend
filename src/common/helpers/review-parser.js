@@ -312,7 +312,9 @@ function parseReviewedContent(contentText) {
 }
 
 /**
- * Extract field value from block
+ * Extract field value from block — single-line fields only.
+ * Reads from the field name up to the first newline (or end of block).
+ * Used for REF, CATEGORY, ISSUE, WHY — fields that are always one line.
  */
 function extractField(block, fieldName) {
   // Use indexOf instead of regex to avoid backtracking
@@ -331,6 +333,52 @@ function extractField(block, fieldName) {
   }
 
   return block.substring(valueStart, lineEnd).trim()
+}
+
+/**
+ * Extract the CURRENT: field value from a [PRIORITY] block.
+ *
+ * CURRENT: can legitimately span multiple lines when the highlighted issue
+ * is a long sentence or passage that the model wrapped across lines.
+ * We read from CURRENT: up to the SUGGESTED: field (which always follows it)
+ * so that we capture the full multi-line value without bleeding into other fields.
+ */
+function extractCurrentField(block) {
+  const CURRENT_MARKER = 'CURRENT:'
+  const SUGGESTED_MARKER = 'SUGGESTED:'
+
+  const currentStart = block.indexOf(CURRENT_MARKER)
+  if (currentStart === -1) {
+    return ''
+  }
+
+  const valueStart = currentStart + CURRENT_MARKER.length
+  const suggestedStart = block.indexOf(SUGGESTED_MARKER, valueStart)
+  let valueEnd = block.length
+  if (suggestedStart !== -1) {
+    valueEnd = suggestedStart
+  }
+
+  return block.substring(valueStart, valueEnd).trim()
+}
+
+/**
+ * Extract the SUGGESTED: field value from a [PRIORITY] block.
+ *
+ * SUGGESTED: is the last named field before [/PRIORITY], so we read from
+ * SUGGESTED: to the end of the block (the [/PRIORITY] delimiter is stripped
+ * by the caller's split, so block.length is the safe boundary).
+ */
+function extractSuggestedField(block) {
+  const SUGGESTED_MARKER = 'SUGGESTED:'
+
+  const suggestedStart = block.indexOf(SUGGESTED_MARKER)
+  if (suggestedStart === -1) {
+    return ''
+  }
+
+  const valueStart = suggestedStart + SUGGESTED_MARKER.length
+  return block.substring(valueStart).trim()
 }
 
 /**
@@ -355,13 +403,26 @@ function parseImprovementBlock(block) {
   const rawRef = extractField(block, 'REF')
   const ref = rawRef ? Number(rawRef) : undefined
 
+  const current = extractCurrentField(block)
+  const suggested = extractSuggestedField(block)
+
+  // Discard blocks where SUGGESTED is absent — the prompt mandates a concrete
+  // rewrite for every improvement; an empty SUGGESTED renders it unusable.
+  if (!suggested) {
+    logger.warn(
+      { category, issue },
+      '[review-parser] Discarding improvement block with missing SUGGESTED field'
+    )
+    return null
+  }
+
   return {
     severity: severityMatch[1].trim().toLowerCase(),
     category,
     issue,
     why,
-    current: extractField(block, 'CURRENT'),
-    suggested: extractField(block, 'SUGGESTED'),
+    current,
+    suggested,
     ref
   }
 }
