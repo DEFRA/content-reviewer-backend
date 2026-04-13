@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { Readable } from 'node:stream'
-import { streamToBuffer, uploadFileToCdpUploader, runPipeline, uploadRoutes } from './upload.js'
+import { uploadFileToCdpUploader, runPipeline, uploadRoutes } from './upload.js'
 
 // ─── Mock all external dependencies ───────────────────────────────────────────
 
@@ -115,37 +115,6 @@ function defaultPipelineResult() {
     sqsSendDuration: 10
   }
 }
-
-// ─── streamToBuffer ───────────────────────────────────────────────────────────
-
-describe('streamToBuffer', () => {
-  it('converts a readable stream of buffers into a single Buffer', async () => {
-    const stream = Readable.from([Buffer.from('hello'), Buffer.from(' world')])
-    const result = await streamToBuffer(stream)
-    expect(result).toBeInstanceOf(Buffer)
-    expect(result.toString()).toBe('hello world')
-  })
-
-  it('converts a readable stream of strings into a Buffer', async () => {
-    const stream = Readable.from(['hello', ' world'])
-    const result = await streamToBuffer(stream)
-    expect(result.toString()).toBe('hello world')
-  })
-
-  it('resolves with an empty Buffer for an empty stream', async () => {
-    const stream = Readable.from([])
-    const result = await streamToBuffer(stream)
-    expect(result).toBeInstanceOf(Buffer)
-    expect(result.length).toBe(0)
-  })
-
-  it('rejects when the stream emits an error', async () => {
-    const stream = new Readable({ read() {} })
-    const promise = streamToBuffer(stream)
-    stream.emit('error', new Error('stream error'))
-    await expect(promise).rejects.toThrow('stream error')
-  })
-})
 
 // ─── uploadFileToCdpUploader ──────────────────────────────────────────────────
 

@@ -21,8 +21,6 @@ const ACCEPTED_MIME_TYPES = {
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document': true
 }
 
-const ACCEPTED_EXTENSIONS = ['.pdf', '.docx']
-
 const ERROR_MESSAGES = {
   NO_FILE: 'No file provided',
   INVALID_TYPE: 'The selected file must be a PDF or Word document',
@@ -30,60 +28,6 @@ const ERROR_MESSAGES = {
   FILE_TOO_LARGE: 'The file must be smaller than 10 MB',
   NO_TEXT: 'No text could be extracted from the file',
   PIPELINE_FAILED: 'Failed to process file upload'
-}
-
-/**
- * Read a Hapi multipart stream field into a Buffer.
- * @param {import('stream').Readable} stream
- * @returns {Promise<Buffer>}
- */
-export function streamToBuffer(stream) {
-  return new Promise((resolve, reject) => {
-    const chunks = []
-    stream.on('data', (chunk) => {
-      chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk)
-    })
-    stream.on('end', () => resolve(Buffer.concat(chunks)))
-    stream.on('error', reject)
-  })
-}
-
-/**
- * Extract filename, MIME type and lower-cased filename from a Hapi file field.
- */
-function getFileMetadata(file) {
-  const { filename, headers: fileHeaders } = file.hapi
-  const mimeType = fileHeaders?.['content-type'] ?? ''
-  const filenameLower = (filename ?? '').toLowerCase()
-  return { filename, mimeType, filenameLower }
-}
-
-/**
- * Returns true when the file passes either MIME-type or extension validation.
- */
-function isAcceptedType(mimeType, filenameLower) {
-  const hasValidMime = Object.hasOwn(ACCEPTED_MIME_TYPES, mimeType)
-  const hasValidExt = ACCEPTED_EXTENSIONS.some((ext) =>
-    filenameLower.endsWith(ext)
-  )
-  return hasValidMime || hasValidExt
-}
-
-/**
- * Validates buffer size. Returns a Hapi response on failure, null on success.
- */
-function validateBuffer(buffer, h) {
-  if (buffer.length === 0) {
-    return h
-      .response({ success: false, message: ERROR_MESSAGES.EMPTY_FILE })
-      .code(HTTP_STATUS.BAD_REQUEST)
-  }
-  if (buffer.length > MAX_FILE_BYTES) {
-    return h
-      .response({ success: false, message: ERROR_MESSAGES.FILE_TOO_LARGE })
-      .code(HTTP_STATUS.BAD_REQUEST)
-  }
-  return null
 }
 
 /**
@@ -154,35 +98,6 @@ async function runPipeline(
   }
 }
 
-/**
- * Validates the uploaded file and extracts its text content.
- * Returns `{ errorResponse }` on any validation failure, or
- * `{ filename, mimeType, buffer, extractedText }` on success.
- */
-async function validateAndPrepareContent(file, logger, h) {
-  if (!file?.hapi) {
-    return {
-      errorResponse: h
-        .response({ success: false, message: ERROR_MESSAGES.NO_FILE })
-        .code(HTTP_STATUS.BAD_REQUEST)
-    }
-  }
-
-  const { filename, mimeType, filenameLower } = getFileMetadata(file)
-  logger.info(
-    { filename, mimeType, endpoint: ENDPOINT_UPLOAD },
-    'File upload request received'
-  )
-
-  if (!isAcceptedType(mimeType, filenameLower)) {
-    return {
-      errorResponse: h
-        .response({ success: false, message: ERROR_MESSAGES.INVALID_TYPE })
-        .code(HTTP_STATUS.BAD_REQUEST)
-    }
-  }
-  return { filename, mimeType, file }
-}
 
 /**
  * Logs the pipeline completion and returns the 202 Accepted response.
@@ -566,4 +481,4 @@ export const uploadRoutes = {
 }
 
 // export helpers for unit tests and integration use
-export { uploadFileToCdpUploader, runPipeline, streamToBuffer }
+export { uploadFileToCdpUploader, runPipeline}
