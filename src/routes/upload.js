@@ -10,8 +10,6 @@ import {
   queueReviewJob
 } from './review-helpers.js'
 
-import fetch from 'node-fetch'
-
 const ENDPOINT_UPLOAD = '/api/upload'
 const MAX_FILE_BYTES = 10 * 1024 * 1024 // 10 MB
 const SOURCE_TYPE_FILE = 'file'
@@ -60,7 +58,7 @@ function getFileMetadata(file) {
  * Returns true when the file passes either MIME-type or extension validation.
  */
 function isAcceptedType(mimeType, filenameLower) {
- const hasValidMime = Object.hasOwn(ACCEPTED_MIME_TYPES, mimeType)
+  const hasValidMime = Object.hasOwn(ACCEPTED_MIME_TYPES, mimeType)
   const hasValidExt = ACCEPTED_EXTENSIONS.some((ext) =>
     filenameLower.endsWith(ext)
   )
@@ -129,9 +127,7 @@ async function runPipeline(
     title,
     charCount,
     logger,
-    userId,
-    mimeType,
-    SOURCE_TYPE_FILE
+    { userId, mimeType, dbSourceType: SOURCE_TYPE_FILE }
   )
 
   // STEP 6: Queue SQS job referencing canonical document (worker reads documents/{reviewId}.json)
@@ -329,6 +325,10 @@ if (!initResp.ok) {
   logger.info({ filename, uploadId, uploadUrl, statusUrl }, 'cdp-uploader initiated')
   const initDuration = Math.round(performance.now() - initStart)
 
+  if (!uploadUrl) {
+    throw new Error(`cdp-uploader initiate did not return an uploadUrl`)
+  }
+
   // STEP 2: perform upload
   // presigned or direct upload URL
     const uploadStart = performance.now()
@@ -409,11 +409,6 @@ const handleFileUpload = async (request, h) => {
     const bufferError = validateBuffer(buffer, h)
     if (bufferError) return bufferError
 
-    // Replace the consumed stream with a buffer-backed Readable
-    const { Readable } = await import('node:stream')
-    const replayStream = Readable.from([buffer])
-    replayStream.hapi = file.hapi   // preserve hapi metadata
-
     request.logger.info(
       {
         reviewId,
@@ -425,7 +420,7 @@ const handleFileUpload = async (request, h) => {
     )
 
     const pipelineResult = await runPipeline(
-      replayStream,
+      buffer,
       reviewId,
       title,
       mimeType,
