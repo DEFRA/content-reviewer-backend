@@ -9,6 +9,8 @@ const REVIEWED_CONTENT_TAG = '[REVIEWED_CONTENT]'
 const ISSUE_POSITIONS_TAG = '[ISSUE_POSITIONS]'
 const ISSUE_POSITIONS_CLOSE_TAG = '[/ISSUE_POSITIONS]'
 const IMPROVEMENTS_TAG = '[IMPROVEMENTS]'
+const PREFLIGHT_TAG = '[PREFLIGHT]'
+const PREFLIGHT_CLOSE_TAG = '[/PREFLIGHT]'
 
 /**
  * Parse the [ISSUE_POSITIONS] section.
@@ -378,7 +380,13 @@ function extractSuggestedField(block) {
   }
 
   const valueStart = suggestedStart + SUGGESTED_MARKER.length
-  return block.substring(valueStart).trim()
+  // Strip any trailing [/PRIORITY] tag that the model may have included
+  // literally inside the field value rather than as a structural delimiter.
+  return block
+    .substring(valueStart)
+    .trim()
+    .replace(/\s*\[\/PRIORITY\]\s*$/i, '')
+    .trim()
 }
 
 /**
@@ -615,6 +623,25 @@ function parseMarkerBasedReview(bedrockResponse, originalText = '') {
 }
 
 /**
+ * Strip the [PREFLIGHT]...[/PREFLIGHT] block from the response.
+ * The preflight section is written by the model as a chain-of-thought
+ * compliance check and must never reach the UI or downstream parsers.
+ * @param {string} response
+ * @returns {string}
+ */
+function stripPreflight(response) {
+  const start = response.indexOf(PREFLIGHT_TAG)
+  const end = response.indexOf(PREFLIGHT_CLOSE_TAG)
+  if (start === -1 || end === -1 || end <= start) {
+    return response
+  }
+  return (
+    response.substring(0, start) +
+    response.substring(end + PREFLIGHT_CLOSE_TAG.length)
+  )
+}
+
+/**
  * Determine which response string to actually parse.
  * If the primary response has no parseable content, fall back to
  * fallbackRawResponse (kept for backwards compatibility).
@@ -624,9 +651,9 @@ function parseMarkerBasedReview(bedrockResponse, originalText = '') {
  */
 function resolveResponseToParse(primary, fallback) {
   if (primary?.trim()) {
-    return primary
+    return stripPreflight(primary)
   }
-  return fallback || ''
+  return stripPreflight(fallback || '')
 }
 
 /**
