@@ -382,11 +382,13 @@ function extractSuggestedField(block) {
   const valueStart = suggestedStart + SUGGESTED_MARKER.length
   // Strip any trailing [/PRIORITY] tag that the model may have included
   // literally inside the field value rather than as a structural delimiter.
-  return block
-    .substring(valueStart)
-    .trim()
-    .replace(/\s*\[\/PRIORITY\]\s*$/i, '')
-    .trim()
+  // Use a plain string search rather than a regex to avoid ReDoS risk.
+  const PRIORITY_CLOSE_TAG = '[/PRIORITY]'
+  let value = block.substring(valueStart).trim()
+  if (value.toUpperCase().endsWith(PRIORITY_CLOSE_TAG)) {
+    value = value.slice(0, value.length - PRIORITY_CLOSE_TAG.length).trim()
+  }
+  return value
 }
 
 /**
