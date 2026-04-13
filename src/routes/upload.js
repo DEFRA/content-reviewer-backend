@@ -40,7 +40,9 @@ const ERROR_MESSAGES = {
 export function streamToBuffer(stream) {
   return new Promise((resolve, reject) => {
     const chunks = []
-    stream.on('data', (chunk) => chunks.push(chunk))
+    stream.on('data', (chunk) => {
+      chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk)
+    })
     stream.on('end', () => resolve(Buffer.concat(chunks)))
     stream.on('error', reject)
   })
@@ -253,8 +255,8 @@ function sleep(ms) {
  * Returns 'done', 'rejected', or 'pending'.
  */
 function classifyFileStatus(fileStatus) {
-  if (fileStatus === 'complete') return 'done'
-  if (fileStatus === 'rejected') return 'rejected'
+  if (fileStatus === 'complete') {return 'done'}
+  if (fileStatus === 'rejected') {return 'rejected'}
   return 'pending'
 }
 
@@ -296,7 +298,7 @@ async function pollStatus(statusUrl, timeoutMs, interval, logger) {
     try {
       const polled = await fetchStatus(statusUrl, logger)
 
-      if (polled?.classification === 'done') return polled.data
+      if (polled?.classification === 'done') {return polled.data}
 
       if (polled?.classification === 'rejected') {
         logger.warn(
@@ -389,7 +391,7 @@ async function performUpload(uploadUrl, buffer, mimeType, uploadId, logger) {
  */
 function logS3Details(statusData) {
   const file = statusData?.form?.file
-  if (!file?.s3Bucket && !file?.s3Key) return
+  if (!file?.s3Bucket && !file?.s3Key) {return}
 
   console.log('S3 DETAILS:')
   console.log('- S3 Bucket:', file.s3Bucket)
