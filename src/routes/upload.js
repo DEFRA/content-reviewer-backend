@@ -13,6 +13,8 @@ import {
 const ENDPOINT_UPLOAD = '/api/upload'
 const MAX_FILE_BYTES = 10 * 1024 * 1024 // 10 MB
 const SOURCE_TYPE_FILE = 'file'
+const DEFAULT_POLL_TIMEOUT_MS = 60_000  // 60 seconds
+const DEFAULT_POLL_INTERVAL_MS = 1_500  // 1.5 seconds
 
 const ACCEPTED_MIME_TYPES = {
   'application/pdf': true,
@@ -107,7 +109,7 @@ async function runPipeline(
 
   const s3UploadDuration = Math.round(performance.now() - s3UploadStart)
 
-  const rawS3Key = rawS3Result.key || rawS3Result.location || null
+  const rawS3Key = rawS3Result.key 
 
   const { canonicalResult, canonicalDuration } = await createCanonicalDocument(
     null,
@@ -247,135 +249,222 @@ function sleep(ms) {
 }
 
 /**
- * Poll a status url until upload is ready or timeout
+ * Classify a cdp-uploader file status string.
+ * Returns 'done', 'rejected', or 'pending'.
  */
-async function pollStatus(statusUrl, timeoutMs, interval, logger) {
-  const start = Date.now()
-  while (Date.now() - start < timeoutMs) {
-    try {
-      const r = await fetch(statusUrl, {
-        method: 'GET',
-        headers: { Accept: 'application/json'}
-      })
-      if (r.ok) {
-        const data = await r.json().catch(() => null)
-        const state = data?.uploadStatus || data?.status || data?.state
-        logger.info({ statusUrl, state }, 'cdp-uploader status poll')
-        if (state === 'ready' || state === 'completed' || state === 'succeeded') return data
-        if (state === 'failed' || state === 'error') {
-          throw new Error(`cdp-uploader reported upload failed: ${JSON.stringify(data)}`)
-        }
-      } else {
-        logger.warn({ status: r.status, statusUrl }, 'cdp-uploader status poll returned non-2xx')
-      }
-    } catch (err) {
-      logger.warn({ err: err.message, statusUrl }, 'Error polling cdp-uploader status (will retry)')
-    }
-    await sleep(interval)
-  }
-  throw new Error('Timeout waiting for cdp-uploader status')
+function classifyFileStatus(fileStatus) {
+  if (fileStatus === 'complete') return 'done'
+  if (fileStatus === 'rejected') return 'rejected'
+  return 'pending'
 }
 
 /**
- * Upload a file to cdp-uploader by:
- *  1) calling /uploads/initiate to get uploadId / uploadUrl metadata
- *  2) performing the actual upload to the provided uploadUrl (presigned S3 or direct)
- *  4) polling status URL until upload is processed and ready, or failed (optional, if statusUrl provided)
+ * Perform a single status poll request.
+ * Returns { data, classification } on 2xx, or null on non-2xx.
+ * Throws on network error so the caller can catch and warn.
+ */
+async function fetchStatus(statusUrl, logger) {
+  const r = await fetch(statusUrl, {
+    method: 'GET',
+    headers: { Accept: 'application/json' }
+  })
+
+  if (!r.ok) {
+    logger.warn(
+      { status: r.status, statusUrl },
+      'cdp-uploader status poll returned non-2xx'
+    )
+    return null
+  }
+  const data = await r.json().catch(() => null)
+  const fileStatus = data?.form?.file?.fileStatus
+  const classification = classifyFileStatus(fileStatus)
+
+  logger.info({ statusUrl, fileStatus }, 'cdp-uploader status poll')
+  return { data, classification }
+}
+
+/**
+ * Poll a status URL until upload is complete, rejected, or timed out.
+ * Returns the status data object on success, null on timeout/rejected.
+ * Max nesting depth: 3
+ */
+async function pollStatus(statusUrl, timeoutMs, interval, logger) {
+  const start = Date.now()
+
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const polled = await fetchStatus(statusUrl, logger)
+
+      if (polled?.classification === 'done') return polled.data
+
+      if (polled?.classification === 'rejected') {
+        logger.warn(
+          { err: `cdp-uploader status: rejected`, uploadStatus: 'rejected' },
+          'cdp-uploader reported upload rejected'
+        )
+        return null
+      }
+    } catch (err) {
+      logger.warn(
+        { err: err.message, statusUrl },
+        'Error polling cdp-uploader status (will retry)'
+      )
+    }
+
+    await sleep(interval)
+  }
+
+  logger.warn({ statusUrl }, 'Timed out waiting for cdp-uploader status')
+  return null
+}
+
+/**
+ * Call /initiate and return { uploadId, uploadUrl, statusUrl }.
+ * Throws on non-2xx.
+ */
+async function initiateUpload(cdpUploaderUrl, s3Bucket, logger) {
+  const initBody = {
+    s3Bucket,
+    metadata: { source: 'content-reviewer-backend', requestId: randomUUID() }
+  }
+
+  const initStart = performance.now()
+  const initResp = await fetch(`${cdpUploaderUrl}/initiate`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'User-Agent': 'content-reviewer-backend'
+    },
+    body: JSON.stringify(initBody)
+  })
+
+  if (!initResp.ok) {
+    const txt = await initResp.text().catch(() => '')
+    logger.error(
+      { status: initResp.status, body: txt },
+      'cdp-uploader /initiate failed'
+    )
+    throw new Error(`cdp-uploader initiate failed: ${initResp.status}`)
+  }
+
+  const initJson = await initResp.json().catch(() => ({}))
+  const initDuration = Math.round(performance.now() - initStart)
+
+  return {
+    uploadId: initJson?.uploadId,
+    uploadUrl: initJson?.uploadUrl,
+    statusUrl: initJson?.statusUrl,
+    initDuration
+  }
+}
+
+/**
+ * PUT/POST the raw buffer to the presigned uploadUrl.
+ * Throws on non-2xx.
+ */
+async function performUpload(uploadUrl, buffer, mimeType, uploadId, logger) {
+  const uploadStart = performance.now()
+  const uploadRes = await fetch(uploadUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': mimeType },
+    body: buffer
+  })
+  const uploadDuration = Math.round(performance.now() - uploadStart)
+
+  if (!uploadRes.ok) {
+    const txt = await uploadRes.text().catch(() => '')
+    logger.error(
+      { status: uploadRes.status, body: txt },
+      'cdp-uploader raw upload failed'
+    )
+    throw new Error(`Raw upload failed: ${uploadRes.status}`)
+  }
+
+  logger.info({ uploadId, uploadDuration }, 'Uploaded raw bytes to uploadUrl')
+}
+
+/**
+ * Log S3 details from the status response if available.
+ */
+function logS3Details(statusData) {
+  const file = statusData?.form?.file
+  if (!file?.s3Bucket && !file?.s3Key) return
+
+  console.log('S3 DETAILS:')
+  console.log('- S3 Bucket:', file.s3Bucket)
+  console.log('- S3 Key:', file.s3Key)
+  console.log('- Filename:', file.filename)
+  console.log('- Content Type:', file.detectedContentType)
+}
+
+/**
+ * Poll for status and extract bucket/key from the result.
+ * Returns { bucket, key, statusData }.
+ */
+async function resolveS3Location(statusUrl, timeoutMs, interval, uploadId, logger) {
+  const statusData = await pollStatus(statusUrl, timeoutMs, interval, logger).catch((err) => {
+    logger.warn(
+      { err: err.message, uploadId },
+      'Polling cdp-uploader status failed or timed out'
+    )
+    return null
+  })
+
+  logS3Details(statusData)
+
+  return {
+    bucket: statusData?.form?.file?.s3Bucket ?? null,
+    key: statusData?.form?.file?.s3Key ?? null,
+    statusData
+  }
+}
+
+/**
+ * Upload a file to cdp-uploader:
+ *  1) /initiate  → get uploadId / uploadUrl / statusUrl
+ *  2) upload buffer to uploadUrl
+ *  3) poll status until ready or failed
  *
- * Returns: { bucket, key, location, size, uploadId, statusResponse }
- * Throws on fatal errors.
+ * Returns { bucket, key }. Throws on fatal errors.
  */
 async function uploadFileToCdpUploader(buffer, filename, mimeType, logger) {
   const CDP_UPLOADER = (config.get('cdpUploader.url') || '').replace(/\/$/, '')
-  const timeoutMs = config.get('cdpUploader.pollTimeoutMs') || 60_000
-  const interval = config.get('cdpUploader.pollIntervalMs') || 1500
+  const timeoutMs = config.get('cdpUploader.pollTimeoutMs') || DEFAULT_POLL_TIMEOUT_MS
+  const interval = config.get('cdpUploader.pollIntervalMs') || DEFAULT_POLL_INTERVAL_MS
   const S3_BUCKET = config.get('cdpUploader.s3Bucket')
 
   if (!CDP_UPLOADER) {
     throw new Error('cdp-uploader base URL not configured')
   }
 
-   // STEP 1: initiate
-  const initBody = {
-    s3Bucket: S3_BUCKET,
-    filename,
-    contentType: mimeType,
-    size: buffer.length,
-    metadata: { source: 'content-reviewer-backend', requestId: randomUUID() }
-  }
+  const { uploadId, uploadUrl, statusUrl } = await initiateUpload(
+    CDP_UPLOADER,
+    S3_BUCKET,
+    logger
+  )
 
-  const initStart = performance.now()
-  const initResp = await fetch(`${CDP_UPLOADER.replace(/\/$/, '')}/initiate`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'User-Agent': 'content-reviewer-backend'},
-    body: JSON.stringify(initBody)
-  })
-
-if (!initResp.ok) {
-    const txt = await initResp.text().catch(() => '')
-    logger.error({ status: initResp.status, body: txt }, 'cdp-uploader /initiate failed')
-    throw new Error(`cdp-uploader initiate failed: ${initResp.status}`)
-  }
-  const initJson = await initResp.json().catch(() => ({}))
-  const uploadId = initJson?.uploadId || initJson?.id || null
-  const uploadUrl = initJson?.uploadUrl || initJson?.presignedUrl || null
-  const uploadMethod = (initJson?.uploadMethod || 'PUT').toUpperCase()
-  const statusUrl = initJson?.statusUrl || (uploadId ? `${CDP_UPLOADER}/uploads/${uploadId}/status` : null)
-
-  logger.info({ filename, uploadId, uploadUrl, statusUrl }, 'cdp-uploader initiated')
-  const initDuration = Math.round(performance.now() - initStart)
+  logger.info({ filename, uploadId, statusUrl }, 'cdp-uploader initiated')
 
   if (!uploadUrl) {
-    throw new Error(`cdp-uploader initiate did not return an uploadUrl`)
+    throw new Error('cdp-uploader initiate did not return an uploadUrl')
   }
 
-  // STEP 2: perform upload
-  // presigned or direct upload URL
-    const uploadStart = performance.now()
-    const uploadRes = await fetch(uploadUrl, {
-      method: uploadMethod,
-      headers: { 'Content-Type': mimeType },
-      body: buffer
-    })
-    const uploadDuration = Math.round(performance.now() - uploadStart)
-    if (!uploadRes.ok && !(uploadRes.status >= 300 && uploadRes.status < 400)) {
-      const txt = await uploadRes.text().catch(() => '')
-      logger.error({ status: uploadRes.status, body: txt }, 'cdp-uploader raw upload failed')
-      throw new Error(`Raw upload failed: ${uploadRes.status}`)
-    }
-    logger.info({ filename, uploadId, uploadDuration }, 'Uploaded raw bytes to uploadUrl')
+  await performUpload(uploadUrl, buffer, mimeType, uploadId, logger)
 
-  // STEP 3: poll status until ready/failed
-  let statusResponse = null
-  let bucket = uploadRes?.bucket || initJson?.bucket || null
-  let key = uploadRes?.key || initJson?.key || null
-  let location = uploadRes?.location || initJson?.location || (bucket && key ? `s3://${bucket}/${key}` : null)
-  let size = uploadRes?.size || initJson?.size || buffer.length
-
-  if (statusUrl) {
-    statusResponse = await pollStatus(statusUrl, timeoutMs, interval, logger).catch((err) => {
-      logger.warn({ err: err.message, uploadId }, 'Polling cdp-uploader status failed or timed out')
-      return null
-    })
-
-    // if status response contains final bucket/key, adopt them
-    if (statusResponse) {
-      bucket = bucket || statusResponse?.bucket || statusResponse?.storage?.bucket
-      key = key || statusResponse?.key || statusResponse?.storage?.key
-      location = location || statusResponse?.location || (bucket && key ? `s3://${bucket}/${key}` : null)
-      size = size || statusResponse?.size
-    }
+  if (!statusUrl) {
+    return { bucket: null, key: null }
   }
 
-  return {
-    bucket,
-    key,
-    location,
-    size,
+  const { bucket, key } = await resolveS3Location(
+    statusUrl,
+    timeoutMs,
+    interval,
     uploadId,
-    statusResponse,
-    initDuration
-  }
+    logger
+  )
+
+  return { bucket, key }
 }
 
 /**
@@ -407,7 +496,7 @@ const handleFileUpload = async (request, h) => {
     // still works without any other changes.
     const buffer = await streamToBuffer(file)
     const bufferError = validateBuffer(buffer, h)
-    if (bufferError) return bufferError
+    if (bufferError) { return bufferError }
 
     request.logger.info(
       {
