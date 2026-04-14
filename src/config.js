@@ -171,6 +171,14 @@ const config = convict({
       env: 'UPLOAD_MAX_FILE_SIZE'
     }
   },
+  cdpUploader: {
+    url: {
+      doc: 'cdp-uploader service URL for file uploads',
+      format: String,
+      default: 'https://cdp-uploader.dev.cdp-int.defra.cloud',
+      env: 'CDP_UPLOADER_URL'
+    }
+  },
   s3: {
     bucket: {
       doc: 'S3 bucket for uploads, results, and prompts',
