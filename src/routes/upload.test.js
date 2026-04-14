@@ -38,7 +38,11 @@ vi.mock('./review-helpers.js', () => ({
 }))
 
 // ─── Import mocked modules after vi.mock ──────────────────────────────────────
-import { createCanonicalDocument, createReviewRecord, queueReviewJob } from './review-helpers.js'
+import {
+  createCanonicalDocument,
+  createReviewRecord,
+  queueReviewJob
+} from './review-helpers.js'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -107,8 +111,16 @@ function mockRequest(overrides = {}) {
  */
 function defaultPipelineResult() {
   return {
-    s3Result: { bucket: 'test-bucket', key: 'uploads/upload-123/report.pdf', fileName: 'report.pdf', mimeType: 'application/pdf' },
-    canonicalResult: { s3: { key: 'documents/review-abc.json', bucket: 'test-bucket' }, document: { charCount: 1000 } },
+    s3Result: {
+      bucket: 'test-bucket',
+      key: 'uploads/upload-123/report.pdf',
+      fileName: 'report.pdf',
+      mimeType: 'application/pdf'
+    },
+    canonicalResult: {
+      s3: { key: 'documents/review-abc.json', bucket: 'test-bucket' },
+      document: { charCount: 1000 }
+    },
     s3UploadDuration: 100,
     canonicalDuration: 50,
     dbCreateDuration: 20,
@@ -155,9 +167,9 @@ describe('uploadFileToCdpUploader', () => {
     })
 
     fetch
-      .mockResolvedValueOnce(initiateResponse)  // /initiate
-      .mockResolvedValueOnce(uploadResponse)    // performUpload
-      .mockResolvedValueOnce(statusResponse)    // fetchStatus poll
+      .mockResolvedValueOnce(initiateResponse) // /initiate
+      .mockResolvedValueOnce(uploadResponse) // performUpload
+      .mockResolvedValueOnce(statusResponse) // fetchStatus poll
 
     const result = await uploadFileToCdpUploader(
       makeStream('pdf content'),
@@ -203,7 +215,10 @@ describe('uploadFileToCdpUploader', () => {
 
   it('throws when /initiate does not return uploadUrl', async () => {
     fetch.mockResolvedValueOnce(
-      mockFetchResponse({ uploadId: 'upload-123', statusUrl: 'http://cdp-uploader/status/123' })
+      mockFetchResponse({
+        uploadId: 'upload-123',
+        statusUrl: 'http://cdp-uploader/status/123'
+      })
     )
 
     await expect(
@@ -251,7 +266,7 @@ describe('uploadFileToCdpUploader', () => {
           statusUrl: 'http://cdp-uploader/status/123'
         })
       )
-      .mockResolvedValueOnce(mockFetchResponse({}, 200, true))  // performUpload
+      .mockResolvedValueOnce(mockFetchResponse({}, 200, true)) // performUpload
       .mockResolvedValueOnce(
         mockFetchResponse({
           uploadStatus: 'ready',
@@ -391,7 +406,9 @@ describe('runPipeline', () => {
     )
 
     expect(result).toMatchObject({
-      s3Result: expect.objectContaining({ key: 'uploads/upload-123/report.pdf' }),
+      s3Result: expect.objectContaining({
+        key: 'uploads/upload-123/report.pdf'
+      }),
       canonicalResult: expect.objectContaining({
         s3: expect.objectContaining({ key: 'documents/review-abc.json' })
       }),
@@ -438,7 +455,11 @@ describe('runPipeline', () => {
       'report.pdf',
       1000,
       logger,
-      expect.objectContaining({ userId: 'user-123', mimeType: 'application/pdf', dbSourceType: 'file' })
+      expect.objectContaining({
+        userId: 'user-123',
+        mimeType: 'application/pdf',
+        dbSourceType: 'file'
+      })
     )
   })
 
@@ -467,7 +488,14 @@ describe('runPipeline', () => {
     fetch.mockResolvedValueOnce(mockFetchResponse({}, 500, false))
 
     await expect(
-      runPipeline(makeStream(), 'review-id-123', 'multipart/form-data', 'user-123', {}, logger)
+      runPipeline(
+        makeStream(),
+        'review-id-123',
+        'multipart/form-data',
+        'user-123',
+        {},
+        logger
+      )
     ).rejects.toThrow('cdp-uploader initiate failed: 500')
   })
 
@@ -475,7 +503,14 @@ describe('runPipeline', () => {
     createCanonicalDocument.mockRejectedValueOnce(new Error('canonical failed'))
 
     await expect(
-      runPipeline(makeStream(), 'review-id-123', 'multipart/form-data', 'user-123', {}, logger)
+      runPipeline(
+        makeStream(),
+        'review-id-123',
+        'multipart/form-data',
+        'user-123',
+        {},
+        logger
+      )
     ).rejects.toThrow('canonical failed')
   })
 
@@ -483,7 +518,14 @@ describe('runPipeline', () => {
     createReviewRecord.mockRejectedValueOnce(new Error('db failed'))
 
     await expect(
-      runPipeline(makeStream(), 'review-id-123', 'multipart/form-data', 'user-123', {}, logger)
+      runPipeline(
+        makeStream(),
+        'review-id-123',
+        'multipart/form-data',
+        'user-123',
+        {},
+        logger
+      )
     ).rejects.toThrow('db failed')
   })
 
@@ -491,7 +533,14 @@ describe('runPipeline', () => {
     queueReviewJob.mockRejectedValueOnce(new Error('sqs failed'))
 
     await expect(
-      runPipeline(makeStream(), 'review-id-123', 'multipart/form-data', 'user-123', {}, logger)
+      runPipeline(
+        makeStream(),
+        'review-id-123',
+        'multipart/form-data',
+        'user-123',
+        {},
+        logger
+      )
     ).rejects.toThrow('sqs failed')
   })
 
@@ -499,18 +548,25 @@ describe('runPipeline', () => {
     createCanonicalDocument.mockResolvedValueOnce({
       canonicalResult: {
         s3: { key: 'documents/review-abc.json', bucket: 'test-bucket' },
-        document: {}   // no charCount
+        document: {} // no charCount
       },
       canonicalDuration: 50
     })
 
-    await runPipeline(makeStream(), 'review-id-123', 'multipart/form-data', 'user-123', {}, logger)
+    await runPipeline(
+      makeStream(),
+      'review-id-123',
+      'multipart/form-data',
+      'user-123',
+      {},
+      logger
+    )
 
     expect(createReviewRecord).toHaveBeenCalledWith(
       expect.any(String),
       expect.any(Object),
       expect.any(String),
-      0,   // ← charCount defaults to 0
+      0, // ← charCount defaults to 0
       expect.any(Object),
       expect.any(Object)
     )
@@ -551,7 +607,10 @@ describe('handleFileUpload', () => {
     await handler(request, h)
 
     expect(h.response).toHaveBeenCalledWith(
-      expect.objectContaining({ success: false, message: 'Request must be multipart/form-data' })
+      expect.objectContaining({
+        success: false,
+        message: 'Request must be multipart/form-data'
+      })
     )
     expect(h._response.code).toHaveBeenCalledWith(400)
   })
@@ -565,7 +624,10 @@ describe('handleFileUpload', () => {
     await handler(request, h)
 
     expect(h.response).toHaveBeenCalledWith(
-      expect.objectContaining({ success: false, message: 'Request must be multipart/form-data' })
+      expect.objectContaining({
+        success: false,
+        message: 'Request must be multipart/form-data'
+      })
     )
     expect(h._response.code).toHaveBeenCalledWith(400)
   })
@@ -582,7 +644,10 @@ describe('handleFileUpload', () => {
     await handler(request, h)
 
     expect(h.response).toHaveBeenCalledWith(
-      expect.objectContaining({ success: false, message: 'The uploaded file is empty' })
+      expect.objectContaining({
+        success: false,
+        message: 'The uploaded file is empty'
+      })
     )
     expect(h._response.code).toHaveBeenCalledWith(400)
   })
@@ -788,7 +853,11 @@ describe('fetchStatus (via pollStatus via resolveS3Location)', () => {
       // status poll returns non-2xx — triggers null return and retry until timeout
       .mockResolvedValue(mockFetchResponse({}, 503, false))
 
-    const result = await uploadFileToCdpUploader(makeStream(), 'multipart/form-data', logger)
+    const result = await uploadFileToCdpUploader(
+      makeStream(),
+      'multipart/form-data',
+      logger
+    )
 
     expect(logger.warn).toHaveBeenCalledWith(
       expect.objectContaining({ status: 503 }),
@@ -814,7 +883,11 @@ describe('fetchStatus (via pollStatus via resolveS3Location)', () => {
         text: vi.fn().mockResolvedValue('not json')
       })
 
-    const result = await uploadFileToCdpUploader(makeStream(), 'multipart/form-data', logger)
+    const result = await uploadFileToCdpUploader(
+      makeStream(),
+      'multipart/form-data',
+      logger
+    )
     expect(result.bucket).toBeNull()
   })
 })
@@ -863,7 +936,11 @@ describe('classifyFileStatus behaviour in pollStatus', () => {
       })
     )
 
-    const result = await uploadFileToCdpUploader(makeStream(), 'multipart/form-data', logger)
+    const result = await uploadFileToCdpUploader(
+      makeStream(),
+      'multipart/form-data',
+      logger
+    )
     expect(result.key).toBe('key/file.pdf')
   })
 
@@ -914,7 +991,11 @@ describe('classifyFileStatus behaviour in pollStatus', () => {
         })
       )
 
-    const result = await uploadFileToCdpUploader(makeStream(), 'multipart/form-data', logger)
+    const result = await uploadFileToCdpUploader(
+      makeStream(),
+      'multipart/form-data',
+      logger
+    )
     expect(result.key).toBe('key/file.pdf')
   })
 
@@ -928,7 +1009,11 @@ describe('classifyFileStatus behaviour in pollStatus', () => {
       })
     )
 
-    const result = await uploadFileToCdpUploader(makeStream(), 'multipart/form-data', logger)
+    const result = await uploadFileToCdpUploader(
+      makeStream(),
+      'multipart/form-data',
+      logger
+    )
     expect(result.bucket).toBeNull()
     expect(result.key).toBeNull()
     expect(logger.warn).toHaveBeenCalledWith(
@@ -941,7 +1026,7 @@ describe('classifyFileStatus behaviour in pollStatus', () => {
     setupInitiateAndUpload()
 
     fetch
-      .mockRejectedValueOnce(new Error('network error'))  // first poll throws
+      .mockRejectedValueOnce(new Error('network error')) // first poll throws
       .mockResolvedValueOnce(
         mockFetchResponse({
           uploadStatus: 'ready',
@@ -958,7 +1043,11 @@ describe('classifyFileStatus behaviour in pollStatus', () => {
         })
       )
 
-    const result = await uploadFileToCdpUploader(makeStream(), 'multipart/form-data', logger)
+    const result = await uploadFileToCdpUploader(
+      makeStream(),
+      'multipart/form-data',
+      logger
+    )
     expect(result.key).toBe('key/file.pdf')
     expect(logger.warn).toHaveBeenCalledWith(
       expect.objectContaining({ err: 'network error' }),
