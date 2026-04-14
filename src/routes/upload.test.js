@@ -11,7 +11,7 @@ vi.mock('../config.js', () => ({
         'cdpUploader.url': 'http://cdp-uploader',
         'cdpUploader.pollTimeoutMs': 100,
         'cdpUploader.pollIntervalMs': 10,
-        'cdpUploader.s3Bucket': 'test-bucket'
+        's3.bucket': 'test-bucket'
       }
       return map[key]
     })
@@ -199,7 +199,7 @@ describe('uploadFileToCdpUploader', () => {
         'cdpUploader.url': 'http://cdp-uploader',
         'cdpUploader.pollTimeoutMs': 100,
         'cdpUploader.pollIntervalMs': 10,
-        'cdpUploader.s3Bucket': 'test-bucket'
+        's3.bucket': 'test-bucket'
       }
       return map[key]
     })
