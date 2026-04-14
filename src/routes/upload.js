@@ -1,12 +1,10 @@
 import { randomUUID } from 'node:crypto'
 import { config } from '../config.js'
-import { textExtractor } from '../common/helpers/text-extractor.js'
 import { SOURCE_TYPES as CANONICAL_SOURCE_TYPES } from '../common/helpers/canonical-document.js'
 import {
   HTTP_STATUS,
   REVIEW_STATUSES,
   getCorsConfig,
-  uploadTextToS3,
   createCanonicalDocument,
   createReviewRecord,
   queueReviewJob
@@ -15,13 +13,13 @@ import {
 const ENDPOINT_UPLOAD = '/api/upload'
 const MAX_FILE_BYTES = 10 * 1024 * 1024 // 10 MB
 const SOURCE_TYPE_FILE = 'file'
+const DEFAULT_POLL_TIMEOUT_MS = 60_000  // 60 seconds
+const DEFAULT_POLL_INTERVAL_MS = 1_500  // 1.5 seconds
 
 const ACCEPTED_MIME_TYPES = {
   'application/pdf': true,
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document': true
 }
-
-const ACCEPTED_EXTENSIONS = ['.pdf', '.docx']
 
 const ERROR_MESSAGES = {
   NO_FILE: 'No file provided',
@@ -33,162 +31,73 @@ const ERROR_MESSAGES = {
 }
 
 /**
- * Read a Hapi multipart stream field into a Buffer.
- * @param {import('stream').Readable} stream
- * @returns {Promise<Buffer>}
- */
-export function streamToBuffer(stream) {
-  return new Promise((resolve, reject) => {
-    const chunks = []
-    stream.on('data', (chunk) => chunks.push(chunk))
-    stream.on('end', () => resolve(Buffer.concat(chunks)))
-    stream.on('error', reject)
-  })
-}
-
-/**
- * Extract filename, MIME type and lower-cased filename from a Hapi file field.
- */
-function getFileMetadata(file) {
-  const { filename, headers: fileHeaders } = file.hapi
-  const mimeType = fileHeaders?.['content-type'] ?? ''
-  const filenameLower = (filename ?? '').toLowerCase()
-  return { filename, mimeType, filenameLower }
-}
-
-/**
- * Returns true when the file passes either MIME-type or extension validation.
- */
-function isAcceptedType(mimeType, filenameLower) {
-  const hasValidMime = Object.hasOwn(ACCEPTED_MIME_TYPES, mimeType)
-  const hasValidExt = ACCEPTED_EXTENSIONS.some((ext) =>
-    filenameLower.endsWith(ext)
-  )
-  return hasValidMime || hasValidExt
-}
-
-/**
- * Validates buffer size. Returns a Hapi response on failure, null on success.
- */
-function validateBuffer(buffer, h) {
-  if (buffer.length === 0) {
-    return h
-      .response({ success: false, message: ERROR_MESSAGES.EMPTY_FILE })
-      .code(HTTP_STATUS.BAD_REQUEST)
-  }
-  if (buffer.length > MAX_FILE_BYTES) {
-    return h
-      .response({ success: false, message: ERROR_MESSAGES.FILE_TOO_LARGE })
-      .code(HTTP_STATUS.BAD_REQUEST)
-  }
-  return null
-}
-
-/**
  * Runs the S3 upload → canonical document → DB record → SQS queue pipeline.
  */
 async function runPipeline(
-  content,
+  fileMultipartStream,
   reviewId,
-  title,
-  mimeType,
+  contentType,
   userId,
   headers,
   logger
 ) {
-  const { s3Result, s3UploadDuration } = await uploadTextToS3(
-    content,
-    reviewId,
-    title,
+
+  // STEP 2: upload raw original file to cdp-uploader (audit copy)
+  const s3UploadStart = performance.now()
+
+  const rawS3Result = await uploadFileToCdpUploader(
+    fileMultipartStream,
+    contentType,
     logger
   )
 
+  const s3UploadDuration = Math.round(performance.now() - s3UploadStart)
+
+  const rawS3Key = rawS3Result.key
+  const fileName = rawS3Result.fileName
+  const mimeType = rawS3Result.mimeType
+
   const { canonicalResult, canonicalDuration } = await createCanonicalDocument(
-    content,
+    null,
     reviewId,
-    title,
+    fileName,
     logger,
     CANONICAL_SOURCE_TYPES.FILE,
-    s3Result.key
-  )
+    rawS3Key
+    )
 
+  const charCount = canonicalResult?.document?.charCount || 0
+
+  // STEP 5: Create review record in DB pointing to the canonical document key
   const dbCreateDuration = await createReviewRecord(
     reviewId,
-    s3Result,
-    title,
-    content.length,
+    canonicalResult.s3,
+    fileName,
+    charCount,
     logger,
     { userId, mimeType, dbSourceType: SOURCE_TYPE_FILE }
   )
 
+  // STEP 6: Queue SQS job referencing canonical document (worker reads documents/{reviewId}.json)
   const sqsSendDuration = await queueReviewJob(
     reviewId,
-    s3Result,
-    title,
-    content.length,
+    canonicalResult.s3,
+    fileName,
+    charCount,
     headers,
     logger
   )
 
   return {
-    s3Result,
+    s3Result: rawS3Result,
     canonicalResult,
-    s3UploadDuration,
+    s3UploadDuration: s3UploadDuration,
     canonicalDuration,
     dbCreateDuration,
     sqsSendDuration
   }
 }
 
-/**
- * Validates the uploaded file and extracts its text content.
- * Returns `{ errorResponse }` on any validation failure, or
- * `{ filename, mimeType, buffer, extractedText }` on success.
- */
-async function validateAndPrepareContent(file, logger, h) {
-  if (!file?.hapi) {
-    return {
-      errorResponse: h
-        .response({ success: false, message: ERROR_MESSAGES.NO_FILE })
-        .code(HTTP_STATUS.BAD_REQUEST)
-    }
-  }
-
-  const { filename, mimeType, filenameLower } = getFileMetadata(file)
-  logger.info(
-    { filename, mimeType, endpoint: ENDPOINT_UPLOAD },
-    'File upload request received'
-  )
-
-  if (!isAcceptedType(mimeType, filenameLower)) {
-    return {
-      errorResponse: h
-        .response({ success: false, message: ERROR_MESSAGES.INVALID_TYPE })
-        .code(HTTP_STATUS.BAD_REQUEST)
-    }
-  }
-
-  const buffer = await streamToBuffer(file)
-  const bufferError = validateBuffer(buffer, h)
-  if (bufferError) {
-    return { errorResponse: bufferError }
-  }
-
-  const extractedText = await textExtractor.extractText(
-    buffer,
-    mimeType,
-    filename
-  )
-  if (!extractedText?.trim()) {
-    return {
-      errorResponse: h
-        .response({ success: false, message: ERROR_MESSAGES.NO_TEXT })
-        .code(HTTP_STATUS.BAD_REQUEST)
-    }
-  }
-
-  return { filename, mimeType, buffer, extractedText }
-}
 
 /**
  * Logs the pipeline completion and returns the 202 Accepted response.
@@ -250,47 +159,283 @@ function respondError(error, logger, totalDuration, h) {
 }
 
 /**
+ * Sleep helper
+ */
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+/**
+ * Classify a cdp-uploader file status string.
+ * Returns 'done', 'rejected', or 'pending'.
+ */
+function classifyFileStatus(fileStatus) {
+  if (fileStatus === 'complete') {return 'done'}
+  if (fileStatus === 'rejected') {return 'rejected'}
+  return 'pending'
+}
+
+/**
+ * Perform a single status poll request.
+ * Returns { data, classification } on 2xx, or null on non-2xx.
+ * Throws on network error so the caller can catch and warn.
+ */
+async function fetchStatus(statusUrl, logger) {
+  const uploadStatusResp = await fetch(statusUrl, {
+    method: 'GET',
+    headers: { Accept: 'application/json' }
+  })
+
+  if (!uploadStatusResp.ok) {
+    logger.warn(
+      { status: uploadStatusResp.status, statusUrl },
+      'cdp-uploader status poll returned non-2xx'
+    )
+    return null
+  }
+  const data = await uploadStatusResp.json().catch(() => null)
+  const uploadStatus = data?.uploadStatus
+  const fileStatus = data?.form?.file?.fileStatus
+  const classification = classifyFileStatus(fileStatus)
+
+  logger.info({ statusUrl,uploadStatus, fileStatus }, 'cdp-uploader status poll')
+  return { data,uploadStatus, classification }
+}
+
+/**
+ * Poll a status URL until upload is complete, rejected, or timed out.
+ * Returns the status data object on success, null on timeout/rejected.
+ * Max nesting depth: 3
+ */
+async function pollStatus(statusUrl, timeoutMs, interval, logger) {
+  const start = Date.now()
+
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const polled = await fetchStatus(statusUrl, logger)
+
+      if ( polled?.uploadStatus === 'ready' &&
+        (polled?.classification === 'done' || polled?.classification === 'rejected')) {return polled.data}
+
+    } catch (err) {
+      logger.warn(
+        { err: err.message, statusUrl },
+        'Error polling cdp-uploader status (will retry)'
+      )
+    }
+
+    await sleep(interval)
+  }
+
+  logger.warn({ statusUrl }, 'Timed out waiting for cdp-uploader status')
+  return null
+}
+
+/**
+ * Call /initiate and return { uploadId, uploadUrl, statusUrl }.
+ * Throws on non-2xx.
+ */
+async function initiateUpload(cdpUploaderUrl, s3Bucket, logger) {
+  const initBody = {
+    s3Bucket,
+    maxFileSize: MAX_FILE_BYTES,
+    mimeTypes: Object.keys(ACCEPTED_MIME_TYPES),
+    metadata: { source: 'content-reviewer-backend', requestId: randomUUID() }
+  }
+
+  const initResp = await fetch(`${cdpUploaderUrl}/initiate`, {
+    method: 'POST',
+    headers: {
+      'User-Agent': 'content-reviewer-backend'
+    },
+    body: JSON.stringify(initBody)
+  })
+
+  if (!initResp.ok) {
+    const txt = await initResp.text().catch(() => '')
+    logger.error(
+      { status: initResp.status, body: txt },
+      'cdp-uploader /initiate failed'
+    )
+    throw new Error(`cdp-uploader initiate failed: ${initResp.status}`)
+  }
+
+  const initJson = await initResp.json().catch(() => ({}))
+
+  return {
+    uploadId: initJson?.uploadId,
+    uploadUrl: initJson?.uploadUrl,
+    statusUrl: initJson?.statusUrl
+  }
+}
+
+/**
+ * PUT/POST the raw multi-part file to the presigned uploadUrl.
+ * Throws on non-2xx.
+ */
+async function performUpload(uploadUrl, fileMultipartStream, contentType, logger) {
+  
+  const uploadRes = await fetch(uploadUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': contentType },
+    body: fileMultipartStream
+  })
+
+  if (!uploadRes.ok) {
+    const txt = await uploadRes.text().catch(() => '')
+    logger.error(
+      { status: uploadRes.status, body: txt },
+      'cdp-uploader raw upload failed'
+    )
+    throw new Error(`Raw upload failed: ${uploadRes.status}`)
+  }
+}
+
+/**
+ * Log S3 details from the status response if available.
+ */
+function logS3Details(statusData) {
+  const file = statusData?.form?.file
+  if (!file?.s3Bucket && !file?.s3Key) {return}
+
+  console.log('S3 DETAILS:')
+  console.log('- S3 Bucket:', file.s3Bucket)
+  console.log('- S3 Key:', file.s3Key)
+  console.log('- Filename:', file.filename)
+  console.log('- Content Type:', file.detectedContentType)
+}
+
+/**
+ * Poll for status and extract bucket/key from the result.
+ * Returns { bucket, key, statusData }.
+ */
+async function resolveS3Location(statusUrl, timeoutMs, interval, uploadId, logger) {
+  const statusData = await pollStatus(statusUrl, timeoutMs, interval, logger).catch((err) => {
+    logger.warn(
+      { err: err.message, uploadId },
+      'Polling cdp-uploader status failed or timed out'
+    )
+    return null
+  })
+
+  // ✅ check hasError from statusData
+  const fileStatus = statusData?.form?.file
+   const hasError = fileStatus?.hasError
+
+  if (hasError) {
+    const errorMessage = fileStatus?.errorMessage ?? 'Unknown error from cdp-uploader'
+    logger.error(
+      {
+        uploadId,
+        hasError,
+        errorMessage,
+        fileStatus: fileStatus?.fileStatus
+      },
+      `cdp-uploader reported file error: ${errorMessage}`
+    )
+    throw new Error(errorMessage)
+  }
+
+  logS3Details(statusData)
+
+  return {
+    bucket: statusData?.form?.file?.s3Bucket ?? null,
+    key: statusData?.form?.file?.s3Key ?? null,
+    fileName: statusData?.form?.file?.filename ?? null,
+    mimeType: statusData?.form?.file?.detectedContentType ?? null
+  }
+}
+
+/**
+ * Upload a file to cdp-uploader:
+ *  1) /initiate  → get uploadId / uploadUrl / statusUrl
+ *  2) upload buffer to uploadUrl
+ *  3) poll status until ready or failed
+ *
+ * Returns { bucket, key }. Throws on fatal errors.
+ */
+async function uploadFileToCdpUploader(fileMultipartStream, contentType, logger) {
+  const CDP_UPLOADER = (config.get('cdpUploader.url') || '').replace(/\/$/, '')
+  const timeoutMs = config.get('cdpUploader.pollTimeoutMs') || DEFAULT_POLL_TIMEOUT_MS
+  const interval = config.get('cdpUploader.pollIntervalMs') || DEFAULT_POLL_INTERVAL_MS
+  const S3_BUCKET = config.get('s3.bucket')
+
+  if (!CDP_UPLOADER) {
+    throw new Error('cdp-uploader base URL not configured')
+  }
+
+  const { uploadId, uploadUrl, statusUrl } = await initiateUpload(
+    CDP_UPLOADER,
+    S3_BUCKET,
+    logger
+  )
+
+  logger.info({ uploadId, uploadUrl, statusUrl }, 'cdp-uploader initiated successfully')
+
+  if (!uploadUrl) {
+    throw new Error('cdp-uploader initiate did not return an uploadUrl')
+  }
+
+  await performUpload(uploadUrl, fileMultipartStream, contentType, logger)
+
+  if (!statusUrl) {
+    throw new Error('cdp-uploader initiate did not return an statusUrl')
+  }
+
+  const { bucket, key, fileName, mimeType } = await resolveS3Location(
+    statusUrl,
+    timeoutMs,
+    interval,
+    uploadId,
+    logger
+  )
+
+  return { bucket, key, fileName, mimeType }
+}
+
+/**
  * POST /api/upload handler
- * Accepts a multipart file upload (PDF or DOCX), extracts the text and feeds
- * it through the standard S3 → canonical document → DB → SQS pipeline.
+ * Accepts a multipart file upload (PDF or DOCX), validates it, uploads the original file to cdp-uploader for safe storage, creates a canonical document record and queues
+ * it through canonical document → DB → SQS pipeline.
  */
 const handleFileUpload = async (request, h) => {
   const requestStartTime = performance.now()
 
-  try {
-    const prepared = await validateAndPrepareContent(
-      request.payload?.file,
-      request.logger,
-      h
-    )
-    if (prepared.errorResponse) {
-      return prepared.errorResponse
+    const contentType = request.headers['content-type']  // multipart/form-data; boundary=...
+    const contentLength = request.headers['content-length']
+
+    // ✅ Validate content type header before touching body
+    if (!contentType?.includes('multipart/form-data')) {
+      return h.response({
+        success: false,
+        message: 'Request must be multipart/form-data'
+      }).code(HTTP_STATUS.BAD_REQUEST)
     }
 
-    const { filename, mimeType, buffer, extractedText } = prepared
-    const maxCharLength = config.get('contentReview.maxCharLength')
-    const content = extractedText.substring(0, maxCharLength)
+    // ✅ Validate size from header (Hapi maxBytes already enforces this)
+    if (contentLength && Number.parseInt(contentLength) === 0) {
+      return h.response({
+        success: false,
+        message: 'The uploaded file is empty'
+      }).code(HTTP_STATUS.BAD_REQUEST)
+    }
     const reviewId = randomUUID()
-    const title = filename || 'Uploaded file'
     const userId = request.headers['x-user-id'] || null
 
     request.logger.info(
       {
         reviewId,
-        filename,
-        mimeType,
-        bufferBytes: buffer.length,
-        extractedChars: extractedText.length,
-        truncatedChars: content.length
+        contentType,
+        fileSize: contentLength
       },
-      '[STEP 1/6] File validated and text extracted — starting pipeline'
+      '[STEP 1/6] File validated  — starting pipeline'
     )
 
+    try {
     const pipelineResult = await runPipeline(
-      content,
+      request.payload,
       reviewId,
-      title,
-      mimeType,
+      contentType,
       userId,
       request.headers,
       request.logger
@@ -301,16 +446,17 @@ const handleFileUpload = async (request, h) => {
       request.logger,
       h,
       reviewId,
-      filename,
-      mimeType,
+      pipelineResult.s3Result.fileName,
+      pipelineResult.s3Result.mimeType,
       pipelineResult,
       totalDuration
     )
   } catch (error) {
     const totalDuration = Math.round(performance.now() - requestStartTime)
+    // ✅ respondError sends error.message to frontend
     return respondError(error, request.logger, totalDuration, h)
   }
-}
+  } 
 
 export const uploadRoutes = {
   plugin: {
@@ -322,8 +468,8 @@ export const uploadRoutes = {
         options: {
           payload: {
             output: 'stream',
-            parse: true,
-            multipart: true,
+            parse: false,
+            multipart: false,
             maxBytes: MAX_FILE_BYTES
           },
           cors: getCorsConfig()
@@ -333,3 +479,6 @@ export const uploadRoutes = {
     }
   }
 }
+
+// export helpers for unit tests and integration use
+export { uploadFileToCdpUploader, runPipeline}
