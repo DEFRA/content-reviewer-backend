@@ -13,8 +13,8 @@ import {
 const ENDPOINT_UPLOAD = '/api/upload'
 const MAX_FILE_BYTES = 10 * 1024 * 1024 // 10 MB
 const SOURCE_TYPE_FILE = 'file'
-const DEFAULT_POLL_TIMEOUT_MS = 60_000  // 60 seconds
-const DEFAULT_POLL_INTERVAL_MS = 1_500  // 1.5 seconds
+const DEFAULT_POLL_TIMEOUT_MS = 60_000 // 60 seconds
+const DEFAULT_POLL_INTERVAL_MS = 1_500 // 1.5 seconds
 
 const ACCEPTED_MIME_TYPES = {
   'application/pdf': true,
@@ -39,9 +39,9 @@ async function runPipeline(
   contentType,
   userId,
   headers,
-  logger
+  logger,
+  fallbackFileName
 ) {
-
   // STEP 2: upload raw original file to cdp-uploader (audit copy)
   const s3UploadStart = performance.now()
 
@@ -54,7 +54,7 @@ async function runPipeline(
   const s3UploadDuration = Math.round(performance.now() - s3UploadStart)
 
   const rawS3Key = rawS3Result.key
-  const fileName = rawS3Result.fileName
+  const fileName = rawS3Result.fileName ?? fallbackFileName
   const mimeType = rawS3Result.mimeType
 
   const { canonicalResult, canonicalDuration } = await createCanonicalDocument(
@@ -64,7 +64,7 @@ async function runPipeline(
     logger,
     CANONICAL_SOURCE_TYPES.FILE,
     rawS3Key
-    )
+  )
 
   const charCount = canonicalResult?.document?.charCount || 0
 
@@ -97,7 +97,6 @@ async function runPipeline(
     sqsSendDuration
   }
 }
-
 
 /**
  * Logs the pipeline completion and returns the 202 Accepted response.
@@ -170,8 +169,12 @@ function sleep(ms) {
  * Returns 'done', 'rejected', or 'pending'.
  */
 function classifyFileStatus(fileStatus) {
-  if (fileStatus === 'complete') {return 'done'}
-  if (fileStatus === 'rejected') {return 'rejected'}
+  if (fileStatus === 'complete') {
+    return 'done'
+  }
+  if (fileStatus === 'rejected') {
+    return 'rejected'
+  }
   return 'pending'
 }
 
@@ -198,8 +201,11 @@ async function fetchStatus(statusUrl, logger) {
   const fileStatus = data?.form?.file?.fileStatus
   const classification = classifyFileStatus(fileStatus)
 
-  logger.info({ statusUrl,uploadStatus, fileStatus }, 'cdp-uploader status poll')
-  return { data,uploadStatus, classification }
+  logger.info(
+    { statusUrl, uploadStatus, fileStatus },
+    'cdp-uploader status poll'
+  )
+  return { data, uploadStatus, classification }
 }
 
 /**
@@ -214,9 +220,13 @@ async function pollStatus(statusUrl, timeoutMs, interval, logger) {
     try {
       const polled = await fetchStatus(statusUrl, logger)
 
-      if ( polled?.uploadStatus === 'ready' &&
-        (polled?.classification === 'done' || polled?.classification === 'rejected')) {return polled.data}
-
+      if (
+        polled?.uploadStatus === 'ready' &&
+        (polled?.classification === 'done' ||
+          polled?.classification === 'rejected')
+      ) {
+        return polled.data
+      }
     } catch (err) {
       logger.warn(
         { err: err.message, statusUrl },
@@ -246,6 +256,7 @@ async function initiateUpload(cdpUploaderUrl, s3Bucket, logger) {
   const initResp = await fetch(`${cdpUploaderUrl}/initiate`, {
     method: 'POST',
     headers: {
+      'Content-Type': 'application/json',
       'User-Agent': 'content-reviewer-backend'
     },
     body: JSON.stringify(initBody)
@@ -273,8 +284,12 @@ async function initiateUpload(cdpUploaderUrl, s3Bucket, logger) {
  * PUT/POST the raw multi-part file to the presigned uploadUrl.
  * Throws on non-2xx.
  */
-async function performUpload(uploadUrl, fileMultipartStream, contentType, logger) {
-  
+async function performUpload(
+  uploadUrl,
+  fileMultipartStream,
+  contentType,
+  logger
+) {
   const uploadRes = await fetch(uploadUrl, {
     method: 'POST',
     headers: { 'Content-Type': contentType },
@@ -296,7 +311,9 @@ async function performUpload(uploadUrl, fileMultipartStream, contentType, logger
  */
 function logS3Details(statusData) {
   const file = statusData?.form?.file
-  if (!file?.s3Bucket && !file?.s3Key) {return}
+  if (!file?.s3Bucket && !file?.s3Key) {
+    return
+  }
 
   console.log('S3 DETAILS:')
   console.log('- S3 Bucket:', file.s3Bucket)
@@ -309,8 +326,19 @@ function logS3Details(statusData) {
  * Poll for status and extract bucket/key from the result.
  * Returns { bucket, key, statusData }.
  */
-async function resolveS3Location(statusUrl, timeoutMs, interval, uploadId, logger) {
-  const statusData = await pollStatus(statusUrl, timeoutMs, interval, logger).catch((err) => {
+async function resolveS3Location(
+  statusUrl,
+  timeoutMs,
+  interval,
+  uploadId,
+  logger
+) {
+  const statusData = await pollStatus(
+    statusUrl,
+    timeoutMs,
+    interval,
+    logger
+  ).catch((err) => {
     logger.warn(
       { err: err.message, uploadId },
       'Polling cdp-uploader status failed or timed out'
@@ -320,10 +348,11 @@ async function resolveS3Location(statusUrl, timeoutMs, interval, uploadId, logge
 
   // ✅ check hasError from statusData
   const fileStatus = statusData?.form?.file
-   const hasError = fileStatus?.hasError
+  const hasError = fileStatus?.hasError
 
   if (hasError) {
-    const errorMessage = fileStatus?.errorMessage ?? 'Unknown error from cdp-uploader'
+    const errorMessage =
+      fileStatus?.errorMessage ?? 'Unknown error from cdp-uploader'
     logger.error(
       {
         uploadId,
@@ -354,10 +383,16 @@ async function resolveS3Location(statusUrl, timeoutMs, interval, uploadId, logge
  *
  * Returns { bucket, key }. Throws on fatal errors.
  */
-async function uploadFileToCdpUploader(fileMultipartStream, contentType, logger) {
+async function uploadFileToCdpUploader(
+  fileMultipartStream,
+  contentType,
+  logger
+) {
   const CDP_UPLOADER = (config.get('cdpUploader.url') || '').replace(/\/$/, '')
-  const timeoutMs = config.get('cdpUploader.pollTimeoutMs') || DEFAULT_POLL_TIMEOUT_MS
-  const interval = config.get('cdpUploader.pollIntervalMs') || DEFAULT_POLL_INTERVAL_MS
+  const timeoutMs =
+    config.get('cdpUploader.pollTimeoutMs') || DEFAULT_POLL_TIMEOUT_MS
+  const interval =
+    config.get('cdpUploader.pollIntervalMs') || DEFAULT_POLL_INTERVAL_MS
   const S3_BUCKET = config.get('s3.bucket')
 
   if (!CDP_UPLOADER) {
@@ -370,7 +405,10 @@ async function uploadFileToCdpUploader(fileMultipartStream, contentType, logger)
     logger
   )
 
-  logger.info({ uploadId, uploadUrl, statusUrl }, 'cdp-uploader initiated successfully')
+  logger.info(
+    { uploadId, uploadUrl, statusUrl },
+    'cdp-uploader initiated successfully'
+  )
 
   if (!uploadUrl) {
     throw new Error('cdp-uploader initiate did not return an uploadUrl')
@@ -401,44 +439,52 @@ async function uploadFileToCdpUploader(fileMultipartStream, contentType, logger)
 const handleFileUpload = async (request, h) => {
   const requestStartTime = performance.now()
 
-    const contentType = request.headers['content-type']  // multipart/form-data; boundary=...
-    const contentLength = request.headers['content-length']
+  const contentType = request.headers['content-type'] // application/octet-stream
+  const contentLength = request.headers['content-length']
+  const rawFileName = request.headers['x-file-name']
+  const fileName = rawFileName ? decodeURIComponent(rawFileName) : null
 
-    // ✅ Validate content type header before touching body
-    if (!contentType?.includes('multipart/form-data')) {
-      return h.response({
+  // ✅ Validate content type header before touching body
+  if (!contentType?.includes('application/octet-stream')) {
+    return h
+      .response({
         success: false,
-        message: 'Request must be multipart/form-data'
-      }).code(HTTP_STATUS.BAD_REQUEST)
-    }
+        message: 'Request must be application/octet-stream'
+      })
+      .code(HTTP_STATUS.BAD_REQUEST)
+  }
 
-    // ✅ Validate size from header (Hapi maxBytes already enforces this)
-    if (contentLength && Number.parseInt(contentLength) === 0) {
-      return h.response({
+  // ✅ Validate size from header (Hapi maxBytes already enforces this)
+  if (contentLength && Number.parseInt(contentLength) === 0) {
+    return h
+      .response({
         success: false,
         message: 'The uploaded file is empty'
-      }).code(HTTP_STATUS.BAD_REQUEST)
-    }
-    const reviewId = randomUUID()
-    const userId = request.headers['x-user-id'] || null
+      })
+      .code(HTTP_STATUS.BAD_REQUEST)
+  }
+  const reviewId = randomUUID()
+  const userId = request.headers['x-user-id'] || null
 
-    request.logger.info(
-      {
-        reviewId,
-        contentType,
-        fileSize: contentLength
-      },
-      '[STEP 1/6] File validated  — starting pipeline'
-    )
+  request.logger.info(
+    {
+      reviewId,
+      contentType,
+      fileName,
+      fileSize: contentLength
+    },
+    '[STEP 1/6] File validated  — starting pipeline'
+  )
 
-    try {
+  try {
     const pipelineResult = await runPipeline(
       request.payload,
       reviewId,
       contentType,
       userId,
       request.headers,
-      request.logger
+      request.logger,
+      fileName
     )
     const totalDuration = Math.round(performance.now() - requestStartTime)
 
@@ -446,7 +492,7 @@ const handleFileUpload = async (request, h) => {
       request.logger,
       h,
       reviewId,
-      pipelineResult.s3Result.fileName,
+      pipelineResult.s3Result.fileName ?? fileName,
       pipelineResult.s3Result.mimeType,
       pipelineResult,
       totalDuration
@@ -456,7 +502,7 @@ const handleFileUpload = async (request, h) => {
     // ✅ respondError sends error.message to frontend
     return respondError(error, request.logger, totalDuration, h)
   }
-  } 
+}
 
 export const uploadRoutes = {
   plugin: {
@@ -481,4 +527,4 @@ export const uploadRoutes = {
 }
 
 // export helpers for unit tests and integration use
-export { uploadFileToCdpUploader, runPipeline}
+export { uploadFileToCdpUploader, runPipeline }
