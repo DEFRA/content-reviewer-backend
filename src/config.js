@@ -177,6 +177,18 @@ const config = convict({
       format: String,
       default: 'https://cdp-uploader.dev.cdp-int.defra.cloud',
       env: 'CDP_UPLOADER_URL'
+    },
+    pollTimeoutMs: {
+      doc: 'cdp-uploader polling timeout in milliseconds',
+      format: Number,
+      default: 60000,
+      env: 'CDP_POLL_TIMEOUT_MS'
+    },
+    pollIntervalMs: {
+      doc: 'cdp-uploader poll interval in milliseconds',
+      format: Number,
+      default: 1500,
+      env: 'CDP_POLL_INTERVAL_MS'
     }
   },
   s3: {
