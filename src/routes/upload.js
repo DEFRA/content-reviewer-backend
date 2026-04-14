@@ -358,7 +358,7 @@ async function uploadFileToCdpUploader(fileMultipartStream, contentType, logger)
   const CDP_UPLOADER = (config.get('cdpUploader.url') || '').replace(/\/$/, '')
   const timeoutMs = config.get('cdpUploader.pollTimeoutMs') || DEFAULT_POLL_TIMEOUT_MS
   const interval = config.get('cdpUploader.pollIntervalMs') || DEFAULT_POLL_INTERVAL_MS
-  const S3_BUCKET = config.get('cdpUploader.s3Bucket')
+  const S3_BUCKET = config.get('s3.bucket')
 
   if (!CDP_UPLOADER) {
     throw new Error('cdp-uploader base URL not configured')
@@ -413,7 +413,7 @@ const handleFileUpload = async (request, h) => {
     }
 
     // ✅ Validate size from header (Hapi maxBytes already enforces this)
-    if (contentLength && parseInt(contentLength) === 0) {
+    if (contentLength && Number.parseInt(contentLength) === 0) {
       return h.response({
         success: false,
         message: 'The uploaded file is empty'
