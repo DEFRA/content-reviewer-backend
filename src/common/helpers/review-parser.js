@@ -1,4 +1,5 @@
 import { createLogger } from './logging/logger.js'
+import { filterFalsePositives } from './false-positive-filter.js'
 
 const logger = createLogger()
 
@@ -11,6 +12,23 @@ const ISSUE_POSITIONS_CLOSE_TAG = '[/ISSUE_POSITIONS]'
 const IMPROVEMENTS_TAG = '[IMPROVEMENTS]'
 const PREFLIGHT_TAG = '[PREFLIGHT]'
 const PREFLIGHT_CLOSE_TAG = '[/PREFLIGHT]'
+
+/**
+ * Parse a JSON string extracted from the [ISSUE_POSITIONS] section.
+ * Returns validated issues or an empty array on error.
+ */
+function parseIssuePositionsJson(jsonStr, originalText) {
+  const parsed = JSON.parse(jsonStr)
+
+  if (!Array.isArray(parsed.issues)) {
+    logger.warn({ parsed }, '[ISSUE_POSITIONS] JSON missing "issues" array')
+    return []
+  }
+
+  return parsed.issues
+    .map((raw) => mapRawIssue(raw, originalText))
+    .filter(Boolean)
+}
 
 /**
  * Parse the [ISSUE_POSITIONS] section.
@@ -74,23 +92,6 @@ function mapRawIssue(raw, originalText) {
 }
 
 /**
- * Parse a JSON string extracted from the [ISSUE_POSITIONS] section.
- * Returns validated issues or an empty array on error.
- */
-function parseIssuePositionsJson(jsonStr, originalText) {
-  const parsed = JSON.parse(jsonStr)
-
-  if (!Array.isArray(parsed.issues)) {
-    logger.warn({ parsed }, '[ISSUE_POSITIONS] JSON missing "issues" array')
-    return []
-  }
-
-  return parsed.issues
-    .map((raw) => mapRawIssue(raw, originalText))
-    .filter(Boolean)
-}
-
-/**
  * Parse the [ISSUE_POSITIONS] section.
  * Expects a single-line JSON: {"issues":[{"start":N,"end":M,"type":"...","text":"..."},...]}
  * Falls back to resolving text from originalText using start/end offsets if text field is missing.
@@ -146,32 +147,7 @@ function tryParseScoreLine(line) {
     return null
   }
 
-  const category = line.substring(0, colonIndex).trim()
-  const afterColon = line.substring(colonIndex + 1).trim()
-
-  const MIN_SCORE_PATTERN_LENGTH = 3
-  const DASH_SEARCH_START = 3
-
-  if (
-    afterColon.length < MIN_SCORE_PATTERN_LENGTH ||
-    !/^\d\/5/.test(afterColon)
-  ) {
-    return null
-  }
-
-  const score = afterColon.charAt(0)
-  const dashIndex = afterColon.indexOf('-', DASH_SEARCH_START)
-
-  if (dashIndex <= 0) {
-    return null
-  }
-
-  const note = afterColon.substring(dashIndex + 1).trim()
-  return {
-    category,
-    score: Number.parseInt(score),
-    note
-  }
+  return parseScoreLine(line, colonIndex)
 }
 
 /**
@@ -612,16 +588,33 @@ function parseMarkerBasedReview(bedrockResponse, originalText = '') {
   const reviewedContent = extractReviewedContent(bedrockResponse, originalText)
   const improvements = extractImprovements(bedrockResponse)
 
+  // Post-process: remove demonstrable false positives
+  const postFiltered = filterFalsePositives(
+    improvements,
+    reviewedContent.issues,
+    originalText
+  )
+
   logger.info(
     {
       scoreCount: Object.keys(scores).length,
-      issueCount: reviewedContent.issues.length,
-      improvementCount: improvements.length
+      issueCount: postFiltered.issues.length,
+      improvementCount: postFiltered.improvements.length,
+      removedImprovements:
+        improvements.length - postFiltered.improvements.length,
+      removedIssues: reviewedContent.issues.length - postFiltered.issues.length
     },
     'Parsed Bedrock response with markers'
   )
 
-  return { scores, reviewedContent, improvements }
+  return {
+    scores,
+    reviewedContent: {
+      plainText: reviewedContent.plainText,
+      issues: postFiltered.issues
+    },
+    improvements: postFiltered.improvements
+  }
 }
 
 /**
