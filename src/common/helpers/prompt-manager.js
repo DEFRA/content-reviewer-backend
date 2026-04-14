@@ -609,7 +609,24 @@ class PromptManager {
       const response = await this.s3Client.send(command)
       const promptText = await response.Body.transformToString()
 
-      // Update cache
+      // Auto-sync: if S3 content differs from the embedded default, upload the
+      // embedded version so that S3 stays in step with the deployed code.
+      if (promptText !== DEFAULT_SYSTEM_PROMPT) {
+        logger.info(
+          {
+            s3Length: promptText.length,
+            embeddedLength: DEFAULT_SYSTEM_PROMPT.length
+          },
+          'S3 prompt differs from embedded default — auto-syncing S3'
+        )
+        await this.uploadPrompt() // uploads DEFAULT_SYSTEM_PROMPT and calls clearCache()
+        // Repopulate cache so the next call doesn't trigger another S3 round-trip
+        this.cache = DEFAULT_SYSTEM_PROMPT
+        this.cacheTimestamp = Date.now()
+        return DEFAULT_SYSTEM_PROMPT
+      }
+
+      // S3 matches embedded — cache and return
       this.cache = promptText
       this.cacheTimestamp = Date.now()
 
@@ -617,8 +634,6 @@ class PromptManager {
         { promptLength: promptText.length },
         'System prompt loaded from S3 and cached'
       )
-
-      logger.info({ promptText }, 'Print System prompt loaded from S3')
 
       return promptText
     } catch (error) {
@@ -629,10 +644,19 @@ class PromptManager {
           bucket: this.bucket,
           key: this.promptKey
         },
-        'Failed to load system prompt from S3, using embedded default'
+        'Failed to load system prompt from S3 — attempting to seed S3 with embedded default'
       )
 
-      // Use embedded default prompt as fallback
+      // Best-effort: push the embedded default to S3 so future requests succeed.
+      // Do not await — if S3 is genuinely unavailable this will also fail, and
+      // we still want to return the embedded prompt without delaying the review.
+      this.uploadPrompt().catch((uploadError) => {
+        logger.warn(
+          { error: uploadError.message },
+          'Auto-seed of S3 prompt also failed — will retry on next cache miss'
+        )
+      })
+
       return DEFAULT_SYSTEM_PROMPT
     }
   }
