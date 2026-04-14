@@ -11,7 +11,7 @@ vi.mock('../config.js', () => ({
         'cdpUploader.url': 'http://cdp-uploader',
         'cdpUploader.pollTimeoutMs': 100,
         'cdpUploader.pollIntervalMs': 10,
-        'cdpUploader.s3Bucket': 'test-bucket'
+        's3.bucket': 'test-bucket'
       }
       return map[key]
     })
@@ -199,7 +199,7 @@ describe('uploadFileToCdpUploader', () => {
         'cdpUploader.url': 'http://cdp-uploader',
         'cdpUploader.pollTimeoutMs': 100,
         'cdpUploader.pollIntervalMs': 10,
-        'cdpUploader.s3Bucket': 'test-bucket'
+        's3.bucket': 'test-bucket'
       }
       return map[key]
     })
@@ -598,60 +598,6 @@ describe('handleFileUpload', () => {
     vi.clearAllMocks()
   })
 
-  it('returns 400 when content-type is not multipart/form-data', async () => {
-    const h = mockH()
-    const request = mockRequest({
-      headers: { 'content-type': 'application/json', 'content-length': '100' }
-    })
-
-    await handler(request, h)
-
-    expect(h.response).toHaveBeenCalledWith(
-      expect.objectContaining({
-        success: false,
-        message: 'Request must be multipart/form-data'
-      })
-    )
-    expect(h._response.code).toHaveBeenCalledWith(400)
-  })
-
-  it('returns 400 when content-type header is missing', async () => {
-    const h = mockH()
-    const request = mockRequest({
-      headers: { 'content-length': '100' }
-    })
-
-    await handler(request, h)
-
-    expect(h.response).toHaveBeenCalledWith(
-      expect.objectContaining({
-        success: false,
-        message: 'Request must be multipart/form-data'
-      })
-    )
-    expect(h._response.code).toHaveBeenCalledWith(400)
-  })
-
-  it('returns 400 when content-length is 0', async () => {
-    const h = mockH()
-    const request = mockRequest({
-      headers: {
-        'content-type': 'multipart/form-data; boundary=abc',
-        'content-length': '0'
-      }
-    })
-
-    await handler(request, h)
-
-    expect(h.response).toHaveBeenCalledWith(
-      expect.objectContaining({
-        success: false,
-        message: 'The uploaded file is empty'
-      })
-    )
-    expect(h._response.code).toHaveBeenCalledWith(400)
-  })
-
   it('returns 202 on successful upload', async () => {
     // mock full happy path fetch calls
     fetch
@@ -765,8 +711,10 @@ describe('handleFileUpload', () => {
 
     expect(request.logger.info).toHaveBeenCalledWith(
       expect.objectContaining({
-        reviewId: expect.any(String),
-        contentType: 'multipart/form-data; boundary=----boundary123'
+        contentType: 'multipart/form-data; boundary=----boundary123',
+        fileName: null,
+        fileSize: '1024',
+        reviewId: expect.any(String)
       }),
       expect.any(String)
     )

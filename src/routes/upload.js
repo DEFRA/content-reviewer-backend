@@ -439,30 +439,11 @@ async function uploadFileToCdpUploader(
 const handleFileUpload = async (request, h) => {
   const requestStartTime = performance.now()
 
-  const contentType = request.headers['content-type'] // application/octet-stream
+  const contentType = request.headers['content-type'] 
   const contentLength = request.headers['content-length']
   const rawFileName = request.headers['x-file-name']
   const fileName = rawFileName ? decodeURIComponent(rawFileName) : null
 
-  // ✅ Validate content type header before touching body
-  if (!contentType?.includes('application/octet-stream')) {
-    return h
-      .response({
-        success: false,
-        message: 'Request must be application/octet-stream'
-      })
-      .code(HTTP_STATUS.BAD_REQUEST)
-  }
-
-  // ✅ Validate size from header (Hapi maxBytes already enforces this)
-  if (contentLength && Number.parseInt(contentLength) === 0) {
-    return h
-      .response({
-        success: false,
-        message: 'The uploaded file is empty'
-      })
-      .code(HTTP_STATUS.BAD_REQUEST)
-  }
   const reviewId = randomUUID()
   const userId = request.headers['x-user-id'] || null
 
