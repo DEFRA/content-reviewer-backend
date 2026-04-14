@@ -256,6 +256,7 @@ async function initiateUpload(cdpUploaderUrl, s3Bucket, logger) {
   const initResp = await fetch(`${cdpUploaderUrl}/initiate`, {
     method: 'POST',
     headers: {
+      'Content-Type': 'application/json',
       'User-Agent': 'content-reviewer-backend'
     },
     body: JSON.stringify(initBody)
@@ -491,7 +492,7 @@ const handleFileUpload = async (request, h) => {
       request.logger,
       h,
       reviewId,
-      pipelineResult.s3Result.fileName,
+      pipelineResult.s3Result.fileName ?? fileName,
       pipelineResult.s3Result.mimeType,
       pipelineResult,
       totalDuration
