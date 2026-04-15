@@ -7,11 +7,11 @@ import { config } from '../../config.js'
 import { createLogger } from './logging/logger.js'
 import { DEFAULT_SYSTEM_PROMPT } from './default-system-prompt.js'
 
-const logger = createLogger()
-
 // Re-export so existing consumers that import DEFAULT_SYSTEM_PROMPT from here
 // continue to work without changes.
-export { DEFAULT_SYSTEM_PROMPT }
+export { DEFAULT_SYSTEM_PROMPT } from './default-system-prompt.js'
+
+const logger = createLogger()
 
 /**
  * Prompt Manager - Manages system prompts from S3 with fallback to embedded content

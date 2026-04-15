@@ -439,7 +439,7 @@ async function uploadFileToCdpUploader(
 const handleFileUpload = async (request, h) => {
   const requestStartTime = performance.now()
 
-  const contentType = request.headers['content-type'] 
+  const contentType = request.headers['content-type']
   const contentLength = request.headers['content-length']
   const rawFileName = request.headers['x-file-name']
   const fileName = rawFileName ? decodeURIComponent(rawFileName) : null
