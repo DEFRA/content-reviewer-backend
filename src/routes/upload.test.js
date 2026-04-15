@@ -95,8 +95,8 @@ function mockFetchResponse(body, status = 200, ok = true) {
 function mockRequest(overrides = {}) {
   return {
     headers: {
-      'content-type': 'multipart/form-data; boundary=----boundary123',
-      'content-length': '1024',
+      'Content-Type': 'multipart/form-data; boundary=----boundary123',
+      'Content-Length': '1024',
       'x-user-id': 'user-123',
       ...overrides.headers
     },
