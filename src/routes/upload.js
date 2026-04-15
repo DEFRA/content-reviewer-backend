@@ -9,6 +9,7 @@ import {
   createReviewRecord,
   queueReviewJob
 } from './review-helpers.js'
+import { Redirect$ } from '@aws-sdk/client-s3'
 
 const ENDPOINT_UPLOAD = '/api/upload'
 const MAX_FILE_BYTES = 10 * 1024 * 1024 // 10 MB
@@ -247,7 +248,8 @@ async function pollStatus(statusUrl, timeoutMs, interval, logger) {
  */
 async function initiateUpload(cdpUploaderUrl, s3Bucket, logger) {
   const initBody = {
-    s3Bucket,
+    s3Bucket: s3Bucket,
+    redirect: 'manual',
     maxFileSize: MAX_FILE_BYTES,
     mimeTypes: Object.keys(ACCEPTED_MIME_TYPES),
     metadata: { source: 'content-reviewer-backend', requestId: randomUUID() }
@@ -439,8 +441,8 @@ async function uploadFileToCdpUploader(
 const handleFileUpload = async (request, h) => {
   const requestStartTime = performance.now()
 
-  const contentType = request.headers['content-type']
-  const contentLength = request.headers['content-length']
+  const contentType = request.headers['Content-Type']
+  const contentLength = request.headers['Content-Length']
   const rawFileName = request.headers['x-file-name']
   const fileName = rawFileName ? decodeURIComponent(rawFileName) : null
 
