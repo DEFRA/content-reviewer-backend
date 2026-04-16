@@ -9,7 +9,6 @@ import {
   createReviewRecord,
   queueReviewJob
 } from './review-helpers.js'
-import { Redirect$ } from '@aws-sdk/client-s3'
 
 const ENDPOINT_UPLOAD = '/api/upload'
 const MAX_FILE_BYTES = 10 * 1024 * 1024 // 10 MB
@@ -287,12 +286,12 @@ async function initiateUpload(cdpUploaderUrl, s3Bucket, logger) {
  * Throws on non-2xx.
  */
 async function performUpload(
-  uploadUrl,
+  uploadAndScanUrl,
   fileMultipartStream,
   contentType,
   logger
 ) {
-  const uploadRes = await fetch(uploadUrl, {
+  const uploadRes = await fetch(uploadAndScanUrl, {
     method: 'POST',
     headers: { 'Content-Type': contentType },
     body: fileMultipartStream
@@ -329,14 +328,14 @@ function logS3Details(statusData) {
  * Returns { bucket, key, statusData }.
  */
 async function resolveS3Location(
-  statusUrl,
+  uploadStatusUrl,
   timeoutMs,
   interval,
   uploadId,
   logger
 ) {
   const statusData = await pollStatus(
-    statusUrl,
+    uploadStatusUrl,
     timeoutMs,
     interval,
     logger
@@ -416,14 +415,21 @@ async function uploadFileToCdpUploader(
     throw new Error('cdp-uploader initiate did not return an uploadUrl')
   }
 
-  await performUpload(uploadUrl, fileMultipartStream, contentType, logger)
+  const uploadAndScanUrl = new URL(uploadUrl,CDP_UPLOADER).href
+  logger.info({ uploadAndScanUrl }, 'Uploading file to cdp-uploader')
+
+  await performUpload(uploadAndScanUrl, fileMultipartStream, contentType, logger)
 
   if (!statusUrl) {
     throw new Error('cdp-uploader initiate did not return an statusUrl')
   }
 
+  const uploadStatusUrl = new URL(statusUrl,CDP_UPLOADER).href
+  
+  logger.info({ uploadStatusUrl }, 'Polling cdp-uploader for upload status')
+
   const { bucket, key, fileName, mimeType } = await resolveS3Location(
-    statusUrl,
+    uploadStatusUrl,
     timeoutMs,
     interval,
     uploadId,
