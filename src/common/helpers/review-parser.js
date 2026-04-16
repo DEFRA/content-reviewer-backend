@@ -434,7 +434,8 @@ function parseImprovements(improvementsText) {
   const blocks = improvementsText.split('[PRIORITY:')
   const improvements = []
 
-  for (const block of blocks) {
+  for (const rawBlock of blocks) {
+    const block = rawBlock.replaceAll('[/PRIORITY]', '')
     const improvement = parseImprovementBlock(block)
     if (improvement) {
       improvements.push(improvement)
