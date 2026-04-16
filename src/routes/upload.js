@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { Readable } from 'node:stream'
 import { config } from '../config.js'
 import { SOURCE_TYPES as CANONICAL_SOURCE_TYPES } from '../common/helpers/canonical-document.js'
 import {
@@ -48,7 +49,8 @@ async function runPipeline(
   const rawS3Result = await uploadFileToCdpUploader(
     fileMultipartStream,
     contentType,
-    logger
+    logger,
+    fallbackFileName
   )
 
   const s3UploadDuration = Math.round(performance.now() - s3UploadStart)
@@ -289,12 +291,23 @@ async function performUpload(
   uploadAndScanUrl,
   fileMultipartStream,
   contentType,
+  rawFileName,
   logger
 ) {
+  // Create FormData for multipart/form-data submission
+  const FormData = (await import('form-data')).default
+  const formData = new FormData()
+
+  // Append file buffer as stream
+  const fileStream = Readable.from(fileMultipartStream)
+  formData.append('file', fileStream, {
+    rawFileName,
+    contentType
+  })
+
   const uploadRes = await fetch(uploadAndScanUrl, {
     method: 'POST',
-    headers: { 'Content-Type': contentType },
-    body: fileMultipartStream
+    body: formData
   })
 
   if (!uploadRes.ok) {
@@ -387,7 +400,8 @@ async function resolveS3Location(
 async function uploadFileToCdpUploader(
   fileMultipartStream,
   contentType,
-  logger
+  logger,
+  rawFileName
 ) {
   const CDP_UPLOADER = (config.get('cdpUploader.url') || '').replace(/\/$/, '')
   const timeoutMs =
@@ -422,6 +436,7 @@ async function uploadFileToCdpUploader(
     uploadAndScanUrl,
     fileMultipartStream,
     contentType,
+    rawFileName,
     logger
   )
 
