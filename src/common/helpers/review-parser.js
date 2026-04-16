@@ -435,7 +435,7 @@ function parseImprovements(improvementsText) {
   const improvements = []
 
   for (const rawBlock of blocks) {
-    const block = rawBlock.replace(/\[\/PRIORITY\]/g, '')
+    const block = rawBlock.replaceAll('[/PRIORITY]', '')
     const improvement = parseImprovementBlock(block)
     if (improvement) {
       improvements.push(improvement)
