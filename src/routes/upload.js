@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { Readable } from 'stream'
 import { config } from '../config.js'
 import { SOURCE_TYPES as CANONICAL_SOURCE_TYPES } from '../common/helpers/canonical-document.js'
 import {
@@ -293,11 +294,10 @@ async function performUpload(
   rawFileName,
   logger
 ) {
-
   // Create FormData for multipart/form-data submission
   const FormData = (await import('form-data')).default
   const formData = new FormData()
-  
+
   // Append file buffer as stream
   const fileStream = Readable.from(fileMultipartStream)
   formData.append('file', fileStream, {
