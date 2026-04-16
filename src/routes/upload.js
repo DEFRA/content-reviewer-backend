@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { Readable } from 'stream'
+import { Readable } from 'node:stream'
 import { config } from '../config.js'
 import { SOURCE_TYPES as CANONICAL_SOURCE_TYPES } from '../common/helpers/canonical-document.js'
 import {
