@@ -859,8 +859,8 @@ describe('classifyFileStatus behaviour in pollStatus', () => {
       .mockResolvedValueOnce(
         mockFetchResponse({
           uploadId: 'upload-123',
-          uploadUrl: 'http://cdp-uploader/upload/123',
-          statusUrl: 'http://cdp-uploader/status/123'
+          uploadUrl: '/upload-and-scan/123',
+          statusUrl: '/status/123'
         })
       )
       .mockResolvedValueOnce(mockFetchResponse({}, 200, true))
