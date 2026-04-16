@@ -415,17 +415,22 @@ async function uploadFileToCdpUploader(
     throw new Error('cdp-uploader initiate did not return an uploadUrl')
   }
 
-  const uploadAndScanUrl = new URL(uploadUrl,CDP_UPLOADER).href
+  const uploadAndScanUrl = new URL(uploadUrl, CDP_UPLOADER).href
   logger.info({ uploadAndScanUrl }, 'Uploading file to cdp-uploader')
 
-  await performUpload(uploadAndScanUrl, fileMultipartStream, contentType, logger)
+  await performUpload(
+    uploadAndScanUrl,
+    fileMultipartStream,
+    contentType,
+    logger
+  )
 
   if (!statusUrl) {
     throw new Error('cdp-uploader initiate did not return an statusUrl')
   }
 
-  const uploadStatusUrl = new URL(statusUrl,CDP_UPLOADER).href
-  
+  const uploadStatusUrl = new URL(statusUrl, CDP_UPLOADER).href
+
   logger.info({ uploadStatusUrl }, 'Polling cdp-uploader for upload status')
 
   const { bucket, key, fileName, mimeType } = await resolveS3Location(
