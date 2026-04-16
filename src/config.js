@@ -306,7 +306,7 @@ const config = convict({
     modelName: {
       doc: 'Bedrock model name (for reference)',
       format: String,
-      default: 'anthropic.claude-3-haiku-20240307-v1:0',
+      default: 'anthropic.claude-3-7-sonnet-20250219-v1:0',
       env: 'BEDROCK_MODEL_NAME'
     },
     maxTokens: {

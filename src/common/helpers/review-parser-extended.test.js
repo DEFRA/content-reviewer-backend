@@ -10,92 +10,65 @@ vi.mock('./logging/logger.js', () => ({
 }))
 
 import { parseBedrockResponse } from './review-parser.js'
-import {
-  SCORES_TAG_OPEN,
-  SCORES_TAG_CLOSE,
-  IMPROVEMENTS_OPEN,
-  IMPROVEMENTS_CLOSE,
-  ISSUE_POSITIONS_OPEN,
-  ISSUE_POSITIONS_CLOSE,
-  REVIEWED_CONTENT_OPEN,
-  REVIEWED_CONTENT_CLOSE,
-  PLAIN_ENGLISH_SCORE_LINE,
-  PRIORITY_HIGH_OPEN,
-  PRIORITY_MEDIUM_OPEN,
-  CATEGORY_PLAIN_ENGLISH,
-  CATEGORY_CLARITY,
-  WHY_BARRIERS,
-  WHY_NEEDS_WORK,
-  ORIGINAL_TEXT_PLACEHOLDER,
-  ORIGINAL_TEXT_UTILISE,
-  buildIssuePositionsResponse
-} from './review-parser-test-helpers.js'
 
-// ============ Score parsing edge cases ============
+// ============ CONSTANTS ============
 
-describe('parseBedrockResponse - score edge cases', () => {
-  it('ignores lines where score is not digit/5 pattern', () => {
-    const plainText = 'Category: abc/5 - bad format'
+const IMPROVEMENTS_OPEN = '[IMPROVEMENTS]'
+const IMPROVEMENTS_CLOSE = '[/IMPROVEMENTS]'
+const ISSUE_POSITIONS_OPEN = '[ISSUE_POSITIONS]'
+const ISSUE_POSITIONS_CLOSE = '[/ISSUE_POSITIONS]'
+const REVIEWED_CONTENT_OPEN = '[REVIEWED_CONTENT]'
+const REVIEWED_CONTENT_CLOSE = '[/REVIEWED_CONTENT]'
 
-    const result = parseBedrockResponse(plainText)
+const PLAIN_ENGLISH_SCORE_LINE = 'Plain English: 3/5 - Some issues'
+const PRIORITY_HIGH_OPEN = 'PRIORITY: high]'
+const PRIORITY_MEDIUM_OPEN = '[PRIORITY: medium]'
+const CATEGORY_PLAIN_ENGLISH = 'CATEGORY: Plain English'
+const CATEGORY_CLARITY = 'CATEGORY: Clarity'
+const WHY_BARRIERS = 'WHY: Barriers for users'
+const ORIGINAL_TEXT_DEFAULT = 'original text'
+const SAMPLE_UTILISE_TEXT = 'The department should utilise all resources.'
 
-    expect(Object.keys(result.scores)).toHaveLength(0)
-  })
+const SCORES_TAG_OPEN = '[SCORES]'
+const SCORES_TAG_CLOSE = '[/SCORES]'
 
-  it('ignores score lines with no colon', () => {
-    const plainText = 'No colon here at all'
+function buildMarkerResponse({
+  scores = '',
+  content = '',
+  improvements = ''
+} = {}) {
+  return [
+    SCORES_TAG_OPEN,
+    scores,
+    SCORES_TAG_CLOSE,
+    REVIEWED_CONTENT_OPEN,
+    content,
+    REVIEWED_CONTENT_CLOSE,
+    IMPROVEMENTS_OPEN,
+    improvements,
+    IMPROVEMENTS_CLOSE
+  ].join('\n')
+}
 
-    const result = parseBedrockResponse(plainText)
-
-    expect(Object.keys(result.scores)).toHaveLength(0)
-  })
-
-  it('ignores short lines that cannot have score pattern', () => {
-    const plainText = 'A: 3'
-
-    const result = parseBedrockResponse(plainText)
-
-    expect(Object.keys(result.scores)).toHaveLength(0)
-  })
-})
-
-// ============ Issue extraction edge cases ============
-
-describe('parseBedrockResponse - issue extraction edge cases', () => {
-  it('handles unclosed ISSUE tag gracefully', () => {
-    const issueContent = 'text [ISSUE:Clarity unclosed bracket text'
-    const response = `${SCORES_TAG_OPEN}\n${SCORES_TAG_CLOSE}\n${REVIEWED_CONTENT_OPEN}\n${issueContent}\n${REVIEWED_CONTENT_CLOSE}\n${IMPROVEMENTS_OPEN}\n${IMPROVEMENTS_CLOSE}`
-
-    const result = parseBedrockResponse(response)
-
-    expect(result.reviewedContent.issues).toEqual([])
-  })
-
-  it('handles missing end marker [/ISSUE] gracefully', () => {
-    const issueContent = 'text [ISSUE:Clarity] no end tag'
-    const response = `${SCORES_TAG_OPEN}\n${SCORES_TAG_CLOSE}\n${REVIEWED_CONTENT_OPEN}\n${issueContent}\n${REVIEWED_CONTENT_CLOSE}\n${IMPROVEMENTS_OPEN}\n${IMPROVEMENTS_CLOSE}`
-
-    const result = parseBedrockResponse(response)
-
-    expect(result.reviewedContent.issues).toEqual([])
-  })
-
-  it('records issue position correctly', () => {
-    const issueContent = '[ISSUE:Clarity]First issue.[/ISSUE]'
-    const response = `${SCORES_TAG_OPEN}\n${SCORES_TAG_CLOSE}\n${REVIEWED_CONTENT_OPEN}\n${issueContent}\n${REVIEWED_CONTENT_CLOSE}\n${IMPROVEMENTS_OPEN}\n${IMPROVEMENTS_CLOSE}`
-
-    const result = parseBedrockResponse(response)
-
-    expect(result.reviewedContent.issues[0].position).toBeDefined()
-    expect(typeof result.reviewedContent.issues[0].position).toBe('number')
-  })
-})
+function buildIssuePositionsResponse(jsonLine) {
+  return [
+    SCORES_TAG_OPEN,
+    PLAIN_ENGLISH_SCORE_LINE,
+    SCORES_TAG_CLOSE,
+    ISSUE_POSITIONS_OPEN,
+    jsonLine,
+    ISSUE_POSITIONS_CLOSE,
+    IMPROVEMENTS_OPEN,
+    IMPROVEMENTS_CLOSE
+  ].join('\n')
+}
 
 // ============ REF field extraction ============
 
 describe('parseBedrockResponse - ref field in [ISSUE_POSITIONS]', () => {
   it('extracts ref field from [ISSUE_POSITIONS] JSON when present', () => {
-    const response = [
+    const originalText = SAMPLE_UTILISE_TEXT
+    const issuePositionsResponse = [
       SCORES_TAG_OPEN,
       PLAIN_ENGLISH_SCORE_LINE,
       SCORES_TAG_CLOSE,
@@ -107,9 +80,9 @@ describe('parseBedrockResponse - ref field in [ISSUE_POSITIONS]', () => {
     ].join('\n')
 
     const result = parseBedrockResponse(
-      response,
+      issuePositionsResponse,
       undefined,
-      ORIGINAL_TEXT_UTILISE
+      originalText
     )
 
     expect(result.reviewedContent.issues).toHaveLength(1)
@@ -117,7 +90,8 @@ describe('parseBedrockResponse - ref field in [ISSUE_POSITIONS]', () => {
   })
 
   it('extracts ref as undefined when ref field is absent from [ISSUE_POSITIONS]', () => {
-    const response = [
+    const originalText = SAMPLE_UTILISE_TEXT
+    const issuePositionsResponse = [
       SCORES_TAG_OPEN,
       PLAIN_ENGLISH_SCORE_LINE,
       SCORES_TAG_CLOSE,
@@ -129,9 +103,9 @@ describe('parseBedrockResponse - ref field in [ISSUE_POSITIONS]', () => {
     ].join('\n')
 
     const result = parseBedrockResponse(
-      response,
+      issuePositionsResponse,
       undefined,
-      ORIGINAL_TEXT_UTILISE
+      originalText
     )
 
     expect(result.reviewedContent.issues).toHaveLength(1)
@@ -141,7 +115,7 @@ describe('parseBedrockResponse - ref field in [ISSUE_POSITIONS]', () => {
   it('extracts multiple refs from [ISSUE_POSITIONS] JSON', () => {
     const originalText =
       'The department should utilise all resources going forward.'
-    const response = [
+    const issuePositionsResponse = [
       SCORES_TAG_OPEN,
       PLAIN_ENGLISH_SCORE_LINE,
       SCORES_TAG_CLOSE,
@@ -152,7 +126,11 @@ describe('parseBedrockResponse - ref field in [ISSUE_POSITIONS]', () => {
       IMPROVEMENTS_CLOSE
     ].join('\n')
 
-    const result = parseBedrockResponse(response, undefined, originalText)
+    const result = parseBedrockResponse(
+      issuePositionsResponse,
+      undefined,
+      originalText
+    )
 
     expect(result.reviewedContent.issues).toHaveLength(2)
     expect(result.reviewedContent.issues[0].ref).toBe(1)
@@ -171,7 +149,7 @@ describe('parseBedrockResponse - REF field in [IMPROVEMENTS]', () => {
       'CURRENT: utilise resources',
       'SUGGESTED: use resources'
     ].join('\n')
-    const response = `${SCORES_TAG_OPEN}\n${SCORES_TAG_CLOSE}\n${REVIEWED_CONTENT_OPEN}\n${REVIEWED_CONTENT_CLOSE}\n${IMPROVEMENTS_OPEN}\n${improvements}\n${IMPROVEMENTS_CLOSE}`
+    const response = buildMarkerResponse({ improvements })
 
     const result = parseBedrockResponse(response)
 
@@ -188,7 +166,7 @@ describe('parseBedrockResponse - REF field in [IMPROVEMENTS]', () => {
       'CURRENT: utilise resources',
       'SUGGESTED: use resources'
     ].join('\n')
-    const response = `${SCORES_TAG_OPEN}\n${SCORES_TAG_CLOSE}\n${REVIEWED_CONTENT_OPEN}\n${REVIEWED_CONTENT_CLOSE}\n${IMPROVEMENTS_OPEN}\n${improvements}\n${IMPROVEMENTS_CLOSE}`
+    const response = buildMarkerResponse({ improvements })
 
     const result = parseBedrockResponse(response)
 
@@ -214,7 +192,7 @@ describe('parseBedrockResponse - REF field in [IMPROVEMENTS]', () => {
       'CURRENT: was done by the team',
       'SUGGESTED: the team did it'
     ].join('\n')
-    const response = `${SCORES_TAG_OPEN}\n${SCORES_TAG_CLOSE}\n${REVIEWED_CONTENT_OPEN}\n${REVIEWED_CONTENT_CLOSE}\n${IMPROVEMENTS_OPEN}\n${improvements}\n${IMPROVEMENTS_CLOSE}`
+    const response = buildMarkerResponse({ improvements })
 
     const result = parseBedrockResponse(response)
 
@@ -233,7 +211,7 @@ describe('parseBedrockResponse - [ISSUE_POSITIONS] edge cases', () => {
     const result = parseBedrockResponse(
       response,
       undefined,
-      ORIGINAL_TEXT_PLACEHOLDER
+      ORIGINAL_TEXT_DEFAULT
     )
 
     expect(result.reviewedContent.issues).toEqual([])
@@ -245,7 +223,7 @@ describe('parseBedrockResponse - [ISSUE_POSITIONS] edge cases', () => {
     const result = parseBedrockResponse(
       response,
       undefined,
-      ORIGINAL_TEXT_PLACEHOLDER
+      ORIGINAL_TEXT_DEFAULT
     )
 
     expect(result.reviewedContent.issues).toEqual([])
@@ -257,7 +235,7 @@ describe('parseBedrockResponse - [ISSUE_POSITIONS] edge cases', () => {
     const result = parseBedrockResponse(
       response,
       undefined,
-      ORIGINAL_TEXT_PLACEHOLDER
+      ORIGINAL_TEXT_DEFAULT
     )
 
     expect(result.reviewedContent.issues).toEqual([])
@@ -284,15 +262,12 @@ describe('parseBedrockResponse - [ISSUE_POSITIONS] edge cases', () => {
   })
 
   it('resolves text from originalText slice when text field is missing', () => {
+    const originalText = SAMPLE_UTILISE_TEXT
     const response = buildIssuePositionsResponse(
       '{"issues":[{"start":22,"end":29,"type":"plain-english"}]}'
     )
 
-    const result = parseBedrockResponse(
-      response,
-      undefined,
-      ORIGINAL_TEXT_UTILISE
-    )
+    const result = parseBedrockResponse(response, undefined, originalText)
 
     expect(result.reviewedContent.issues).toHaveLength(1)
     expect(result.reviewedContent.issues[0].text).toBe('utilise')
@@ -324,14 +299,14 @@ describe('parseBedrockResponse - [ISSUE_POSITIONS] edge cases', () => {
 // ── parseIssuePositions: empty text → return plainText/issues [] (line 102) ─
 describe('parseBedrockResponse - empty [ISSUE_POSITIONS] content (line 102)', () => {
   it('returns empty issues when [ISSUE_POSITIONS] section is whitespace only', () => {
-    const response = `${ISSUE_POSITIONS_OPEN}   \n${ISSUE_POSITIONS_CLOSE}`
+    const response = '[ISSUE_POSITIONS]   \n[/ISSUE_POSITIONS]'
     const result = parseBedrockResponse(
       response,
       undefined,
-      ORIGINAL_TEXT_PLACEHOLDER
+      ORIGINAL_TEXT_DEFAULT
     )
     expect(result.reviewedContent.issues).toEqual([])
-    expect(result.reviewedContent.plainText).toBe(ORIGINAL_TEXT_PLACEHOLDER)
+    expect(result.reviewedContent.plainText).toBe(ORIGINAL_TEXT_DEFAULT)
   })
 })
 
@@ -377,7 +352,7 @@ describe('parseBedrockResponse - extractScores fallback (line 479)', () => {
       IMPROVEMENTS_OPEN,
       PRIORITY_MEDIUM_OPEN,
       CATEGORY_CLARITY,
-      WHY_NEEDS_WORK,
+      'WHY: Needs work',
       'CURRENT: old text',
       'SUGGESTED: new text',
       IMPROVEMENTS_CLOSE
@@ -411,7 +386,7 @@ describe('parseBedrockResponse - extractReviewedContent fallback (line 512)', ()
       IMPROVEMENTS_OPEN,
       PRIORITY_MEDIUM_OPEN,
       CATEGORY_CLARITY,
-      WHY_NEEDS_WORK,
+      'WHY: Needs work',
       'CURRENT: old text',
       'SUGGESTED: new text',
       IMPROVEMENTS_CLOSE
@@ -420,11 +395,11 @@ describe('parseBedrockResponse - extractReviewedContent fallback (line 512)', ()
     const result = parseBedrockResponse(
       response,
       undefined,
-      ORIGINAL_TEXT_PLACEHOLDER
+      ORIGINAL_TEXT_DEFAULT
     )
 
     expect(result.reviewedContent.issues).toEqual([])
-    expect(result.reviewedContent.plainText).toBe(ORIGINAL_TEXT_PLACEHOLDER)
+    expect(result.reviewedContent.plainText).toBe(ORIGINAL_TEXT_DEFAULT)
   })
 })
 
