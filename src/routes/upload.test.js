@@ -3,15 +3,6 @@ import { Readable } from 'node:stream'
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
-vi.mock('form-data', () => ({
-  default: class FormData {
-    append() {}
-    getHeaders() {
-      return {}
-    }
-  }
-}))
-
 vi.mock('../config.js', () => ({
   config: {
     get: vi.fn((key) => {
