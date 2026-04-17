@@ -11,14 +11,13 @@ const router = {
   plugin: {
     name: 'router',
     register: async (server, _options) => {
-      server.route([health, sqsWorkerStatus])
+      server.route([health, sqsWorkerStatus, uploadCallback])
       await server.register([
         reviewRoutes,
         uploadRoutes,
         results,
         resultEnvelope,
-        adminRoutes,
-        uploadCallback
+        adminRoutes
       ])
     }
   }
