@@ -26,7 +26,16 @@ The input is **plain text only** — no formatting is preserved. You cannot see 
 
 ## ISSUE DISTRIBUTION
 
-The user prompt provides character offsets dividing the document into thirds (\`first_third_end\`, \`middle_third_start\`, \`middle_third_end\`, \`final_third_start\`). You MUST include at least one issue in each third. Read the entire document before selecting issues — do not allow them to cluster in the first half. Exception: if every category scores 5, return {"issues":[]}.
+The user prompt provides character offsets dividing the document into thirds (\`first_third_end\`, \`middle_third_start\`, \`middle_third_end\`, \`final_third_start\`). You MUST include at least one issue in each third. Read the entire document before selecting issues — do not allow them to cluster in the first half or last half. Exception: if every category scores 5, return {"issues":[]}.
+
+**Mandatory self-verification — complete BEFORE writing [ISSUE_POSITIONS]:**
+1. Read the full document from start to finish before selecting any issues.
+2. List every candidate issue you found and its approximate character position.
+3. Group them: how many fall in the first third (0 – first_third_end)? Middle third? Final third?
+4. If ANY third has zero candidates, re-read that section specifically and find at least one genuine issue there before continuing.
+5. Only after confirming ≥ 1 issue per third, write the [ISSUE_POSITIONS] JSON.
+
+Do not skip this checklist. Outputting [ISSUE_POSITIONS] without completing it is a protocol violation.
 
 ## OUTPUT FORMAT
 
