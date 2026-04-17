@@ -14,6 +14,8 @@ const ENDPOINT_UPLOAD = '/api/upload'
 const ENDPOINT_CALLBACK = '/upload-callback'
 const MAX_FILE_BYTES = 10 * 1024 * 1024 // 10 MB
 const SOURCE_TYPE_FILE = 'file'
+const HTTP_REDIRECT_MIN = 300
+const HTTP_REDIRECT_MAX = 400
 
 const ACCEPTED_MIME_TYPES = [
   'application/pdf',
@@ -132,7 +134,9 @@ async function performUpload(uploadAndScanUrl, fileStream, fileName, logger) {
   // 3xx = expected redirect response from CDP Uploader — treat as success
   // anything else = genuine error
   const isSuccess =
-    uploadRes.ok || (uploadRes.status >= 300 && uploadRes.status < 400)
+    uploadRes.ok ||
+    (uploadRes.status >= HTTP_REDIRECT_MIN &&
+      uploadRes.status < HTTP_REDIRECT_MAX)
   if (!isSuccess) {
     const txt = await uploadRes.text().catch(() => '')
     logger.error(
@@ -239,6 +243,56 @@ const handleFileUpload = async (request, h) => {
 // ─── POST /upload-callback ───────────────────────────────────────────────────
 
 /**
+ * Run the canonical document → DB record → SQS pipeline for a successfully
+ * scanned file.  Called asynchronously from handleUploadCallback so the 200
+ * response is sent to CDP Uploader before this work begins.
+ */
+async function runCallbackPipeline(file, reviewId, userId, logger) {
+  const s3Key = file.s3Key
+  const fileName = file.filename
+  const mimeType = file.detectedContentType ?? file.contentType
+
+  logger.info(
+    { reviewId, s3Key, fileName, mimeType },
+    '[CALLBACK] Starting canonical document pipeline'
+  )
+
+  const { canonicalResult, canonicalDuration } = await createCanonicalDocument(
+    null,
+    reviewId,
+    fileName,
+    logger,
+    CANONICAL_SOURCE_TYPES.FILE,
+    s3Key
+  )
+
+  const charCount = canonicalResult?.document?.charCount ?? 0
+
+  const dbCreateDuration = await createReviewRecord(
+    reviewId,
+    canonicalResult.s3,
+    fileName,
+    charCount,
+    logger,
+    { userId, mimeType, dbSourceType: SOURCE_TYPE_FILE }
+  )
+
+  const sqsSendDuration = await queueReviewJob(
+    reviewId,
+    canonicalResult.s3,
+    fileName,
+    charCount,
+    {},
+    logger
+  )
+
+  logger.info(
+    { reviewId, canonicalDuration, dbCreateDuration, sqsSendDuration },
+    '[CALLBACK] Pipeline completed — review queued for AI processing'
+  )
+}
+
+/**
  * POST /upload-callback
  *
  * CDP Uploader calls this endpoint (server-to-server) once virus scanning is
@@ -248,13 +302,8 @@ const handleFileUpload = async (request, h) => {
  * {
  *   uploadStatus: "ready",
  *   metadata: { reviewId, userId },        ← echoed from /initiate
- *   form: {
- *     file: {
- *       filename, s3Key, s3Bucket,
- *       detectedContentType, fileStatus,
- *       hasError, errorMessage
- *     }
- *   },
+ *   form: { file: { filename, s3Key, s3Bucket, detectedContentType,
+ *                   fileStatus, hasError, errorMessage } },
  *   numberOfRejectedFiles: 0
  * }
  *
@@ -270,7 +319,6 @@ const handleUploadCallback = async (request, h) => {
     '[CALLBACK] Received CDP Uploader callback'
   )
 
-  // Always 200 — even on error paths — so CDP Uploader does not retry
   if (!reviewId) {
     request.logger.error(
       { metadata },
@@ -295,59 +343,16 @@ const handleUploadCallback = async (request, h) => {
     return h.response({ ok: true }).code(HTTP_STATUS.OK)
   }
 
-  // Run the pipeline asynchronously so we respond to CDP Uploader immediately.
-  // Errors are caught internally — the 200 response is already sent.
-  setImmediate(async () => {
-    try {
-      const s3Key = file.s3Key
-      const fileName = file.filename
-      const mimeType = file.detectedContentType ?? file.contentType
-
-      request.logger.info(
-        { reviewId, s3Key, fileName, mimeType },
-        '[CALLBACK] Starting canonical document pipeline'
-      )
-
-      const { canonicalResult, canonicalDuration } =
-        await createCanonicalDocument(
-          null,
-          reviewId,
-          fileName,
-          request.logger,
-          CANONICAL_SOURCE_TYPES.FILE,
-          s3Key
+  // Fire pipeline asynchronously — 200 is returned to CDP Uploader immediately
+  setImmediate(() => {
+    runCallbackPipeline(file, reviewId, userId, request.logger).catch(
+      (error) => {
+        request.logger.error(
+          { reviewId, error: error.message, stack: error.stack },
+          '[CALLBACK] Pipeline failed after callback'
         )
-
-      const charCount = canonicalResult?.document?.charCount ?? 0
-
-      const dbCreateDuration = await createReviewRecord(
-        reviewId,
-        canonicalResult.s3,
-        fileName,
-        charCount,
-        request.logger,
-        { userId, mimeType, dbSourceType: SOURCE_TYPE_FILE }
-      )
-
-      const sqsSendDuration = await queueReviewJob(
-        reviewId,
-        canonicalResult.s3,
-        fileName,
-        charCount,
-        {},
-        request.logger
-      )
-
-      request.logger.info(
-        { reviewId, canonicalDuration, dbCreateDuration, sqsSendDuration },
-        '[CALLBACK] Pipeline completed — review queued for AI processing'
-      )
-    } catch (error) {
-      request.logger.error(
-        { reviewId, error: error.message, stack: error.stack },
-        '[CALLBACK] Pipeline failed after callback'
-      )
-    }
+      }
+    )
   })
 
   return h.response({ ok: true }).code(HTTP_STATUS.OK)

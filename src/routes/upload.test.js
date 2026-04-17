@@ -1,17 +1,15 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { Readable } from 'node:stream'
-import { uploadFileToCdpUploader, runPipeline, uploadRoutes } from './upload.js'
 
-// ─── Mock all external dependencies ───────────────────────────────────────────
+// ─── Mocks ────────────────────────────────────────────────────────────────────
 
 vi.mock('../config.js', () => ({
   config: {
     get: vi.fn((key) => {
       const map = {
         'cdpUploader.url': 'http://cdp-uploader',
-        'cdpUploader.pollTimeoutMs': 100,
-        'cdpUploader.pollIntervalMs': 10,
-        's3.bucket': 'test-bucket'
+        's3.bucket': 'test-bucket',
+        serverUrl: 'http://localhost:3001'
       }
       return map[key]
     })
@@ -23,371 +21,103 @@ vi.mock('../common/helpers/canonical-document.js', () => ({
 }))
 
 vi.mock('./review-helpers.js', () => ({
-  HTTP_STATUS: {
-    BAD_REQUEST: 400,
-    ACCEPTED: 202,
-    INTERNAL_SERVER_ERROR: 500
-  },
-  REVIEW_STATUSES: {
-    PENDING: 'pending'
-  },
+  HTTP_STATUS: { OK: 200, ACCEPTED: 202, INTERNAL_SERVER_ERROR: 500 },
+  REVIEW_STATUSES: { PENDING: 'pending' },
   getCorsConfig: vi.fn(() => ({ origin: ['*'] })),
   createCanonicalDocument: vi.fn(),
   createReviewRecord: vi.fn(),
   queueReviewJob: vi.fn()
 }))
 
-// ─── Import mocked modules after vi.mock ──────────────────────────────────────
 import {
   createCanonicalDocument,
   createReviewRecord,
   queueReviewJob
 } from './review-helpers.js'
 
+import { uploadRoutes } from './upload.js'
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-/**
- * Creates a mock Hapi response toolkit (h)
- */
 function mockH() {
-  const responseMock = {
-    code: vi.fn().mockReturnThis()
-  }
-  return {
-    response: vi.fn().mockReturnValue(responseMock),
-    _response: responseMock
-  }
+  const responseMock = { code: vi.fn().mockReturnThis() }
+  return { response: vi.fn(() => responseMock), _response: responseMock }
 }
 
-/**
- * Creates a mock logger
- */
 function mockLogger() {
-  return {
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn()
-  }
+  return { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }
 }
 
-/**
- * Creates a readable stream from a buffer or string
- */
-function makeStream(content = 'hello') {
+function makeStream(content = 'file content') {
   return Readable.from([Buffer.from(content)])
 }
 
-/**
- * Creates a mock fetch response
- */
-function mockFetchResponse(body, status = 200, ok = true) {
+function fetchOk(body, status = 200) {
   return {
-    ok,
+    ok: status >= 200 && status < 300,
     status,
     json: vi.fn().mockResolvedValue(body),
     text: vi.fn().mockResolvedValue(JSON.stringify(body))
   }
 }
 
-/**
- * Creates a mock Hapi request for handleFileUpload
- */
-function mockRequest(overrides = {}) {
+/** Returns a mock request for POST /api/upload */
+function uploadRequest(overrides = {}) {
   return {
     headers: {
-      'Content-Type': 'multipart/form-data; boundary=----boundary123',
-      'Content-Length': '1024',
+      'x-file-name': encodeURIComponent('report.pdf'),
+      'content-length': '1024',
       'x-user-id': 'user-123',
       ...overrides.headers
     },
-    payload: makeStream('fake file content'),
+    payload: makeStream(),
     logger: mockLogger(),
     ...overrides
   }
 }
 
-/**
- * Default pipeline result returned by runPipeline mock
- */
-function defaultPipelineResult() {
+/** Returns a valid CDP Uploader callback payload */
+function callbackPayload(overrides = {}) {
   return {
-    s3Result: {
-      bucket: 'test-bucket',
-      key: 'uploads/upload-123/report.pdf',
-      fileName: 'report.pdf',
-      mimeType: 'application/pdf'
+    uploadStatus: 'ready',
+    metadata: { reviewId: 'review-abc', userId: 'user-123' },
+    form: {
+      file: {
+        filename: 'report.pdf',
+        s3Key: 'uploads/report.pdf',
+        s3Bucket: 'test-bucket',
+        detectedContentType: 'application/pdf',
+        fileStatus: 'complete',
+        hasError: false
+      }
     },
-    canonicalResult: {
-      s3: { key: 'documents/review-abc.json', bucket: 'test-bucket' },
-      document: { charCount: 1000 }
-    },
-    s3UploadDuration: 100,
-    canonicalDuration: 50,
-    dbCreateDuration: 20,
-    sqsSendDuration: 10
+    numberOfRejectedFiles: 0,
+    ...overrides
   }
 }
 
-// ─── uploadFileToCdpUploader ──────────────────────────────────────────────────
+/** Returns a mock request for POST /upload-callback */
+function callbackRequest(payload = callbackPayload()) {
+  return { payload, logger: mockLogger() }
+}
 
-describe('uploadFileToCdpUploader', () => {
-  let logger
+/** Extracts the handler for the nth registered route (0 = /api/upload, 1 = /upload-callback) */
+async function getHandler(index) {
+  const routes = []
+  const server = { route: vi.fn((r) => routes.push(r)) }
+  await uploadRoutes.plugin.register(server)
+  return routes[index].handler
+}
 
-  beforeEach(() => {
-    logger = mockLogger()
+// ─── POST /api/upload — handleFileUpload ──────────────────────────────────────
+
+describe('handleFileUpload (POST /api/upload)', () => {
+  let handler
+
+  beforeEach(async () => {
     vi.stubGlobal('fetch', vi.fn())
     vi.stubGlobal('performance', { now: vi.fn().mockReturnValue(0) })
-  })
-
-  afterEach(() => {
-    vi.unstubAllGlobals()
-  })
-
-  it('returns bucket, key, fileName and mimeType on success', async () => {
-    const initiateResponse = mockFetchResponse({
-      uploadId: 'upload-123',
-      uploadUrl: 'http://cdp-uploader/upload/upload-123',
-      statusUrl: 'http://cdp-uploader/status/upload-123'
-    })
-
-    const uploadResponse = mockFetchResponse({}, 200, true)
-
-    const statusResponse = mockFetchResponse({
-      uploadStatus: 'ready',
-      form: {
-        file: {
-          fileStatus: 'complete',
-          s3Bucket: 'test-bucket',
-          s3Key: 'uploads/upload-123/report.pdf',
-          filename: 'report.pdf',
-          detectedContentType: 'application/pdf',
-          hasError: false
-        }
-      }
-    })
-
-    fetch
-      .mockResolvedValueOnce(initiateResponse) // /initiate
-      .mockResolvedValueOnce(uploadResponse) // performUpload
-      .mockResolvedValueOnce(statusResponse) // fetchStatus poll
-
-    const result = await uploadFileToCdpUploader(
-      makeStream('pdf content'),
-      'multipart/form-data; boundary=abc',
-      logger
-    )
-
-    expect(result.bucket).toBe('test-bucket')
-    expect(result.key).toBe('uploads/upload-123/report.pdf')
-    expect(result.fileName).toBe('report.pdf')
-  })
-
-  it('throws when cdp-uploader base URL is not configured', async () => {
-    const { config } = await import('../config.js')
-    config.get.mockImplementation((key) => {
-      if (key === 'cdpUploader.url') return ''
-      return undefined
-    })
-
-    await expect(
-      uploadFileToCdpUploader(makeStream(), 'multipart/form-data', logger)
-    ).rejects.toThrow('cdp-uploader base URL not configured')
-
-    // restore
-    config.get.mockImplementation((key) => {
-      const map = {
-        'cdpUploader.url': 'http://cdp-uploader',
-        'cdpUploader.pollTimeoutMs': 100,
-        'cdpUploader.pollIntervalMs': 10,
-        's3.bucket': 'test-bucket'
-      }
-      return map[key]
-    })
-  })
-
-  it('throws when /initiate returns non-2xx', async () => {
-    fetch.mockResolvedValueOnce(mockFetchResponse({}, 500, false))
-
-    await expect(
-      uploadFileToCdpUploader(makeStream(), 'multipart/form-data', logger)
-    ).rejects.toThrow('cdp-uploader initiate failed: 500')
-  })
-
-  it('throws when /initiate does not return uploadUrl', async () => {
-    fetch.mockResolvedValueOnce(
-      mockFetchResponse({
-        uploadId: 'upload-123',
-        statusUrl: 'http://cdp-uploader/status/123'
-      })
-    )
-
-    await expect(
-      uploadFileToCdpUploader(makeStream(), 'multipart/form-data', logger)
-    ).rejects.toThrow('cdp-uploader initiate did not return an uploadUrl')
-  })
-
-  it('throws when /initiate does not return statusUrl', async () => {
-    fetch
-      .mockResolvedValueOnce(
-        mockFetchResponse({
-          uploadId: 'upload-123',
-          uploadUrl: 'http://cdp-uploader/upload/123'
-        })
-      )
-      .mockResolvedValueOnce(mockFetchResponse({}, 200, true)) // performUpload
-
-    await expect(
-      uploadFileToCdpUploader(makeStream(), 'multipart/form-data', logger)
-    ).rejects.toThrow('cdp-uploader initiate did not return an statusUrl')
-  })
-
-  it('throws when performUpload returns non-2xx', async () => {
-    fetch
-      .mockResolvedValueOnce(
-        mockFetchResponse({
-          uploadId: 'upload-123',
-          uploadUrl: 'http://cdp-uploader/upload/123',
-          statusUrl: 'http://cdp-uploader/status/123'
-        })
-      )
-      .mockResolvedValueOnce(mockFetchResponse({}, 400, false)) // performUpload fails
-
-    await expect(
-      uploadFileToCdpUploader(makeStream(), 'multipart/form-data', logger)
-    ).rejects.toThrow('Raw upload failed: 400')
-  })
-
-  it('throws when resolveS3Location hasError is true', async () => {
-    fetch
-      .mockResolvedValueOnce(
-        mockFetchResponse({
-          uploadId: 'upload-123',
-          uploadUrl: 'http://cdp-uploader/upload/123',
-          statusUrl: 'http://cdp-uploader/status/123'
-        })
-      )
-      .mockResolvedValueOnce(mockFetchResponse({}, 200, true)) // performUpload
-      .mockResolvedValueOnce(
-        mockFetchResponse({
-          uploadStatus: 'ready',
-          form: {
-            file: {
-              fileStatus: 'rejected',
-              hasError: true,
-              errorMessage: 'File type not allowed'
-            }
-          }
-        })
-      )
-
-    await expect(
-      uploadFileToCdpUploader(makeStream(), 'multipart/form-data', logger)
-    ).rejects.toThrow('File type not allowed')
-  })
-
-  it('throws with default message when hasError true but no errorMessage', async () => {
-    fetch
-      .mockResolvedValueOnce(
-        mockFetchResponse({
-          uploadId: 'upload-123',
-          uploadUrl: 'http://cdp-uploader/upload/123',
-          statusUrl: 'http://cdp-uploader/status/123'
-        })
-      )
-      .mockResolvedValueOnce(mockFetchResponse({}, 200, true))
-      .mockResolvedValueOnce(
-        mockFetchResponse({
-          uploadStatus: 'ready',
-          form: {
-            file: {
-              fileStatus: 'rejected',
-              hasError: true,
-              errorMessage: null
-            }
-          }
-        })
-      )
-
-    await expect(
-      uploadFileToCdpUploader(makeStream(), 'multipart/form-data', logger)
-    ).rejects.toThrow('Unknown error from cdp-uploader')
-  })
-
-  it('returns null bucket and key when pollStatus times out', async () => {
-    fetch
-      .mockResolvedValueOnce(
-        mockFetchResponse({
-          uploadId: 'upload-123',
-          uploadUrl: 'http://cdp-uploader/upload/123',
-          statusUrl: 'http://cdp-uploader/status/123'
-        })
-      )
-      .mockResolvedValueOnce(mockFetchResponse({}, 200, true))
-      // always return pending — never ready
-      .mockResolvedValue(
-        mockFetchResponse({
-          uploadStatus: 'pending',
-          form: { file: { fileStatus: 'pending', hasError: false } }
-        })
-      )
-
-    const result = await uploadFileToCdpUploader(
-      makeStream(),
-      'multipart/form-data',
-      logger
-    )
-
-    expect(result.bucket).toBeNull()
-    expect(result.key).toBeNull()
-  })
-})
-
-// ─── runPipeline ──────────────────────────────────────────────────────────────
-
-describe('runPipeline', () => {
-  let logger
-
-  beforeEach(() => {
-    logger = mockLogger()
-    vi.stubGlobal('fetch', vi.fn())
-    vi.stubGlobal('performance', { now: vi.fn().mockReturnValue(0) })
-
-    // Default happy path mocks
-    fetch
-      .mockResolvedValueOnce(
-        mockFetchResponse({
-          uploadId: 'upload-123',
-          uploadUrl: 'http://cdp-uploader/upload/123',
-          statusUrl: 'http://cdp-uploader/status/123'
-        })
-      )
-      .mockResolvedValueOnce(mockFetchResponse({}, 200, true))
-      .mockResolvedValueOnce(
-        mockFetchResponse({
-          uploadStatus: 'ready',
-          form: {
-            file: {
-              fileStatus: 'complete',
-              s3Bucket: 'test-bucket',
-              s3Key: 'uploads/upload-123/report.pdf',
-              filename: 'report.pdf',
-              detectedContentType: 'application/pdf',
-              hasError: false
-            }
-          }
-        })
-      )
-
-    createCanonicalDocument.mockResolvedValue({
-      canonicalResult: {
-        s3: { key: 'documents/review-abc.json', bucket: 'test-bucket' },
-        document: { charCount: 1000 }
-      },
-      canonicalDuration: 50
-    })
-
-    createReviewRecord.mockResolvedValue(20)
-    queueReviewJob.mockResolvedValue(10)
+    handler = await getHandler(0)
   })
 
   afterEach(() => {
@@ -395,66 +125,368 @@ describe('runPipeline', () => {
     vi.clearAllMocks()
   })
 
-  it('returns full pipeline result on success', async () => {
-    const result = await runPipeline(
-      makeStream('pdf content'),
-      'review-id-123',
-      'multipart/form-data; boundary=abc',
-      'user-123',
-      { 'x-user-id': 'user-123' },
-      logger
+  // ── happy path ──────────────────────────────────────────────────────────────
+
+  it('returns 202 with reviewId and pending status on success', async () => {
+    fetch
+      .mockResolvedValueOnce(
+        fetchOk({ uploadId: 'up-1', uploadUrl: '/upload-and-scan/up-1' })
+      )
+      .mockResolvedValueOnce({ ok: false, status: 302 }) // upload-and-scan returns 302
+
+    const h = mockH()
+    await handler(uploadRequest(), h)
+
+    expect(h.response).toHaveBeenCalledWith(
+      expect.objectContaining({
+        success: true,
+        status: 'pending',
+        reviewId: expect.any(String)
+      })
+    )
+    expect(h._response.code).toHaveBeenCalledWith(202)
+  })
+
+  it('accepts a 302 redirect from /upload-and-scan as success', async () => {
+    fetch
+      .mockResolvedValueOnce(
+        fetchOk({ uploadId: 'up-1', uploadUrl: '/upload-and-scan/up-1' })
+      )
+      .mockResolvedValueOnce({ ok: false, status: 302 })
+
+    const h = mockH()
+    await handler(uploadRequest(), h)
+
+    expect(h._response.code).toHaveBeenCalledWith(202)
+  })
+
+  it('accepts a 200 response from /upload-and-scan as success', async () => {
+    fetch
+      .mockResolvedValueOnce(
+        fetchOk({ uploadId: 'up-1', uploadUrl: '/upload-and-scan/up-1' })
+      )
+      .mockResolvedValueOnce(fetchOk({}, 200))
+
+    const h = mockH()
+    await handler(uploadRequest(), h)
+
+    expect(h._response.code).toHaveBeenCalledWith(202)
+  })
+
+  // ── /initiate failures ───────────────────────────────────────────────────────
+
+  it('returns 500 when CDP Uploader URL is not configured', async () => {
+    const { config } = await import('../config.js')
+    config.get.mockImplementation((key) =>
+      key === 'cdpUploader.url' ? '' : undefined
     )
 
-    expect(result).toMatchObject({
-      s3Result: expect.objectContaining({
-        key: 'uploads/upload-123/report.pdf'
-      }),
-      canonicalResult: expect.objectContaining({
-        s3: expect.objectContaining({ key: 'documents/review-abc.json' })
-      }),
-      s3UploadDuration: expect.any(Number),
-      canonicalDuration: expect.any(Number),
-      dbCreateDuration: expect.any(Number),
-      sqsSendDuration: expect.any(Number)
+    const h = mockH()
+    await handler(uploadRequest(), h)
+
+    expect(h.response).toHaveBeenCalledWith(
+      expect.objectContaining({ success: false })
+    )
+    expect(h._response.code).toHaveBeenCalledWith(500)
+
+    config.get.mockImplementation((key) => {
+      const map = {
+        'cdpUploader.url': 'http://cdp-uploader',
+        's3.bucket': 'test-bucket',
+        serverUrl: 'http://localhost:3001'
+      }
+      return map[key]
     })
   })
 
-  it('calls createCanonicalDocument with correct args', async () => {
-    await runPipeline(
-      makeStream(),
-      'review-id-123',
-      'multipart/form-data; boundary=abc',
-      'user-123',
-      {},
-      logger
+  it('returns 500 when /initiate returns non-2xx', async () => {
+    fetch.mockResolvedValueOnce(fetchOk({}, 500))
+
+    const h = mockH()
+    await handler(uploadRequest(), h)
+
+    expect(h.response).toHaveBeenCalledWith(
+      expect.objectContaining({
+        success: false,
+        message: expect.stringContaining('500')
+      })
     )
+    expect(h._response.code).toHaveBeenCalledWith(500)
+  })
+
+  it('returns 500 when /initiate does not return an uploadUrl', async () => {
+    fetch.mockResolvedValueOnce(fetchOk({ uploadId: 'up-1' })) // no uploadUrl
+
+    const h = mockH()
+    await handler(uploadRequest(), h)
+
+    expect(h.response).toHaveBeenCalledWith(
+      expect.objectContaining({ success: false })
+    )
+    expect(h._response.code).toHaveBeenCalledWith(500)
+  })
+
+  // ── /upload-and-scan failures ────────────────────────────────────────────────
+
+  it('returns 500 when /upload-and-scan returns a 4xx error', async () => {
+    fetch
+      .mockResolvedValueOnce(
+        fetchOk({ uploadId: 'up-1', uploadUrl: '/upload-and-scan/up-1' })
+      )
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 400,
+        text: vi.fn().mockResolvedValue('bad request')
+      })
+
+    const h = mockH()
+    await handler(uploadRequest(), h)
+
+    expect(h.response).toHaveBeenCalledWith(
+      expect.objectContaining({
+        success: false,
+        message: expect.stringContaining('400')
+      })
+    )
+    expect(h._response.code).toHaveBeenCalledWith(500)
+  })
+
+  it('returns 500 when /upload-and-scan returns a 5xx error', async () => {
+    fetch
+      .mockResolvedValueOnce(
+        fetchOk({ uploadId: 'up-1', uploadUrl: '/upload-and-scan/up-1' })
+      )
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 503,
+        text: vi.fn().mockResolvedValue('service unavailable')
+      })
+
+    const h = mockH()
+    await handler(uploadRequest(), h)
+
+    expect(h._response.code).toHaveBeenCalledWith(500)
+  })
+
+  // ── headers ─────────────────────────────────────────────────────────────────
+
+  it('decodes URI-encoded x-file-name header', async () => {
+    fetch
+      .mockResolvedValueOnce(
+        fetchOk({ uploadId: 'up-1', uploadUrl: '/upload-and-scan/up-1' })
+      )
+      .mockResolvedValueOnce({ ok: false, status: 302 })
+
+    const request = uploadRequest({
+      headers: { 'x-file-name': encodeURIComponent('my report (2024).pdf') }
+    })
+    const h = mockH()
+    await handler(request, h)
+
+    // Confirm the handler ran (202 returned) — file name decoding didn't throw
+    expect(h._response.code).toHaveBeenCalledWith(202)
+  })
+
+  it('uses null fileName when x-file-name header is absent', async () => {
+    fetch
+      .mockResolvedValueOnce(
+        fetchOk({ uploadId: 'up-1', uploadUrl: '/upload-and-scan/up-1' })
+      )
+      .mockResolvedValueOnce({ ok: false, status: 302 })
+
+    const request = uploadRequest({ headers: {} })
+    const h = mockH()
+    await handler(request, h)
+
+    expect(h._response.code).toHaveBeenCalledWith(202)
+  })
+
+  it('uses null userId when x-user-id header is absent', async () => {
+    fetch
+      .mockResolvedValueOnce(
+        fetchOk({ uploadId: 'up-1', uploadUrl: '/upload-and-scan/up-1' })
+      )
+      .mockResolvedValueOnce({ ok: false, status: 302 })
+
+    const request = uploadRequest({
+      headers: { 'x-file-name': 'report.pdf' } // no x-user-id
+    })
+    const h = mockH()
+    await handler(request, h)
+
+    expect(h._response.code).toHaveBeenCalledWith(202)
+  })
+
+  // ── /initiate request body ───────────────────────────────────────────────────
+
+  it('sends redirect:manual and callback URL in /initiate body', async () => {
+    fetch
+      .mockResolvedValueOnce(
+        fetchOk({ uploadId: 'up-1', uploadUrl: '/upload-and-scan/up-1' })
+      )
+      .mockResolvedValueOnce({ ok: false, status: 302 })
+
+    await handler(uploadRequest(), mockH())
+
+    const [initiateUrl, initiateOpts] = fetch.mock.calls[0]
+    expect(initiateUrl).toBe('http://cdp-uploader/initiate')
+
+    const body = JSON.parse(initiateOpts.body)
+    expect(body.redirect).toBe('manual')
+    expect(body.callback).toBe('http://localhost:3001/upload-callback')
+    expect(body.metadata).toMatchObject({ userId: 'user-123' })
+  })
+})
+
+// ─── POST /upload-callback — handleUploadCallback ────────────────────────────
+
+describe('handleUploadCallback (POST /upload-callback)', () => {
+  let handler
+  let capturedImmediate
+
+  /**
+   * Fires the captured setImmediate callback and drains the microtask queue.
+   * The callback is `() => { runCallbackPipeline(...).catch(...) }` — it does
+   * not return the promise, so we must use a real setTimeout to flush all
+   * pending microtasks before running assertions.
+   */
+  async function flushPipeline() {
+    if (capturedImmediate) {
+      capturedImmediate()
+      capturedImmediate = null
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    }
+  }
+
+  beforeEach(async () => {
+    // Capture the setImmediate callback so tests can explicitly await it
+    capturedImmediate = null
+    vi.stubGlobal(
+      'setImmediate',
+      vi.fn((cb) => {
+        capturedImmediate = cb
+      })
+    )
+    handler = await getHandler(1)
+
+    createCanonicalDocument.mockResolvedValue({
+      canonicalResult: {
+        s3: { key: 'documents/review-abc.json', bucket: 'test-bucket' },
+        document: { charCount: 5000 }
+      },
+      canonicalDuration: 30
+    })
+    createReviewRecord.mockResolvedValue(15)
+    queueReviewJob.mockResolvedValue(8)
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.clearAllMocks()
+  })
+
+  // ── always returns 200 ───────────────────────────────────────────────────────
+
+  it('returns 200 on a valid successful callback', async () => {
+    const h = mockH()
+    await handler(callbackRequest(), h)
+
+    expect(h.response).toHaveBeenCalledWith({ ok: true })
+    expect(h._response.code).toHaveBeenCalledWith(200)
+  })
+
+  it('returns 200 when reviewId is missing in metadata', async () => {
+    const h = mockH()
+    await handler(callbackRequest(callbackPayload({ metadata: {} })), h)
+
+    expect(h._response.code).toHaveBeenCalledWith(200)
+  })
+
+  it('returns 200 when payload is completely absent', async () => {
+    const h = mockH()
+    await handler({ payload: undefined, logger: mockLogger() }, h)
+
+    expect(h._response.code).toHaveBeenCalledWith(200)
+  })
+
+  it('returns 200 when uploadStatus is not ready', async () => {
+    const h = mockH()
+    await handler(
+      callbackRequest(callbackPayload({ uploadStatus: 'pending' })),
+      h
+    )
+
+    expect(h._response.code).toHaveBeenCalledWith(200)
+  })
+
+  it('returns 200 when hasError is true', async () => {
+    const h = mockH()
+    const payload = callbackPayload()
+    payload.form.file.hasError = true
+    payload.form.file.fileStatus = 'rejected'
+    await handler(callbackRequest(payload), h)
+
+    expect(h._response.code).toHaveBeenCalledWith(200)
+  })
+
+  it('returns 200 when fileStatus is not complete', async () => {
+    const h = mockH()
+    const payload = callbackPayload()
+    payload.form.file.fileStatus = 'rejected'
+    await handler(callbackRequest(payload), h)
+
+    expect(h._response.code).toHaveBeenCalledWith(200)
+  })
+
+  // ── logging ──────────────────────────────────────────────────────────────────
+
+  it('logs an error when reviewId is missing', async () => {
+    const request = callbackRequest(callbackPayload({ metadata: {} }))
+    await handler(request, mockH())
+
+    expect(request.logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ metadata: {} }),
+      expect.stringContaining('No reviewId')
+    )
+  })
+
+  it('logs a warning when upload is rejected or failed', async () => {
+    const payload = callbackPayload({ uploadStatus: 'failed' })
+    const request = callbackRequest(payload)
+    await handler(request, mockH())
+
+    expect(request.logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ uploadStatus: 'failed' }),
+      expect.stringContaining('rejected or failed')
+    )
+  })
+
+  // ── pipeline execution ───────────────────────────────────────────────────────
+
+  it('calls createCanonicalDocument with correct args', async () => {
+    await handler(callbackRequest(), mockH())
+    await flushPipeline()
 
     expect(createCanonicalDocument).toHaveBeenCalledWith(
       null,
-      'review-id-123',
+      'review-abc',
       'report.pdf',
-      logger,
+      expect.any(Object),
       'file',
-      'uploads/upload-123/report.pdf'
+      'uploads/report.pdf'
     )
   })
 
   it('calls createReviewRecord with correct args', async () => {
-    await runPipeline(
-      makeStream(),
-      'review-id-123',
-      'multipart/form-data; boundary=abc',
-      'user-123',
-      {},
-      logger
-    )
+    await handler(callbackRequest(), mockH())
+    await flushPipeline()
 
     expect(createReviewRecord).toHaveBeenCalledWith(
-      'review-id-123',
+      'review-abc',
       expect.objectContaining({ key: 'documents/review-abc.json' }),
       'report.pdf',
-      1000,
-      logger,
+      5000,
+      expect.any(Object),
       expect.objectContaining({
         userId: 'user-123',
         mimeType: 'application/pdf',
@@ -464,542 +496,158 @@ describe('runPipeline', () => {
   })
 
   it('calls queueReviewJob with correct args', async () => {
-    await runPipeline(
-      makeStream(),
-      'review-id-123',
-      'multipart/form-data; boundary=abc',
-      'user-123',
-      { 'x-user-id': 'user-123' },
-      logger
-    )
+    await handler(callbackRequest(), mockH())
+    await flushPipeline()
 
     expect(queueReviewJob).toHaveBeenCalledWith(
-      'review-id-123',
+      'review-abc',
       expect.objectContaining({ key: 'documents/review-abc.json' }),
       'report.pdf',
-      1000,
-      { 'x-user-id': 'user-123' },
-      logger
-    )
-  })
-
-  it('throws when uploadFileToCdpUploader fails', async () => {
-    fetch.mockReset()
-    fetch.mockResolvedValueOnce(mockFetchResponse({}, 500, false))
-
-    await expect(
-      runPipeline(
-        makeStream(),
-        'review-id-123',
-        'multipart/form-data',
-        'user-123',
-        {},
-        logger
-      )
-    ).rejects.toThrow('cdp-uploader initiate failed: 500')
-  })
-
-  it('throws when createCanonicalDocument fails', async () => {
-    createCanonicalDocument.mockRejectedValueOnce(new Error('canonical failed'))
-
-    await expect(
-      runPipeline(
-        makeStream(),
-        'review-id-123',
-        'multipart/form-data',
-        'user-123',
-        {},
-        logger
-      )
-    ).rejects.toThrow('canonical failed')
-  })
-
-  it('throws when createReviewRecord fails', async () => {
-    createReviewRecord.mockRejectedValueOnce(new Error('db failed'))
-
-    await expect(
-      runPipeline(
-        makeStream(),
-        'review-id-123',
-        'multipart/form-data',
-        'user-123',
-        {},
-        logger
-      )
-    ).rejects.toThrow('db failed')
-  })
-
-  it('throws when queueReviewJob fails', async () => {
-    queueReviewJob.mockRejectedValueOnce(new Error('sqs failed'))
-
-    await expect(
-      runPipeline(
-        makeStream(),
-        'review-id-123',
-        'multipart/form-data',
-        'user-123',
-        {},
-        logger
-      )
-    ).rejects.toThrow('sqs failed')
-  })
-
-  it('uses charCount 0 when canonicalResult has no charCount', async () => {
-    createCanonicalDocument.mockResolvedValueOnce({
-      canonicalResult: {
-        s3: { key: 'documents/review-abc.json', bucket: 'test-bucket' },
-        document: {} // no charCount
-      },
-      canonicalDuration: 50
-    })
-
-    await runPipeline(
-      makeStream(),
-      'review-id-123',
-      'multipart/form-data',
-      'user-123',
+      5000,
       {},
-      logger
+      expect.any(Object)
     )
+  })
+
+  it('falls back to file.contentType when detectedContentType is absent', async () => {
+    const payload = callbackPayload()
+    delete payload.form.file.detectedContentType
+    payload.form.file.contentType = 'application/pdf'
+
+    await handler(callbackRequest(payload), mockH())
+    await flushPipeline()
 
     expect(createReviewRecord).toHaveBeenCalledWith(
       expect.any(String),
       expect.any(Object),
       expect.any(String),
-      0, // ← charCount defaults to 0
+      expect.any(Number),
+      expect.any(Object),
+      expect.objectContaining({ mimeType: 'application/pdf' })
+    )
+  })
+
+  it('uses 0 for charCount when canonicalResult has no charCount', async () => {
+    createCanonicalDocument.mockResolvedValueOnce({
+      canonicalResult: {
+        s3: { key: 'documents/review-abc.json' },
+        document: {} // no charCount
+      },
+      canonicalDuration: 10
+    })
+
+    await handler(callbackRequest(), mockH())
+    await flushPipeline()
+
+    expect(createReviewRecord).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.any(Object),
+      expect.any(String),
+      0,
       expect.any(Object),
       expect.any(Object)
     )
   })
-})
 
-// ─── handleFileUpload (via uploadRoutes) ─────────────────────────────────────
+  it('does not call the pipeline when reviewId is missing', async () => {
+    await handler(callbackRequest(callbackPayload({ metadata: {} })), mockH())
 
-describe('handleFileUpload', () => {
-  let handler
-  let logger
-
-  beforeEach(async () => {
-    logger = mockLogger()
-    vi.stubGlobal('fetch', vi.fn())
-    vi.stubGlobal('performance', { now: vi.fn().mockReturnValue(0) })
-
-    // Extract handler from registered route
-    const registeredRoutes = []
-    const server = {
-      route: vi.fn((routeConfig) => registeredRoutes.push(routeConfig))
-    }
-    await uploadRoutes.plugin.register(server)
-    handler = registeredRoutes[0].handler
+    expect(createCanonicalDocument).not.toHaveBeenCalled()
   })
 
-  afterEach(() => {
-    vi.unstubAllGlobals()
-    vi.clearAllMocks()
-  })
-
-  it('returns 202 on successful upload', async () => {
-    // mock full happy path fetch calls
-    fetch
-      .mockResolvedValueOnce(
-        mockFetchResponse({
-          uploadId: 'upload-123',
-          uploadUrl: 'http://cdp-uploader/upload/123',
-          statusUrl: 'http://cdp-uploader/status/123'
-        })
-      )
-      .mockResolvedValueOnce(mockFetchResponse({}, 200, true))
-      .mockResolvedValueOnce(
-        mockFetchResponse({
-          uploadStatus: 'ready',
-          form: {
-            file: {
-              fileStatus: 'complete',
-              s3Bucket: 'test-bucket',
-              s3Key: 'uploads/upload-123/report.pdf',
-              filename: 'report.pdf',
-              detectedContentType: 'application/pdf',
-              hasError: false
-            }
-          }
-        })
-      )
-
-    createCanonicalDocument.mockResolvedValue({
-      canonicalResult: {
-        s3: { key: 'documents/review-abc.json', bucket: 'test-bucket' },
-        document: { charCount: 1000 }
-      },
-      canonicalDuration: 50
-    })
-    createReviewRecord.mockResolvedValue(20)
-    queueReviewJob.mockResolvedValue(10)
-
-    const h = mockH()
-    const request = mockRequest()
-
-    await handler(request, h)
-
-    expect(h.response).toHaveBeenCalledWith(
-      expect.objectContaining({
-        success: true,
-        status: 'pending',
-        message: 'File uploaded and queued for review'
-      })
+  it('does not call the pipeline when uploadStatus is not ready', async () => {
+    await handler(
+      callbackRequest(callbackPayload({ uploadStatus: 'pending' })),
+      mockH()
     )
-    expect(h._response.code).toHaveBeenCalledWith(202)
+
+    expect(createCanonicalDocument).not.toHaveBeenCalled()
   })
 
-  it('returns 500 when runPipeline throws', async () => {
-    fetch.mockResolvedValueOnce(mockFetchResponse({}, 500, false))
+  it('logs pipeline error but still returns 200 when pipeline throws', async () => {
+    createCanonicalDocument.mockRejectedValueOnce(new Error('canonical failed'))
 
+    const request = callbackRequest()
     const h = mockH()
-    const request = mockRequest()
-
     await handler(request, h)
+    await flushPipeline()
 
-    expect(h.response).toHaveBeenCalledWith(
-      expect.objectContaining({ success: false })
-    )
-    expect(h._response.code).toHaveBeenCalledWith(500)
-  })
-
-  it('returns 500 with error message from cdp-uploader rejection', async () => {
-    fetch
-      .mockResolvedValueOnce(
-        mockFetchResponse({
-          uploadId: 'upload-123',
-          uploadUrl: 'http://cdp-uploader/upload/123',
-          statusUrl: 'http://cdp-uploader/status/123'
-        })
-      )
-      .mockResolvedValueOnce(mockFetchResponse({}, 200, true))
-      .mockResolvedValueOnce(
-        mockFetchResponse({
-          uploadStatus: 'ready',
-          form: {
-            file: {
-              fileStatus: 'rejected',
-              hasError: true,
-              errorMessage: 'File type not allowed'
-            }
-          }
-        })
-      )
-
-    const h = mockH()
-    const request = mockRequest()
-
-    await handler(request, h)
-
-    expect(h.response).toHaveBeenCalledWith(
-      expect.objectContaining({
-        success: false,
-        message: 'File type not allowed'
-      })
-    )
-    expect(h._response.code).toHaveBeenCalledWith(500)
-  })
-
-  it('logs reviewId and contentType before pipeline starts', async () => {
-    fetch.mockResolvedValueOnce(mockFetchResponse({}, 500, false))
-
-    const h = mockH()
-    const request = mockRequest()
-
-    await handler(request, h)
-
-    expect(request.logger.info).toHaveBeenCalledWith(
-      expect.objectContaining({
-        contentType: 'multipart/form-data; boundary=----boundary123',
-        fileName: null,
-        fileSize: '1024',
-        reviewId: expect.any(String)
-      }),
-      expect.any(String)
+    expect(h._response.code).toHaveBeenCalledWith(200)
+    expect(request.logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ error: 'canonical failed' }),
+      expect.stringContaining('Pipeline failed')
     )
   })
 
-  it('uses null userId when x-user-id header is missing', async () => {
-    fetch.mockResolvedValueOnce(mockFetchResponse({}, 500, false))
+  it('logs pipeline error but still returns 200 when queueReviewJob throws', async () => {
+    queueReviewJob.mockRejectedValueOnce(new Error('sqs failed'))
 
+    const request = callbackRequest()
     const h = mockH()
-    const request = mockRequest({
-      headers: {
-        'content-type': 'multipart/form-data; boundary=abc',
-        'content-length': '1024'
-        // no x-user-id
-      }
-    })
-
     await handler(request, h)
-    // pipeline is called — error thrown from fetch — respondError called
-    expect(h._response.code).toHaveBeenCalledWith(500)
+    await flushPipeline()
+
+    expect(h._response.code).toHaveBeenCalledWith(200)
+    expect(request.logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ error: 'sqs failed' }),
+      expect.stringContaining('Pipeline failed')
+    )
   })
 })
 
 // ─── uploadRoutes plugin registration ────────────────────────────────────────
 
 describe('uploadRoutes plugin', () => {
-  it('registers a POST route at /api/upload', async () => {
-    const registeredRoutes = []
-    const server = {
-      route: vi.fn((routeConfig) => registeredRoutes.push(routeConfig))
-    }
-
-    await uploadRoutes.plugin.register(server)
-
-    expect(registeredRoutes).toHaveLength(1)
-    expect(registeredRoutes[0].method).toBe('POST')
-    expect(registeredRoutes[0].path).toBe('/api/upload')
+  it('has plugin name upload-routes', () => {
+    expect(uploadRoutes.plugin.name).toBe('upload-routes')
   })
 
-  it('has correct payload config', async () => {
-    const registeredRoutes = []
-    const server = {
-      route: vi.fn((routeConfig) => registeredRoutes.push(routeConfig))
-    }
-
+  it('registers exactly two routes', async () => {
+    const routes = []
+    const server = { route: vi.fn((r) => routes.push(r)) }
     await uploadRoutes.plugin.register(server)
+    expect(routes).toHaveLength(2)
+  })
 
-    const payload = registeredRoutes[0].options.payload
+  it('registers POST /api/upload as the first route', async () => {
+    const routes = []
+    const server = { route: vi.fn((r) => routes.push(r)) }
+    await uploadRoutes.plugin.register(server)
+    expect(routes[0].method).toBe('POST')
+    expect(routes[0].path).toBe('/api/upload')
+  })
+
+  it('/api/upload has stream payload config with 10 MB limit', async () => {
+    const routes = []
+    const server = { route: vi.fn((r) => routes.push(r)) }
+    await uploadRoutes.plugin.register(server)
+    const { payload } = routes[0].options
     expect(payload.output).toBe('stream')
     expect(payload.parse).toBe(false)
     expect(payload.multipart).toBe(false)
     expect(payload.maxBytes).toBe(10 * 1024 * 1024)
   })
 
-  it('has plugin name upload-routes', () => {
-    expect(uploadRoutes.plugin.name).toBe('upload-routes')
-  })
-})
-
-// ─── fetchStatus ─────────────────────────────────────────────────────────────
-
-describe('fetchStatus (via pollStatus via resolveS3Location)', () => {
-  let logger
-
-  beforeEach(() => {
-    logger = mockLogger()
-    vi.stubGlobal('fetch', vi.fn())
+  it('registers POST /upload-callback as the second route', async () => {
+    const routes = []
+    const server = { route: vi.fn((r) => routes.push(r)) }
+    await uploadRoutes.plugin.register(server)
+    expect(routes[1].method).toBe('POST')
+    expect(routes[1].path).toBe('/upload-callback')
   })
 
-  afterEach(() => {
-    vi.unstubAllGlobals()
+  it('/upload-callback has auth: false', async () => {
+    const routes = []
+    const server = { route: vi.fn((r) => routes.push(r)) }
+    await uploadRoutes.plugin.register(server)
+    expect(routes[1].options.auth).toBe(false)
   })
 
-  it('returns null and warns on non-2xx status response', async () => {
-    fetch
-      .mockResolvedValueOnce(
-        mockFetchResponse({
-          uploadId: 'upload-123',
-          uploadUrl: 'http://cdp-uploader/upload/123',
-          statusUrl: 'http://cdp-uploader/status/123'
-        })
-      )
-      .mockResolvedValueOnce(mockFetchResponse({}, 200, true))
-      // status poll returns non-2xx — triggers null return and retry until timeout
-      .mockResolvedValue(mockFetchResponse({}, 503, false))
-
-    const result = await uploadFileToCdpUploader(
-      makeStream(),
-      'multipart/form-data',
-      logger
-    )
-
-    expect(logger.warn).toHaveBeenCalledWith(
-      expect.objectContaining({ status: 503 }),
-      'cdp-uploader status poll returned non-2xx'
-    )
-    expect(result.bucket).toBeNull()
-  })
-
-  it('handles invalid JSON in status response gracefully', async () => {
-    fetch
-      .mockResolvedValueOnce(
-        mockFetchResponse({
-          uploadId: 'upload-123',
-          uploadUrl: 'http://cdp-uploader/upload/123',
-          statusUrl: 'http://cdp-uploader/status/123'
-        })
-      )
-      .mockResolvedValueOnce(mockFetchResponse({}, 200, true))
-      .mockResolvedValue({
-        ok: true,
-        status: 200,
-        json: vi.fn().mockRejectedValue(new Error('invalid json')),
-        text: vi.fn().mockResolvedValue('not json')
-      })
-
-    const result = await uploadFileToCdpUploader(
-      makeStream(),
-      'multipart/form-data',
-      logger
-    )
-    expect(result.bucket).toBeNull()
-  })
-})
-
-// ─── classifyFileStatus (via pollStatus behaviour) ───────────────────────────
-
-describe('classifyFileStatus behaviour in pollStatus', () => {
-  let logger
-
-  beforeEach(() => {
-    logger = mockLogger()
-    vi.stubGlobal('fetch', vi.fn())
-  })
-
-  afterEach(() => {
-    vi.unstubAllGlobals()
-  })
-
-  const setupInitiateAndUpload = () => {
-    fetch
-      .mockResolvedValueOnce(
-        mockFetchResponse({
-          uploadId: 'upload-123',
-          uploadUrl: '/upload-and-scan/123',
-          statusUrl: '/status/123'
-        })
-      )
-      .mockResolvedValueOnce(mockFetchResponse({}, 200, true))
-  }
-
-  it('resolves when fileStatus is complete and uploadStatus is ready', async () => {
-    setupInitiateAndUpload()
-    fetch.mockResolvedValueOnce(
-      mockFetchResponse({
-        uploadStatus: 'ready',
-        form: {
-          file: {
-            fileStatus: 'complete',
-            s3Bucket: 'bucket',
-            s3Key: 'key/file.pdf',
-            filename: 'file.pdf',
-            detectedContentType: 'application/pdf',
-            hasError: false
-          }
-        }
-      })
-    )
-
-    const result = await uploadFileToCdpUploader(
-      makeStream(),
-      'multipart/form-data',
-      logger
-    )
-    expect(result.key).toBe('key/file.pdf')
-  })
-
-  it('throws when fileStatus is rejected and hasError is true', async () => {
-    setupInitiateAndUpload()
-    fetch.mockResolvedValueOnce(
-      mockFetchResponse({
-        uploadStatus: 'ready',
-        form: {
-          file: {
-            fileStatus: 'rejected',
-            hasError: true,
-            errorMessage: 'Virus detected'
-          }
-        }
-      })
-    )
-
-    await expect(
-      uploadFileToCdpUploader(makeStream(), 'multipart/form-data', logger)
-    ).rejects.toThrow('Virus detected')
-  })
-
-  it('keeps polling when fileStatus is pending', async () => {
-    setupInitiateAndUpload()
-
-    // two pending then complete
-    fetch
-      .mockResolvedValueOnce(
-        mockFetchResponse({
-          uploadStatus: 'pending',
-          form: { file: { fileStatus: 'pending', hasError: false } }
-        })
-      )
-      .mockResolvedValueOnce(
-        mockFetchResponse({
-          uploadStatus: 'ready',
-          form: {
-            file: {
-              fileStatus: 'complete',
-              s3Bucket: 'bucket',
-              s3Key: 'key/file.pdf',
-              filename: 'file.pdf',
-              detectedContentType: 'application/pdf',
-              hasError: false
-            }
-          }
-        })
-      )
-
-    const result = await uploadFileToCdpUploader(
-      makeStream(),
-      'multipart/form-data',
-      logger
-    )
-    expect(result.key).toBe('key/file.pdf')
-  })
-
-  it('returns null bucket/key on timeout with no ready status', async () => {
-    setupInitiateAndUpload()
-    // always pending — times out
-    fetch.mockResolvedValue(
-      mockFetchResponse({
-        uploadStatus: 'pending',
-        form: { file: { fileStatus: 'pending', hasError: false } }
-      })
-    )
-
-    const result = await uploadFileToCdpUploader(
-      makeStream(),
-      'multipart/form-data',
-      logger
-    )
-    expect(result.bucket).toBeNull()
-    expect(result.key).toBeNull()
-    expect(logger.warn).toHaveBeenCalledWith(
-      expect.objectContaining({ statusUrl: 'http://cdp-uploader/status/123' }),
-      'Timed out waiting for cdp-uploader status'
-    )
-  })
-
-  it('retries polling when fetchStatus throws a network error', async () => {
-    setupInitiateAndUpload()
-
-    fetch
-      .mockRejectedValueOnce(new Error('network error')) // first poll throws
-      .mockResolvedValueOnce(
-        mockFetchResponse({
-          uploadStatus: 'ready',
-          form: {
-            file: {
-              fileStatus: 'complete',
-              s3Bucket: 'bucket',
-              s3Key: 'key/file.pdf',
-              filename: 'file.pdf',
-              detectedContentType: 'application/pdf',
-              hasError: false
-            }
-          }
-        })
-      )
-
-    const result = await uploadFileToCdpUploader(
-      makeStream(),
-      'multipart/form-data',
-      logger
-    )
-    expect(result.key).toBe('key/file.pdf')
-    expect(logger.warn).toHaveBeenCalledWith(
-      expect.objectContaining({ err: 'network error' }),
-      'Error polling cdp-uploader status (will retry)'
-    )
+  it('/upload-callback accepts application/json payload', async () => {
+    const routes = []
+    const server = { route: vi.fn((r) => routes.push(r)) }
+    await uploadRoutes.plugin.register(server)
+    expect(routes[1].options.payload.allow).toBe('application/json')
+    expect(routes[1].options.payload.parse).toBe(true)
   })
 })
