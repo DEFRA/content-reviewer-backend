@@ -323,3 +323,114 @@ describe('TextExtractor – DOCX extraction', () => {
     })
   })
 })
+
+describe('TextExtractor – extractText additional mime types', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  test('Should throw for legacy .doc (application/msword)', async () => {
+    await expect(
+      textExtractor.extractText(FAKE_BUFFER, 'application/msword', 'doc.doc')
+    ).rejects.toThrow(
+      'Failed to extract text: Legacy .doc format is not supported'
+    )
+  })
+
+  test('Should extract text for text/plain mime type', async () => {
+    const buf = Buffer.from('plain text content')
+    const result = await textExtractor.extractText(
+      buf,
+      'text/plain',
+      'test.txt'
+    )
+    expect(result).toContain('plain text content')
+  })
+
+  test('Should throw for unsupported mime type', async () => {
+    await expect(
+      textExtractor.extractText(FAKE_BUFFER, 'image/png', 'pic.png')
+    ).rejects.toThrow(
+      'Failed to extract text: Unsupported file type: image/png'
+    )
+  })
+
+  test('Should throw when no text is extracted from the file', async () => {
+    // An empty page produces an empty string — cleanText('') returns '' —
+    // triggering the "no text content" guard inside extractText.
+    const page = makeMockPage([])
+    mockPdfDoc(makeMockDoc([page]))
+
+    await expect(
+      textExtractor.extractText(FAKE_BUFFER, PDF_MIME, 'empty.pdf')
+    ).rejects.toThrow(
+      'Failed to extract text: No text content could be extracted'
+    )
+  })
+})
+
+describe('TextExtractor – PDF link annotation edge cases', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  test('Should treat Link annotation with no url property as plain text', async () => {
+    // ann.url is undefined → ann.url?.startsWith('http') returns undefined
+    // (optional-chaining null short-circuit) → annotation is filtered out
+    const page = makeMockPage(
+      [makeTextItem('text', 10, 20)],
+      [{ subtype: 'Link', rect: [5, 15, 50, 30] }] // no url property
+    )
+    mockPdfDoc(makeMockDoc([page]))
+
+    const result = await textExtractor.extractFromPDF(FAKE_BUFFER)
+
+    expect(result).toContain('text')
+    expect(result).not.toContain('](')
+  })
+})
+
+describe('TextExtractor – utility methods', () => {
+  test('cleanText should return empty string for falsy input', () => {
+    expect(textExtractor.cleanText('')).toBe('')
+    expect(textExtractor.cleanText(null)).toBe('')
+  })
+
+  test('getPreview should return falsy input as-is', () => {
+    expect(textExtractor.getPreview(null)).toBeNull()
+  })
+
+  test('getPreview should return text unchanged when within limit', () => {
+    expect(textExtractor.getPreview('short text')).toBe('short text')
+  })
+
+  test('getPreview should truncate text that exceeds the limit', () => {
+    const long = 'a'.repeat(600)
+    expect(textExtractor.getPreview(long)).toBe('a'.repeat(500) + '...')
+  })
+
+  test('countWords should return 0 for falsy input', () => {
+    expect(textExtractor.countWords(null)).toBe(0)
+  })
+
+  test('countWords should count words in text', () => {
+    expect(textExtractor.countWords('hello world foo')).toBe(3)
+  })
+
+  test('getStatistics should return zeros for falsy input', () => {
+    expect(textExtractor.getStatistics(null)).toEqual({
+      characters: 0,
+      words: 0,
+      lines: 0,
+      paragraphs: 0
+    })
+  })
+
+  test('getStatistics should return correct stats for text', () => {
+    const stats = textExtractor.getStatistics('hello world\n\nbye')
+    expect(stats.characters).toBe(16)
+    expect(stats.words).toBe(3)
+    expect(stats.lines).toBe(3)
+    expect(stats.paragraphs).toBe(2)
+  })
+})
