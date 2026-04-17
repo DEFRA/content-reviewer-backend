@@ -270,3 +270,33 @@ describe('ReviewProcessor - processMessage - heartbeat', () => {
     await processingPromise
   })
 })
+
+describe('ReviewProcessor - processMessage - dead-lettered message', () => {
+  let processor
+  let messageHandler
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    processor = new ReviewProcessor()
+    // receiveCount (4) > default maxReceiveCount (3) — triggers dead-letter path
+    messageHandler = {
+      deleteMessage: mockDeleteMessage,
+      getReceiveCount: vi.fn().mockReturnValue(4),
+      extendVisibility: vi.fn().mockResolvedValue(undefined)
+    }
+  })
+
+  test('Should not extract content when message is dead-lettered', async () => {
+    const message = {
+      MessageId: TEST_MESSAGE_ID,
+      Body: JSON.stringify({ uploadId: TEST_UPLOAD_ID }),
+      ReceiptHandle: TEST_RECEIPT_HANDLE
+    }
+
+    await processor.processMessage(message, messageHandler)
+
+    // Dead-letter branch clears the heartbeat and returns early
+    expect(mockExtractTextContent).not.toHaveBeenCalled()
+    expect(mockDeleteMessage).toHaveBeenCalledWith(TEST_RECEIPT_HANDLE)
+  })
+})
