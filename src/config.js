@@ -29,6 +29,12 @@ const config = convict({
     default: 3001,
     env: 'PORT'
   },
+  serverUrl: {
+    doc: 'The public base URL of this service — used as the CDP Uploader callbackUrl so CDP Uploader can POST back when scanning is complete',
+    format: String,
+    default: 'http://localhost:3001',
+    env: 'SERVER_URL'
+  },
   serviceName: {
     doc: 'Api Service Name',
     format: String,
@@ -322,15 +328,15 @@ const config = convict({
       env: 'BEDROCK_MAX_TOKENS'
     },
     temperature: {
-      doc: 'AI temperature (0.0-1.0, lower is more focused)',
+      doc: 'AI temperature (0.0-1.0). 0 = greedy/fully deterministic — same input always produces the same output. Required for reproducible reviews.',
       format: Number,
-      default: 0.1,
+      default: 0,
       env: 'BEDROCK_TEMPERATURE'
     },
     topP: {
-      doc: 'Top-P nucleus sampling (0.0-1.0, lower is more deterministic)',
+      doc: 'Top-P nucleus sampling (0.0-1.0). 1 = no nucleus filtering. Combined with temperature=0 this maximises determinism.',
       format: Number,
-      default: 0.3,
+      default: 1,
       env: 'BEDROCK_TOP_P'
     }
   },

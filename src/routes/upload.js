@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto'
-import { Readable } from 'node:stream'
 import { config } from '../config.js'
 import { SOURCE_TYPES as CANONICAL_SOURCE_TYPES } from '../common/helpers/canonical-document.js'
 import {
@@ -12,278 +11,53 @@ import {
 } from './review-helpers.js'
 
 const ENDPOINT_UPLOAD = '/api/upload'
+const ENDPOINT_CALLBACK = '/upload-callback'
 const MAX_FILE_BYTES = 10 * 1024 * 1024 // 10 MB
 const SOURCE_TYPE_FILE = 'file'
-const DEFAULT_POLL_TIMEOUT_MS = 60_000 // 60 seconds
-const DEFAULT_POLL_INTERVAL_MS = 1_500 // 1.5 seconds
 
-const ACCEPTED_MIME_TYPES = {
-  'application/pdf': true,
-  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': true
-}
+const ACCEPTED_MIME_TYPES = [
+  'application/pdf',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+]
 
-const ERROR_MESSAGES = {
-  NO_FILE: 'No file provided',
-  INVALID_TYPE: 'The selected file must be a PDF or Word document',
-  EMPTY_FILE: 'The uploaded file is empty',
-  FILE_TOO_LARGE: 'The file must be smaller than 10 MB',
-  NO_TEXT: 'No text could be extracted from the file',
-  PIPELINE_FAILED: 'Failed to process file upload'
-}
+// ─── Step 1: /initiate ───────────────────────────────────────────────────────
 
 /**
- * Runs the S3 upload → canonical document → DB record → SQS queue pipeline.
- */
-async function runPipeline(
-  fileMultipartStream,
-  reviewId,
-  contentType,
-  userId,
-  headers,
-  logger,
-  fallbackFileName
-) {
-  // STEP 2: upload raw original file to cdp-uploader (audit copy)
-  const s3UploadStart = performance.now()
-
-  const rawS3Result = await uploadFileToCdpUploader(
-    fileMultipartStream,
-    contentType,
-    logger,
-    fallbackFileName,
-    userId,
-    reviewId
-  )
-
-  const s3UploadDuration = Math.round(performance.now() - s3UploadStart)
-
-  const rawS3Key = rawS3Result.key
-  const fileName = rawS3Result.fileName ?? fallbackFileName
-  const mimeType = rawS3Result.mimeType
-
-  const { canonicalResult, canonicalDuration } = await createCanonicalDocument(
-    null,
-    reviewId,
-    fileName,
-    logger,
-    CANONICAL_SOURCE_TYPES.FILE,
-    rawS3Key
-  )
-
-  const charCount = canonicalResult?.document?.charCount || 0
-
-  // STEP 5: Create review record in DB pointing to the canonical document key
-  const dbCreateDuration = await createReviewRecord(
-    reviewId,
-    canonicalResult.s3,
-    fileName,
-    charCount,
-    logger,
-    { userId, mimeType, dbSourceType: SOURCE_TYPE_FILE }
-  )
-
-  // STEP 6: Queue SQS job referencing canonical document (worker reads documents/{reviewId}.json)
-  const sqsSendDuration = await queueReviewJob(
-    reviewId,
-    canonicalResult.s3,
-    fileName,
-    charCount,
-    headers,
-    logger
-  )
-
-  return {
-    s3Result: rawS3Result,
-    canonicalResult,
-    s3UploadDuration: s3UploadDuration,
-    canonicalDuration,
-    dbCreateDuration,
-    sqsSendDuration
-  }
-}
-
-/**
- * Logs the pipeline completion and returns the 202 Accepted response.
- */
-function respondSuccess(
-  logger,
-  h,
-  reviewId,
-  filename,
-  mimeType,
-  pipelineResult,
-  totalDuration
-) {
-  logger.info(
-    {
-      reviewId,
-      filename,
-      mimeType,
-      s3Key: pipelineResult.s3Result.key,
-      canonicalKey: pipelineResult.canonicalResult?.s3?.key,
-      totalDurationMs: totalDuration,
-      s3UploadDuration: pipelineResult.s3UploadDuration,
-      canonicalDuration: pipelineResult.canonicalDuration,
-      dbCreateDuration: pipelineResult.dbCreateDuration,
-      sqsSendDuration: pipelineResult.sqsSendDuration,
-      endpoint: ENDPOINT_UPLOAD
-    },
-    `[UPLOAD PHASE] File review queued successfully — TOTAL: ${totalDuration}ms`
-  )
-  return h
-    .response({
-      success: true,
-      reviewId,
-      status: REVIEW_STATUSES.PENDING,
-      message: 'File uploaded and queued for review'
-    })
-    .code(HTTP_STATUS.ACCEPTED)
-}
-
-/**
- * Logs the error and returns a 500 response.
- */
-function respondError(error, logger, totalDuration, h) {
-  logger.error(
-    {
-      error: error.message,
-      errorName: error.name,
-      stack: error.stack,
-      durationMs: totalDuration
-    },
-    `Failed to process file upload after ${totalDuration}ms`
-  )
-  return h
-    .response({
-      success: false,
-      message: error.message || ERROR_MESSAGES.PIPELINE_FAILED
-    })
-    .code(HTTP_STATUS.INTERNAL_SERVER_ERROR)
-}
-
-/**
- * Sleep helper
- */
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms))
-}
-
-/**
- * Classify a cdp-uploader file status string.
- * Returns 'done', 'rejected', or 'pending'.
- */
-function classifyFileStatus(fileStatus) {
-  if (fileStatus === 'complete') {
-    return 'done'
-  }
-  if (fileStatus === 'rejected') {
-    return 'rejected'
-  }
-  return 'pending'
-}
-
-/**
- * Perform a single status poll request.
- * Returns { data, classification } on 2xx, or null on non-2xx.
- * Throws on network error so the caller can catch and warn.
- */
-async function fetchStatus(statusUrl, logger) {
-  const uploadStatusResp = await fetch(statusUrl, {
-    method: 'GET',
-    headers: { Accept: 'application/json' }
-  })
-
-  if (!uploadStatusResp.ok) {
-    logger.warn(
-      { status: uploadStatusResp.status, statusUrl },
-      'cdp-uploader status poll returned non-2xx'
-    )
-    return null
-  }
-  const data = await uploadStatusResp.json().catch(() => null)
-  const uploadStatus = data?.uploadStatus
-  const fileStatus = data?.form?.file?.fileStatus
-  const classification = classifyFileStatus(fileStatus)
-
-  logger.info(
-    { statusUrl, uploadStatus, fileStatus },
-    'cdp-uploader status poll'
-  )
-  return { data, uploadStatus, classification }
-}
-
-/**
- * Poll a status URL until upload is complete, rejected, or timed out.
- * Returns the status data object on success, null on timeout/rejected.
- * Max nesting depth: 3
- */
-async function pollStatus(statusUrl, timeoutMs, interval, logger) {
-  const start = Date.now()
-
-  while (Date.now() - start < timeoutMs) {
-    try {
-      const polled = await fetchStatus(statusUrl, logger)
-
-      if (
-        polled?.uploadStatus === 'ready' &&
-        (polled?.classification === 'done' ||
-          polled?.classification === 'rejected')
-      ) {
-        return polled.data
-      }
-    } catch (err) {
-      logger.warn(
-        { err: err.message, statusUrl },
-        'Error polling cdp-uploader status (will retry)'
-      )
-    }
-
-    await sleep(interval)
-  }
-
-  logger.warn({ statusUrl }, 'Timed out waiting for cdp-uploader status')
-  return null
-}
-
-/**
- * Call /initiate and return { uploadId, uploadUrl, statusUrl }.
- * Throws on non-2xx.
+ * POST /initiate — tell CDP Uploader we are starting a new upload.
+ *
+ * Per the CDP Uploader docs:
+ *  - redirect: 'manual' — we are a server client, not a browser; no browser
+ *    redirect is needed after the file is scanned.
+ *  - callback: our /upload-callback URL — CDP Uploader POSTs here when
+ *    scanning + S3 delivery is complete (server-to-server notification).
+ *  - metadata: { reviewId, userId } — echoed back verbatim in the callback
+ *    payload so we can correlate the result to our review record.
+ *
+ * Returns { uploadId, uploadUrl } from the CDP Uploader response.
  */
 async function initiateUpload(
   cdpUploaderUrl,
   s3Bucket,
-  userId,
   reviewId,
+  userId,
   logger
 ) {
-  const serviceName = config.get('serviceName')
-  const cdpEnvironment = config.get('cdpEnvironment')
-  const rawS3Path = config.get('s3.rawS3Path')
-
-  // Build callback URL based on environment
-  let callbackUrl
-  if (cdpEnvironment === 'local') {
-    // For local development, use explicit host:port
-    const host = config.get('host')
-    const port = config.get('port')
-    callbackUrl = `http://${host}:${port}/upload-callback`
-  } else {
-    // For CDP environments, use service name and internal domain
-    callbackUrl = `https://${serviceName}.${cdpEnvironment}.cdp-int.defra.cloud/upload-callback`
-  }
+  const serverUrl = (config.get('serverUrl') || '').replace(/\/$/, '')
+  const callbackUrl = `${serverUrl}${ENDPOINT_CALLBACK}`
 
   const initBody = {
-    s3Bucket: s3Bucket,
+    s3Bucket,
+    redirect: 'manual',
     callback: callbackUrl,
-    s3Path: rawS3Path,
+    mimeTypes: ACCEPTED_MIME_TYPES,
     maxFileSize: MAX_FILE_BYTES,
-    mimeTypes: Object.keys(ACCEPTED_MIME_TYPES),
-    metadata: {
-      source: 'content-reviewer-backend',
-      requestId: reviewId,
-      userId: userId
-    }
+    metadata: { reviewId, userId }
   }
+
+  logger.info(
+    { cdpUploaderUrl, callbackUrl, reviewId },
+    '[UPLOAD] Initiating CDP Uploader session'
+  )
 
   const initResp = await fetch(`${cdpUploaderUrl}/initiate`, {
     method: 'POST',
@@ -300,256 +74,292 @@ async function initiateUpload(
       { status: initResp.status, body: txt },
       'cdp-uploader /initiate failed'
     )
-    throw new Error(`cdp-uploader initiate failed: ${initResp.status}`)
+    throw new Error(`cdp-uploader /initiate failed: ${initResp.status}`)
   }
 
   const initJson = await initResp.json().catch(() => ({}))
+  const { uploadId, uploadUrl } = initJson
 
-  return {
-    uploadId: initJson?.uploadId,
-    uploadUrl: initJson?.uploadUrl,
-    statusUrl: initJson?.statusUrl
+  if (!uploadUrl) {
+    throw new Error('cdp-uploader /initiate did not return an uploadUrl')
   }
+
+  logger.info(
+    { uploadId, uploadUrl },
+    '[UPLOAD] CDP Uploader session initiated'
+  )
+  return { uploadId, uploadUrl }
 }
 
-/**
- * PUT/POST the raw multi-part file to the presigned uploadUrl.
- * Throws on non-2xx.
- */
-async function performUpload(
-  uploadAndScanUrl,
-  fileMultipartStream,
-  contentType,
-  rawFileName,
-  logger
-) {
-  // Create FormData for multipart/form-data submission
-  const FormData = (await import('form-data')).default
-  const formData = new FormData()
+// ─── Step 2: /upload-and-scan ────────────────────────────────────────────────
 
-  // Append file buffer as stream
-  const fileStream = Readable.from(fileMultipartStream)
-  formData.append('file', fileStream, {
-    rawFileName,
-    contentType
-  })
+/**
+ * POST /upload-and-scan/{uploadId} — send the file to CDP Uploader for virus
+ * scanning and quarantine.
+ *
+ * CDP Uploader returns HTTP 302 on success (it redirects a browser to the
+ * 'redirect' path from /initiate).  Because we passed redirect:'manual' in
+ * /initiate and we set redirect:'manual' on the fetch itself, we accept any
+ * 3xx as a success — we never follow the redirect.
+ *
+ * The file is buffered from the incoming octet-stream and wrapped in
+ * multipart/form-data (field name: 'file') as CDP Uploader expects.
+ */
+async function performUpload(uploadAndScanUrl, fileStream, fileName, logger) {
+  // Buffer the incoming stream — avoids the Node.js 18+ 'duplex' requirement
+  // that applies when passing a ReadableStream as a fetch body.
+  const chunks = []
+  for await (const chunk of fileStream) {
+    chunks.push(chunk)
+  }
+  const fileBuffer = Buffer.concat(chunks)
+
+  const formData = new FormData()
+  formData.append('file', new Blob([fileBuffer]), fileName ?? 'upload')
+
+  logger.info(
+    { uploadAndScanUrl, fileSize: fileBuffer.length, fileName },
+    '[UPLOAD] Sending file to CDP Uploader /upload-and-scan'
+  )
 
   const uploadRes = await fetch(uploadAndScanUrl, {
     method: 'POST',
-    body: formData
+    body: formData,
+    redirect: 'manual' // CDP Uploader returns 302 — accept it, do not follow
   })
 
-  if (!uploadRes.ok) {
+  // 2xx = immediate success (shouldn't happen in practice)
+  // 3xx = expected redirect response from CDP Uploader — treat as success
+  // anything else = genuine error
+  const isSuccess =
+    uploadRes.ok || (uploadRes.status >= 300 && uploadRes.status < 400)
+  if (!isSuccess) {
     const txt = await uploadRes.text().catch(() => '')
     logger.error(
       { status: uploadRes.status, body: txt },
-      'cdp-uploader raw upload failed'
+      'cdp-uploader /upload-and-scan failed'
     )
-    throw new Error(`Raw upload failed: ${uploadRes.status}`)
+    throw new Error(`cdp-uploader /upload-and-scan failed: ${uploadRes.status}`)
   }
-}
-
-/**
- * Log S3 details from the status response if available.
- */
-function logS3Details(statusData) {
-  const file = statusData?.form?.file
-  if (!file?.s3Bucket && !file?.s3Key) {
-    return
-  }
-
-  console.log('S3 DETAILS:')
-  console.log('- S3 Bucket:', file.s3Bucket)
-  console.log('- S3 Key:', file.s3Key)
-  console.log('- Filename:', file.filename)
-  console.log('- Content Type:', file.detectedContentType)
-}
-
-/**
- * Poll for status and extract bucket/key from the result.
- * Returns { bucket, key, statusData }.
- */
-async function resolveS3Location(
-  uploadStatusUrl,
-  timeoutMs,
-  interval,
-  uploadId,
-  logger
-) {
-  const statusData = await pollStatus(
-    uploadStatusUrl,
-    timeoutMs,
-    interval,
-    logger
-  ).catch((err) => {
-    logger.warn(
-      { err: err.message, uploadId },
-      'Polling cdp-uploader status failed or timed out'
-    )
-    return null
-  })
-
-  // ✅ check hasError from statusData
-  const fileStatus = statusData?.form?.file
-  const hasError = fileStatus?.hasError
-
-  if (hasError) {
-    const errorMessage =
-      fileStatus?.errorMessage ?? 'Unknown error from cdp-uploader'
-    logger.error(
-      {
-        uploadId,
-        hasError,
-        errorMessage,
-        fileStatus: fileStatus?.fileStatus
-      },
-      `cdp-uploader reported file error: ${errorMessage}`
-    )
-    throw new Error(errorMessage)
-  }
-
-  logS3Details(statusData)
-
-  return {
-    bucket: statusData?.form?.file?.s3Bucket ?? null,
-    key: statusData?.form?.file?.s3Key ?? null,
-    fileName: statusData?.form?.file?.filename ?? null,
-    mimeType: statusData?.form?.file?.detectedContentType ?? null
-  }
-}
-
-/**
- * Upload a file to cdp-uploader:
- *  1) /initiate  → get uploadId / uploadUrl / statusUrl
- *  2) upload buffer to uploadUrl
- *  3) poll status until ready or failed
- *
- * Returns { bucket, key }. Throws on fatal errors.
- */
-async function uploadFileToCdpUploader(
-  fileMultipartStream,
-  contentType,
-  logger,
-  rawFileName,
-  userId,
-  reviewId
-) {
-  const CDP_UPLOADER = (config.get('cdpUploader.url') || '').replace(/\/$/, '')
-  const timeoutMs =
-    config.get('cdpUploader.pollTimeoutMs') || DEFAULT_POLL_TIMEOUT_MS
-  const interval =
-    config.get('cdpUploader.pollIntervalMs') || DEFAULT_POLL_INTERVAL_MS
-  const S3_BUCKET = config.get('s3.bucket')
-
-  if (!CDP_UPLOADER) {
-    throw new Error('cdp-uploader base URL not configured')
-  }
-
-  const { uploadId, uploadUrl, statusUrl } = await initiateUpload(
-    CDP_UPLOADER,
-    S3_BUCKET,
-    userId,
-    reviewId,
-    logger
-  )
 
   logger.info(
-    { uploadId, uploadUrl, statusUrl },
-    'cdp-uploader initiated successfully'
+    { status: uploadRes.status },
+    '[UPLOAD] File accepted by CDP Uploader — awaiting callback'
   )
-
-  if (!uploadUrl) {
-    throw new Error('cdp-uploader initiate did not return an uploadUrl')
-  }
-
-  const uploadAndScanUrl = new URL(uploadUrl, CDP_UPLOADER).href
-  logger.info({ uploadAndScanUrl }, 'Uploading file to cdp-uploader')
-
-  await performUpload(
-    uploadAndScanUrl,
-    fileMultipartStream,
-    contentType,
-    rawFileName,
-    logger
-  )
-
-  if (!statusUrl) {
-    throw new Error('cdp-uploader initiate did not return an statusUrl')
-  }
-
-  const uploadStatusUrl = new URL(statusUrl, CDP_UPLOADER).href
-
-  logger.info({ uploadStatusUrl }, 'Polling cdp-uploader for upload status')
-
-  const { bucket, key, fileName, mimeType } = await resolveS3Location(
-    uploadStatusUrl,
-    timeoutMs,
-    interval,
-    uploadId,
-    logger
-  )
-
-  return { bucket, key, fileName, mimeType }
 }
 
+// ─── POST /api/upload ────────────────────────────────────────────────────────
+
 /**
- * POST /api/upload handler
- * Accepts a multipart file upload (PDF or DOCX), validates it, uploads the original file to cdp-uploader for safe storage, creates a canonical document record and queues
- * it through canonical document → DB → SQS pipeline.
+ * POST /api/upload
+ *
+ * Receives the file from the frontend (octet-stream with x-file-name header),
+ * initiates a CDP Uploader session, and forwards the file for virus scanning.
+ *
+ * Returns 202 Accepted immediately — the rest of the pipeline (canonical
+ * document → DB record → SQS) runs asynchronously inside handleUploadCallback
+ * once CDP Uploader POSTs back to /upload-callback.
  */
 const handleFileUpload = async (request, h) => {
   const requestStartTime = performance.now()
 
-  const contentType = request.headers['Content-Type']
-  const contentLength = request.headers['Content-Length']
+  // Hapi normalises all header names to lowercase
   const rawFileName = request.headers['x-file-name']
   const fileName = rawFileName ? decodeURIComponent(rawFileName) : null
-
+  const contentLength = request.headers['content-length']
   const reviewId = randomUUID()
   const userId = request.headers['x-user-id'] || null
 
   request.logger.info(
-    {
-      reviewId,
-      contentType,
-      fileName,
-      fileSize: contentLength
-    },
-    '[STEP 1/6] File validated  — starting pipeline'
+    { reviewId, fileName, fileSize: contentLength },
+    '[UPLOAD] File received — initiating CDP Uploader session'
   )
 
   try {
-    const pipelineResult = await runPipeline(
-      request.payload,
-      reviewId,
-      contentType,
-      userId,
-      request.headers,
-      request.logger,
-      fileName
+    const CDP_UPLOADER = (config.get('cdpUploader.url') || '').replace(
+      /\/$/,
+      ''
     )
-    const totalDuration = Math.round(performance.now() - requestStartTime)
+    const S3_BUCKET = config.get('s3.bucket')
 
-    return respondSuccess(
-      request.logger,
-      h,
+    if (!CDP_UPLOADER) {
+      throw new Error('CDP Uploader URL not configured (CDP_UPLOADER_URL)')
+    }
+
+    const { uploadId, uploadUrl } = await initiateUpload(
+      CDP_UPLOADER,
+      S3_BUCKET,
       reviewId,
-      pipelineResult.s3Result.fileName ?? fileName,
-      pipelineResult.s3Result.mimeType,
-      pipelineResult,
-      totalDuration
+      userId,
+      request.logger
     )
+
+    // uploadUrl from CDP Uploader is a relative path — resolve against the
+    // CDP Uploader base URL to get the absolute upload-and-scan endpoint.
+    const uploadAndScanUrl = new URL(uploadUrl, CDP_UPLOADER).href
+
+    await performUpload(
+      uploadAndScanUrl,
+      request.payload,
+      fileName,
+      request.logger
+    )
+
+    const totalDuration = Math.round(performance.now() - requestStartTime)
+    request.logger.info(
+      { reviewId, uploadId, totalDurationMs: totalDuration },
+      '[UPLOAD] File sent to CDP Uploader — awaiting callback to complete pipeline'
+    )
+
+    return h
+      .response({
+        success: true,
+        reviewId,
+        status: REVIEW_STATUSES.PENDING,
+        message: 'File uploaded — review queued'
+      })
+      .code(HTTP_STATUS.ACCEPTED)
   } catch (error) {
     const totalDuration = Math.round(performance.now() - requestStartTime)
-    // ✅ respondError sends error.message to frontend
-    return respondError(error, request.logger, totalDuration, h)
+    request.logger.error(
+      {
+        reviewId,
+        error: error.message,
+        stack: error.stack,
+        durationMs: totalDuration
+      },
+      '[UPLOAD] Upload failed'
+    )
+    return h
+      .response({ success: false, message: error.message })
+      .code(HTTP_STATUS.INTERNAL_SERVER_ERROR)
   }
 }
+
+// ─── POST /upload-callback ───────────────────────────────────────────────────
+
+/**
+ * POST /upload-callback
+ *
+ * CDP Uploader calls this endpoint (server-to-server) once virus scanning is
+ * complete and the file has been delivered to S3.
+ *
+ * Payload shape (same as GET /status/{uploadId}):
+ * {
+ *   uploadStatus: "ready",
+ *   metadata: { reviewId, userId },        ← echoed from /initiate
+ *   form: {
+ *     file: {
+ *       filename, s3Key, s3Bucket,
+ *       detectedContentType, fileStatus,
+ *       hasError, errorMessage
+ *     }
+ *   },
+ *   numberOfRejectedFiles: 0
+ * }
+ *
+ * MUST always return 200 OK — any other status causes CDP Uploader to retry.
+ */
+const handleUploadCallback = async (request, h) => {
+  const { uploadStatus, form, metadata } = request.payload ?? {}
+  const { reviewId, userId } = metadata ?? {}
+  const file = form?.file
+
+  request.logger.info(
+    { uploadStatus, reviewId, fileStatus: file?.fileStatus },
+    '[CALLBACK] Received CDP Uploader callback'
+  )
+
+  // Always 200 — even on error paths — so CDP Uploader does not retry
+  if (!reviewId) {
+    request.logger.error(
+      { metadata },
+      '[CALLBACK] No reviewId in metadata — cannot continue pipeline'
+    )
+    return h.response({ ok: true }).code(HTTP_STATUS.OK)
+  }
+
+  if (
+    uploadStatus !== 'ready' ||
+    file?.hasError ||
+    file?.fileStatus !== 'complete'
+  ) {
+    request.logger.warn(
+      {
+        uploadStatus,
+        fileStatus: file?.fileStatus,
+        errorMessage: file?.errorMessage
+      },
+      '[CALLBACK] Upload rejected or failed — skipping pipeline'
+    )
+    return h.response({ ok: true }).code(HTTP_STATUS.OK)
+  }
+
+  // Run the pipeline asynchronously so we respond to CDP Uploader immediately.
+  // Errors are caught internally — the 200 response is already sent.
+  setImmediate(async () => {
+    try {
+      const s3Key = file.s3Key
+      const fileName = file.filename
+      const mimeType = file.detectedContentType ?? file.contentType
+
+      request.logger.info(
+        { reviewId, s3Key, fileName, mimeType },
+        '[CALLBACK] Starting canonical document pipeline'
+      )
+
+      const { canonicalResult, canonicalDuration } =
+        await createCanonicalDocument(
+          null,
+          reviewId,
+          fileName,
+          request.logger,
+          CANONICAL_SOURCE_TYPES.FILE,
+          s3Key
+        )
+
+      const charCount = canonicalResult?.document?.charCount ?? 0
+
+      const dbCreateDuration = await createReviewRecord(
+        reviewId,
+        canonicalResult.s3,
+        fileName,
+        charCount,
+        request.logger,
+        { userId, mimeType, dbSourceType: SOURCE_TYPE_FILE }
+      )
+
+      const sqsSendDuration = await queueReviewJob(
+        reviewId,
+        canonicalResult.s3,
+        fileName,
+        charCount,
+        {},
+        request.logger
+      )
+
+      request.logger.info(
+        { reviewId, canonicalDuration, dbCreateDuration, sqsSendDuration },
+        '[CALLBACK] Pipeline completed — review queued for AI processing'
+      )
+    } catch (error) {
+      request.logger.error(
+        { reviewId, error: error.message, stack: error.stack },
+        '[CALLBACK] Pipeline failed after callback'
+      )
+    }
+  })
+
+  return h.response({ ok: true }).code(HTTP_STATUS.OK)
+}
+
+// ─── Route registration ──────────────────────────────────────────────────────
 
 export const uploadRoutes = {
   plugin: {
     name: 'upload-routes',
     register: async (server) => {
+      // Step 1 & 2: receive file from frontend, initiate CDP Uploader, send file
       server.route({
         method: 'POST',
         path: ENDPOINT_UPLOAD,
@@ -564,9 +374,17 @@ export const uploadRoutes = {
         },
         handler: handleFileUpload
       })
+
+      // Step 3: CDP Uploader calls back here when scanning + S3 delivery is done
+      server.route({
+        method: 'POST',
+        path: ENDPOINT_CALLBACK,
+        options: {
+          auth: false,
+          payload: { parse: true, allow: 'application/json' }
+        },
+        handler: handleUploadCallback
+      })
     }
   }
 }
-
-// export helpers for unit tests and integration use
-export { uploadFileToCdpUploader, runPipeline }
