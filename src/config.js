@@ -209,6 +209,12 @@ const config = convict({
       format: String,
       default: 'reviews',
       env: 'S3_PATH'
+    },
+    rawS3Path: {
+      doc: 'S3 path for the raw file storage',
+      format: String,
+      default: 'content-uploads',
+      env: 'RAW_S3_PATH'
     }
   },
   aws: {

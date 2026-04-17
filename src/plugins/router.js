@@ -5,6 +5,7 @@ import { results } from '../routes/results.js'
 import { sqsWorkerStatus } from '../routes/sqs-worker-status.js'
 import { resultEnvelope } from '../routes/result-envelope.js'
 import { adminRoutes } from '../routes/admin.js'
+import { uploadCallback } from '../routes/upload-callback.js'
 
 const router = {
   plugin: {
@@ -16,7 +17,8 @@ const router = {
         uploadRoutes,
         results,
         resultEnvelope,
-        adminRoutes
+        adminRoutes,
+        uploadCallback
       ])
     }
   }

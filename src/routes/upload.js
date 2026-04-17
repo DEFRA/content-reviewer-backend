@@ -50,7 +50,9 @@ async function runPipeline(
     fileMultipartStream,
     contentType,
     logger,
-    fallbackFileName
+    fallbackFileName,
+    userId,
+    reviewId
   )
 
   const s3UploadDuration = Math.round(performance.now() - s3UploadStart)
@@ -247,13 +249,40 @@ async function pollStatus(statusUrl, timeoutMs, interval, logger) {
  * Call /initiate and return { uploadId, uploadUrl, statusUrl }.
  * Throws on non-2xx.
  */
-async function initiateUpload(cdpUploaderUrl, s3Bucket, logger) {
+async function initiateUpload(
+  cdpUploaderUrl,
+  s3Bucket,
+  userId,
+  reviewId,
+  logger
+) {
+  const serviceName = config.get('serviceName')
+  const cdpEnvironment = config.get('cdpEnvironment')
+  const rawS3Path = config.get('s3.rawS3Path')
+
+  // Build callback URL based on environment
+  let callbackUrl
+  if (cdpEnvironment === 'local') {
+    // For local development, use explicit host:port
+    const host = config.get('host')
+    const port = config.get('port')
+    callbackUrl = `http://${host}:${port}/upload-callback`
+  } else {
+    // For CDP environments, use service name and internal domain
+    callbackUrl = `https://${serviceName}.${cdpEnvironment}.cdp-int.defra.cloud/upload-callback`
+  }
+
   const initBody = {
     s3Bucket: s3Bucket,
-    redirect: 'manual',
+    callback: callbackUrl,
+    s3Path: rawS3Path,
     maxFileSize: MAX_FILE_BYTES,
     mimeTypes: Object.keys(ACCEPTED_MIME_TYPES),
-    metadata: { source: 'content-reviewer-backend', requestId: randomUUID() }
+    metadata: {
+      source: 'content-reviewer-backend',
+      requestId: reviewId,
+      userId: userId
+    }
   }
 
   const initResp = await fetch(`${cdpUploaderUrl}/initiate`, {
@@ -401,7 +430,9 @@ async function uploadFileToCdpUploader(
   fileMultipartStream,
   contentType,
   logger,
-  rawFileName
+  rawFileName,
+  userId,
+  reviewId
 ) {
   const CDP_UPLOADER = (config.get('cdpUploader.url') || '').replace(/\/$/, '')
   const timeoutMs =
@@ -417,6 +448,8 @@ async function uploadFileToCdpUploader(
   const { uploadId, uploadUrl, statusUrl } = await initiateUpload(
     CDP_UPLOADER,
     S3_BUCKET,
+    userId,
+    reviewId,
     logger
   )
 
