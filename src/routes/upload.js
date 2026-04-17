@@ -292,71 +292,6 @@ async function runCallbackPipeline(file, reviewId, userId, logger) {
   )
 }
 
-/**
- * POST /upload-callback
- *
- * CDP Uploader calls this endpoint (server-to-server) once virus scanning is
- * complete and the file has been delivered to S3.
- *
- * Payload shape (same as GET /status/{uploadId}):
- * {
- *   uploadStatus: "ready",
- *   metadata: { reviewId, userId },        ← echoed from /initiate
- *   form: { file: { filename, s3Key, s3Bucket, detectedContentType,
- *                   fileStatus, hasError, errorMessage } },
- *   numberOfRejectedFiles: 0
- * }
- *
- * MUST always return 200 OK — any other status causes CDP Uploader to retry.
- */
-const handleUploadCallback = async (request, h) => {
-  const { uploadStatus, form, metadata } = request.payload ?? {}
-  const { reviewId, userId } = metadata ?? {}
-  const file = form?.file
-
-  request.logger.info(
-    { uploadStatus, reviewId, fileStatus: file?.fileStatus },
-    '[CALLBACK] Received CDP Uploader callback'
-  )
-
-  if (!reviewId) {
-    request.logger.error(
-      { metadata },
-      '[CALLBACK] No reviewId in metadata — cannot continue pipeline'
-    )
-    return h.response({ ok: true }).code(HTTP_STATUS.OK)
-  }
-
-  if (
-    uploadStatus !== 'ready' ||
-    file?.hasError ||
-    file?.fileStatus !== 'complete'
-  ) {
-    request.logger.warn(
-      {
-        uploadStatus,
-        fileStatus: file?.fileStatus,
-        errorMessage: file?.errorMessage
-      },
-      '[CALLBACK] Upload rejected or failed — skipping pipeline'
-    )
-    return h.response({ ok: true }).code(HTTP_STATUS.OK)
-  }
-
-  // Fire pipeline asynchronously — 200 is returned to CDP Uploader immediately
-  setImmediate(() => {
-    runCallbackPipeline(file, reviewId, userId, request.logger).catch(
-      (error) => {
-        request.logger.error(
-          { reviewId, error: error.message, stack: error.stack },
-          '[CALLBACK] Pipeline failed after callback'
-        )
-      }
-    )
-  })
-
-  return h.response({ ok: true }).code(HTTP_STATUS.OK)
-}
 
 // ─── Route registration ──────────────────────────────────────────────────────
 
@@ -378,17 +313,6 @@ export const uploadRoutes = {
           cors: getCorsConfig()
         },
         handler: handleFileUpload
-      })
-
-      // Step 3: CDP Uploader calls back here when scanning + S3 delivery is done
-      server.route({
-        method: 'POST',
-        path: ENDPOINT_CALLBACK,
-        options: {
-          auth: false,
-          payload: { parse: true, allow: 'application/json' }
-        },
-        handler: handleUploadCallback
       })
     }
   }
