@@ -2,6 +2,23 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { Readable } from 'node:stream'
 import { uploadFileToCdpUploader } from './upload.js'
 
+// ── Hoisted mock refs ─────────────────────────────────────────────────────────
+
+const { configGetMock } = vi.hoisted(() => {
+  const configGetMock = vi.fn((key) => {
+    const map = {
+      'cdpUploader.url': 'http://cdp-uploader',
+      'cdpUploader.pollTimeoutMs': 100,
+      'cdpUploader.pollIntervalMs': 10,
+      's3.bucket': 'test-bucket',
+      cdpEnvironment: 'dev',
+      serviceName: 'content-reviewer'
+    }
+    return map[key] ?? undefined
+  })
+  return { configGetMock }
+})
+
 // ─── Mock all external dependencies ───────────────────────────────────────────
 
 vi.mock('form-data', () => ({
@@ -15,17 +32,7 @@ vi.mock('form-data', () => ({
 
 vi.mock('../config.js', () => ({
   config: {
-    get: vi.fn((key) => {
-      const map = {
-        'cdpUploader.url': 'http://cdp-uploader',
-        'cdpUploader.pollTimeoutMs': 100,
-        'cdpUploader.pollIntervalMs': 10,
-        's3.bucket': 'test-bucket',
-        cdpEnvironment: 'dev',
-        serviceName: 'content-reviewer'
-      }
-      return map[key] ?? undefined
-    })
+    get: configGetMock
   }
 }))
 
@@ -45,8 +52,6 @@ vi.mock('./review-helpers.js', () => ({
   createReviewRecord: vi.fn(),
   queueReviewJob: vi.fn()
 }))
-
-import { config } from '../config.js'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -77,7 +82,7 @@ describe('initiateUpload – local environment callbackUrl (lines 267-269)', () 
   })
 
   it('builds callbackUrl from host:port when cdpEnvironment is "local"', async () => {
-    vi.mocked(config.get).mockImplementation((key) => {
+    configGetMock.mockImplementation((key) => {
       const map = {
         'cdpUploader.url': 'http://cdp-uploader',
         'cdpUploader.pollTimeoutMs': 100,
