@@ -1,13 +1,18 @@
 import { createRequire } from 'node:module'
+import { pathToFileURL } from 'node:url'
 import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs'
 import mammoth from 'mammoth'
 import { createLogger } from './logging/logger.js'
 import { textNormaliser } from './text-normaliser.js'
 
-// pdfjs-dist must run without a DOM Worker in Node.js
-pdfjsLib.GlobalWorkerOptions.workerSrc = ''
-
-const require = createRequire(import.meta.url)
+// pdfjs-dist v5 requires an explicit path to the worker — empty string no longer accepted.
+// createRequire resolves the absolute path in node_modules; pathToFileURL converts it to
+// a file:// URL that the Node.js Worker thread loader can consume on any OS/environment.
+pdfjsLib.GlobalWorkerOptions.workerSrc = pathToFileURL(
+  createRequire(import.meta.url).resolve(
+    'pdfjs-dist/legacy/build/pdf.worker.mjs'
+  )
+).href
 
 const logger = createLogger()
 

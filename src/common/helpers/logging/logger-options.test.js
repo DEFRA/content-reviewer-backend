@@ -1,5 +1,13 @@
-import { describe, test, expect } from 'vitest'
+import { describe, test, expect, vi } from 'vitest'
 import { loggerOptions } from './logger-options.js'
+
+// vi.hoisted ensures mockGetTraceId is initialised before vi.mock's factory
+// runs, so the factory can reference it without a direct import of getTraceId.
+const mockGetTraceId = vi.hoisted(() => vi.fn().mockReturnValue(null))
+
+vi.mock('@defra/hapi-tracing', () => ({
+  getTraceId: mockGetTraceId
+}))
 
 describe('Logger Options', () => {
   test('Should export loggerOptions object', () => {
@@ -46,9 +54,15 @@ describe('Logger Options', () => {
     expect(mixinResult).not.toBeNull()
   })
 
-  test('Mixin function should include trace when available', () => {
-    const mixinResult = loggerOptions.mixin()
-    // Result should be an object with optional trace property
-    expect(mixinResult === null || typeof mixinResult === 'object').toBe(true)
+  test('Mixin should return empty object when no traceId', () => {
+    mockGetTraceId.mockReturnValueOnce(null)
+    const result = loggerOptions.mixin()
+    expect(result).toEqual({})
+  })
+
+  test('Mixin should include trace.id when traceId is available', () => {
+    mockGetTraceId.mockReturnValueOnce('abc-123')
+    const result = loggerOptions.mixin()
+    expect(result.trace).toEqual({ id: 'abc-123' })
   })
 })
