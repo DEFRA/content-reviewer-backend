@@ -48,7 +48,7 @@ const TEST_CONSTANTS = {
   PROMPT_KEY: 'prompts/system-prompt.md',
   AWS_REGION: 'eu-west-2',
   CACHE_TTL: 3600000,
-  TEST_PROMPT: DEFAULT_SYSTEM_PROMPT,
+  TEST_PROMPT: 'Test system prompt content',
   CUSTOM_PROMPT: 'Custom prompt for testing',
   LONG_PROMPT_LENGTH: 5000,
   PROMPT_LENGTH: 100,
@@ -164,26 +164,26 @@ describe('PromptManager - Get System Prompt', () => {
   })
   test('Should refresh cache when forceRefresh is true', async () => {
     const mockBody = {
-      transformToString: vi.fn().mockResolvedValue(DEFAULT_SYSTEM_PROMPT)
+      transformToString: vi.fn().mockResolvedValue('New prompt')
     }
     mockSendFn.mockResolvedValueOnce({ Body: mockBody })
     const manager = new PromptManager()
     manager.cache = TEST_CONSTANTS.TEST_PROMPT
     manager.cacheTimestamp = Date.now()
     const result = await manager.getSystemPrompt(true)
-    expect(result).toBe(DEFAULT_SYSTEM_PROMPT)
+    expect(result).toBe('New prompt')
     expect(mockSendFn).toHaveBeenCalledTimes(TEST_CONSTANTS.ONE)
   })
   test('Should refresh cache when TTL expired', async () => {
     const mockBody = {
-      transformToString: vi.fn().mockResolvedValue(DEFAULT_SYSTEM_PROMPT)
+      transformToString: vi.fn().mockResolvedValue('Updated prompt')
     }
     mockSendFn.mockResolvedValueOnce({ Body: mockBody })
     const manager = new PromptManager()
     manager.cache = TEST_CONSTANTS.TEST_PROMPT
     manager.cacheTimestamp = Date.now() - TEST_CONSTANTS.ONE_HOUR - 1000
     const result = await manager.getSystemPrompt()
-    expect(result).toBe(DEFAULT_SYSTEM_PROMPT)
+    expect(result).toBe('Updated prompt')
     expect(mockSendFn).toHaveBeenCalledTimes(TEST_CONSTANTS.ONE)
   })
   test('Should fall back to default prompt when S3 fails', async () => {
@@ -331,23 +331,19 @@ describe('PromptManager - Edge Cases', () => {
       transformToString: vi.fn().mockResolvedValue(LONG_PROMPT)
     }
     mockSendFn.mockResolvedValueOnce({ Body: mockBody })
-    // Mock the upload triggered by auto-sync so it doesn't also call send
-    mockSendFn.mockResolvedValueOnce({})
     const manager = new PromptManager()
     const result = await manager.getSystemPrompt()
-    // auto-sync fires (LONG_PROMPT !== DEFAULT_SYSTEM_PROMPT) and returns DEFAULT_SYSTEM_PROMPT
-    expect(result).toBe(DEFAULT_SYSTEM_PROMPT)
-    expect(result.length).toBeGreaterThan(TEST_CONSTANTS.ZERO)
+    expect(result).toBe(LONG_PROMPT)
   })
   test('Should handle cache timestamp at exact TTL boundary', async () => {
     const mockBody = {
-      transformToString: vi.fn().mockResolvedValue(DEFAULT_SYSTEM_PROMPT)
+      transformToString: vi.fn().mockResolvedValue('New content')
     }
     mockSendFn.mockResolvedValueOnce({ Body: mockBody })
     const manager = new PromptManager()
     manager.cache = TEST_CONSTANTS.TEST_PROMPT
     manager.cacheTimestamp = Date.now() - TEST_CONSTANTS.ONE_HOUR
     const result = await manager.getSystemPrompt()
-    expect(result).toBe(DEFAULT_SYSTEM_PROMPT)
+    expect(result).toBe('New content')
   })
 })

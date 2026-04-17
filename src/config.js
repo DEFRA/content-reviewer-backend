@@ -312,7 +312,7 @@ const config = convict({
     modelName: {
       doc: 'Bedrock model name (for reference)',
       format: String,
-      default: 'anthropic.claude-3-haiku-20240307-v1:0',
+      default: 'anthropic.claude-3-7-sonnet-20250219-v1:0',
       env: 'BEDROCK_MODEL_NAME'
     },
     maxTokens: {
@@ -324,13 +324,13 @@ const config = convict({
     temperature: {
       doc: 'AI temperature (0.0-1.0, lower is more focused)',
       format: Number,
-      default: 0.2,
+      default: 0.1,
       env: 'BEDROCK_TEMPERATURE'
     },
     topP: {
       doc: 'Top-P nucleus sampling (0.0-1.0, lower is more deterministic)',
       format: Number,
-      default: 0.9,
+      default: 0.3,
       env: 'BEDROCK_TOP_P'
     }
   },
