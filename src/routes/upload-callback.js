@@ -3,18 +3,11 @@
  * Receives callbacks from CDP Uploader after virus scanning completes
  */
 import Joi from 'joi'
-import { SOURCE_TYPES as CANONICAL_SOURCE_TYPES } from '../common/helpers/canonical-document.js'
-import {
-  HTTP_STATUS,
-  REVIEW_STATUSES,
-  getCorsConfig,
-  createCanonicalDocument,
-  createReviewRecord,
-  queueReviewJob
-} from './review-helpers.js'
+import { HTTP_STATUS, REVIEW_STATUSES } from './review-helpers.js'
 import { randomUUID } from 'node:crypto'
 
-const SOURCE_TYPE_FILE = 'file'
+const HTTP_STATUS_BAD_REQUEST = 400
+const HTTP_STATUS_OK = 200
 
 /**
  * Upload callback controller
@@ -35,7 +28,7 @@ const uploadCallbackController = {
         request.logger.error(err, 'Upload callback validation failed')
         return h
           .response({ success: false, message: err.message })
-          .code(400)
+          .code(HTTP_STATUS_BAD_REQUEST)
           .takeover()
       }
     }
@@ -54,7 +47,7 @@ const uploadCallbackController = {
       request.logger.warn({ uploadStatus }, 'Upload not ready yet')
       return h
         .response({ success: false, message: 'Upload not ready' })
-        .code(200)
+        .code(HTTP_STATUS_OK)
     }
 
     // Check for rejected files
@@ -69,19 +62,19 @@ const uploadCallbackController = {
           message:
             'One or more files were rejected (virus detected or validation failed)'
         })
-        .code(200)
+        .code(HTTP_STATUS_OK)
     }
 
     // Get file details from form
     const fileField = form.file
-    if (!fileField || fileField.fileStatus !== 'complete') {
+    if (fileField?.fileStatus !== 'complete') {
       request.logger.error({ fileField }, 'File not complete or missing')
       return h
         .response({
           success: false,
           message: 'File not available or incomplete'
         })
-        .code(200)
+        .code(HTTP_STATUS_OK)
     }
 
     // Check if file was rejected
@@ -95,7 +88,7 @@ const uploadCallbackController = {
           success: false,
           message: fileField.errorMessage || 'File validation failed'
         })
-        .code(200)
+        .code(HTTP_STATUS_OK)
     }
 
     const userId = metadata?.userId || 'unknown-user'
@@ -107,15 +100,15 @@ const uploadCallbackController = {
       { userId, reviewId, contentType, s3Key, filename },
       'Processing uploaded file for review'
     )
-   return h
-    .response({
-      success: true,
-      reviewId,
-      status: REVIEW_STATUSES.PENDING,
-      message: 'File uploaded in S3 for review'
-    })
-    .code(HTTP_STATUS.ACCEPTED)
-      }
+    return h
+      .response({
+        success: true,
+        reviewId,
+        status: REVIEW_STATUSES.PENDING,
+        message: 'File uploaded in S3 for review'
+      })
+      .code(HTTP_STATUS.ACCEPTED)
+  }
 }
 
 const uploadCallback = {
