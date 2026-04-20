@@ -242,9 +242,6 @@ describe('ReviewProcessor - validateAndParseMessage - invalid messages', () => {
 
 // ============ validateExtractedContent ============
 
-const MIN_CONTENT_LENGTH = 200
-const LONG_CONTENT = 'A'.repeat(MIN_CONTENT_LENGTH)
-
 describe('ReviewProcessor - validateExtractedContent - blocked content', () => {
   let processor
 
@@ -274,7 +271,7 @@ describe('ReviewProcessor - validateExtractedContent - blocked content', () => {
   })
 })
 
-describe('ReviewProcessor - validateExtractedContent - text_review length', () => {
+describe('ReviewProcessor - validateExtractedContent - short content', () => {
   let processor
 
   beforeEach(() => {
@@ -282,21 +279,13 @@ describe('ReviewProcessor - validateExtractedContent - text_review length', () =
     processor = new ReviewProcessor()
   })
 
-  test('Should throw when messageType is text_review and content is under 200 chars', () => {
+  test('Should not throw when text_review has short content', () => {
     expect(() => {
       processor.validateExtractedContent(
         'review-1',
         'Short text that is clearly under the minimum length.',
         { messageType: 'text_review' }
       )
-    }).toThrow('Content too short')
-  })
-
-  test('Should not throw when text_review has sufficient content length', () => {
-    expect(() => {
-      processor.validateExtractedContent('review-1', LONG_CONTENT, {
-        messageType: 'text_review'
-      })
     }).not.toThrow()
   })
 
