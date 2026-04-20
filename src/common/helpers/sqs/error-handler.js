@@ -35,7 +35,17 @@ export class ErrorHandler {
       { keywords: ['Access denied'], message: 'Access Denied' },
       { keywords: ['not found'], message: 'Resource Not Found' },
       { keywords: ['credentials'], message: 'Authentication Error' },
-      { keywords: ['validation error'], message: 'Invalid Request' }
+      { keywords: ['validation error'], message: 'Invalid Request' },
+      {
+        keywords: ['Content access blocked'],
+        message:
+          'The URL was blocked by the website. Please upload the document directly.'
+      },
+      {
+        keywords: ['Content too short'],
+        message:
+          'The URL returned too little content to review. Please check the URL or upload the document directly.'
+      }
     ]
 
     for (const pattern of errorPatterns) {

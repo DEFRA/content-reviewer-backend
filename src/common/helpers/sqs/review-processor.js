@@ -216,6 +216,60 @@ export class ReviewProcessor {
   }
 
   /**
+   * Validate that extracted content is reviewable — not an access-blocked or
+   * empty response from the source URL/file.
+   *
+   * Throws an error (which the caller catches and saves as a failed review)
+   * when the text looks like an access-denied page or is too short to review.
+   *
+   * @param {string} reviewId
+   * @param {string} canonicalText
+   * @param {Object} messageBody
+   */
+  validateExtractedContent(reviewId, canonicalText, messageBody) {
+    const MIN_CONTENT_LENGTH = 200
+
+    const BLOCKED_PATTERNS = [
+      'blocked due to content policy',
+      'your request has been blocked',
+      'request has been blocked',
+      'has been blocked',
+      'access denied',
+      '403 forbidden',
+      'forbidden access'
+    ]
+
+    const lowerText = canonicalText.trim().toLowerCase()
+
+    if (BLOCKED_PATTERNS.some((pattern) => lowerText.includes(pattern))) {
+      logger.warn(
+        { reviewId, contentPreview: canonicalText.substring(0, 100) },
+        '[VALIDATION] Extracted content appears to be an access-blocked response'
+      )
+      throw new Error(
+        'Content access blocked: the website blocked access to this URL. Please upload the document directly.'
+      )
+    }
+
+    if (
+      messageBody.messageType === 'text_review' &&
+      lowerText.length < MIN_CONTENT_LENGTH
+    ) {
+      logger.warn(
+        {
+          reviewId,
+          contentLength: lowerText.length,
+          minLength: MIN_CONTENT_LENGTH
+        },
+        '[VALIDATION] Extracted content is too short to review'
+      )
+      throw new Error(
+        `Content too short: only ${lowerText.length} characters were extracted from the URL. The page may be inaccessible or require authentication.`
+      )
+    }
+  }
+
+  /**
    * Process content review with Bedrock AI
    */
   async processContentReview(messageBody) {
@@ -233,6 +287,7 @@ export class ReviewProcessor {
       await this.updateReviewStatusToProcessing(reviewId)
       const { canonicalText, linkMap } =
         await this.contentExtractor.extractTextContent(reviewId, messageBody)
+      this.validateExtractedContent(reviewId, canonicalText, messageBody)
       const bedrockResult = await this.bedrockProcessor.performBedrockReview(
         reviewId,
         canonicalText
