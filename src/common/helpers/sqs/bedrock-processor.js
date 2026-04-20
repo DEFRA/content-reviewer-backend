@@ -7,6 +7,8 @@ const logger = createLogger()
 
 // ─── Distribution helpers ─────────────────────────────────────────────────────
 
+const THIRDS_COUNT = 3
+
 /**
  * Returns the indices (0=first, 1=middle, 2=final) of thirds that have no
  * issues in the parsed review.  Only called when there are some issues — if
@@ -17,7 +19,7 @@ const logger = createLogger()
  * @returns {number[]} Indices of thirds that are empty (0, 1, and/or 2)
  */
 function getMissingThirds(issues, docLength) {
-  const thirdSize = Math.floor(docLength / 3)
+  const thirdSize = Math.floor(docLength / THIRDS_COUNT)
   const boundaries = [
     { start: 0, end: thirdSize },
     { start: thirdSize, end: thirdSize * 2 },
@@ -43,7 +45,7 @@ function getMissingThirds(issues, docLength) {
  * @returns {string}
  */
 function buildFollowUpPrompt(canonicalText, thirdIndex, docLength) {
-  const thirdSize = Math.floor(docLength / 3)
+  const thirdSize = Math.floor(docLength / THIRDS_COUNT)
   const start = thirdIndex * thirdSize
   const end = thirdIndex === 2 ? docLength : (thirdIndex + 1) * thirdSize
   const thirdName = ['first', 'second', 'third'][thirdIndex]
@@ -90,7 +92,9 @@ function buildFollowUpPrompt(canonicalText, thirdIndex, docLength) {
  */
 function mergeFollowUp(parsedReview, followUp) {
   const newIssues = followUp.reviewedContent?.issues || []
-  if (newIssues.length === 0) return
+  if (newIssues.length === 0) {
+    return
+  }
 
   const existingIssues = parsedReview.reviewedContent?.issues || []
   const existingImprovements = parsedReview.improvements || []
@@ -101,7 +105,9 @@ function mergeFollowUp(parsedReview, followUp) {
   // Build old-ref → new-ref mapping for improvements
   const refMap = new Map()
   newIssues.forEach((iss, i) => {
-    if (iss.ref !== undefined) refMap.set(iss.ref, maxRef + i + 1)
+    if (iss.ref !== undefined) {
+      refMap.set(iss.ref, maxRef + i + 1)
+    }
   })
 
   const renumberedIssues = newIssues.map((iss, i) => ({
@@ -235,10 +241,9 @@ export class BedrockReviewProcessor {
     const todayISO = now.toISOString().slice(0, 10) // e.g. "2026-04-20"
 
     const documentLength = textContent.length
-    const thirds = 3
-    const firstThirdEnd = Math.floor(documentLength / thirds)
+    const firstThirdEnd = Math.floor(documentLength / THIRDS_COUNT)
     const middleThirdStart = firstThirdEnd
-    const middleThirdEnd = Math.floor((documentLength * 2) / thirds)
+    const middleThirdEnd = Math.floor((documentLength * 2) / THIRDS_COUNT)
     const finalThirdStart = middleThirdEnd
 
     return [
@@ -409,7 +414,9 @@ export class BedrockReviewProcessor {
     )
 
     for (const followUp of followUpResults) {
-      if (followUp) mergeFollowUp(parsedReview, followUp)
+      if (followUp) {
+        mergeFollowUp(parsedReview, followUp)
+      }
     }
 
     logger.info(

@@ -216,19 +216,17 @@ export class ReviewProcessor {
   }
 
   /**
-   * Validate that extracted content is reviewable — not an access-blocked or
-   * empty response from the source URL/file.
+   * Validate that extracted content is reviewable — not an access-blocked
+   * response from the source URL/file.
    *
    * Throws an error (which the caller catches and saves as a failed review)
-   * when the text looks like an access-denied page or is too short to review.
+   * when the text looks like an access-denied page.
    *
    * @param {string} reviewId
    * @param {string} canonicalText
    * @param {Object} messageBody
    */
   validateExtractedContent(reviewId, canonicalText, messageBody) {
-    const MIN_CONTENT_LENGTH = 200
-
     const BLOCKED_PATTERNS = [
       'blocked due to content policy',
       'your request has been blocked',
@@ -248,23 +246,6 @@ export class ReviewProcessor {
       )
       throw new Error(
         'Content access blocked: the website blocked access to this URL. Please insert the text content or upload the document directly.'
-      )
-    }
-
-    if (
-      messageBody.messageType === 'text_review' &&
-      lowerText.length < MIN_CONTENT_LENGTH
-    ) {
-      logger.warn(
-        {
-          reviewId,
-          contentLength: lowerText.length,
-          minLength: MIN_CONTENT_LENGTH
-        },
-        '[VALIDATION] Extracted content is too short to review'
-      )
-      throw new Error(
-        `Content too short: only ${lowerText.length} characters were extracted from the URL. The page may be inaccessible or require authentication.`
       )
     }
   }
