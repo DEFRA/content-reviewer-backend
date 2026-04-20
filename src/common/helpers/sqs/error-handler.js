@@ -39,7 +39,7 @@ export class ErrorHandler {
       {
         keywords: ['Content access blocked'],
         message:
-          'The URL was blocked by the website. Please upload the document directly.'
+          'The URL was blocked by the website. Please insert the text content or upload the document directly.'
       },
       {
         keywords: ['Content too short'],

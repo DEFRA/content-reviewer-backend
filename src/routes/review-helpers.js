@@ -81,6 +81,19 @@ const ERROR_CODES = {
  * @param {Object} logger - Request logger
  * @returns {Object} Validation result with error info if invalid
  */
+// Patterns that indicate the content is an access-blocked or policy-violation
+// response rather than real page content (e.g. gov.uk blocking scrapers).
+// Applied at submission time so the user gets an immediate 400 instead of
+// waiting for the SQS worker to detect it and mark the review as failed.
+const BLOCKED_CONTENT_PATTERNS = [
+  'blocked due to content policy',
+  'your request has been blocked',
+  'request has been blocked',
+  'access denied',
+  '403 forbidden',
+  'forbidden access'
+]
+
 export function validateTextContent(payload, logger) {
   const { content, title } = payload
 
@@ -127,6 +140,30 @@ export function validateTextContent(payload, logger) {
     return {
       valid: false,
       error: `Content must not exceed ${maxCharLength.toLocaleString()} characters`,
+      statusCode: HTTP_STATUS.BAD_REQUEST
+    }
+  }
+
+  // Detect access-blocked or policy-violation responses submitted as content.
+  // This typically happens when a URL review is attempted against a site that
+  // blocks automated access — the scraper returns an error page instead of
+  // real content. Reject immediately so nothing is written to S3 or SQS.
+  const lowerContent = content.trim().toLowerCase()
+  if (
+    BLOCKED_CONTENT_PATTERNS.some((pattern) => lowerContent.includes(pattern))
+  ) {
+    logger.warn(
+      {
+        endpoint: ENDPOINTS.REVIEW_TEXT,
+        contentLength: content.length,
+        contentPreview: content.substring(0, 100)
+      },
+      'Text review request rejected - content appears to be an access-blocked response'
+    )
+    return {
+      valid: false,
+      error:
+        'The URL could not be reviewed — the website blocked access. Please insert the text content or upload the document directly instead.',
       statusCode: HTTP_STATUS.BAD_REQUEST
     }
   }

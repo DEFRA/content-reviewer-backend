@@ -247,7 +247,7 @@ export class ReviewProcessor {
         '[VALIDATION] Extracted content appears to be an access-blocked response'
       )
       throw new Error(
-        'Content access blocked: the website blocked access to this URL. Please upload the document directly.'
+        'Content access blocked: the website blocked access to this URL. Please insert the text content or upload the document directly.'
       )
     }
 

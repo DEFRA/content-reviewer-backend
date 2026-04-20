@@ -416,6 +416,17 @@ function parseImprovementBlock(block) {
     return null
   }
 
+  // Discard blocks where CURRENT and SUGGESTED are identical after normalising
+  // whitespace — these are no-op suggestions that provide no value to the user.
+  // The model is instructed to omit these, but this is a hard enforcement layer.
+  if (current.trim() === suggested.trim()) {
+    logger.warn(
+      { category, issue, current: current.substring(0, 80) },
+      '[review-parser] Discarding improvement block where CURRENT equals SUGGESTED'
+    )
+    return null
+  }
+
   return {
     severity: severityMatch[1].trim().toLowerCase(),
     category,
