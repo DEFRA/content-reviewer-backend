@@ -441,3 +441,71 @@ describe('_composeDocument', () => {
     expect(doc.sourceMap).toEqual(map)
   })
 })
+
+// ── _prepareUrlText with SOURCE_TYPES.TEXT ────────────────────────────────────
+
+describe('_prepareUrlText — TEXT source type', () => {
+  it('returns preStripText as null for TEXT source', () => {
+    const { workingText, preStripText } =
+      canonicalDocumentStore._prepareUrlText(
+        'Some plain text content',
+        SOURCE_TYPES.TEXT
+      )
+
+    expect(preStripText).toBeNull()
+    expect(typeof workingText).toBe('string')
+  })
+
+  it('decodes HTML entities from pasted text', () => {
+    const { workingText } = canonicalDocumentStore._prepareUrlText(
+      'Hello &amp; world &lt;test&gt;',
+      SOURCE_TYPES.TEXT
+    )
+
+    expect(workingText).toContain('&')
+    expect(workingText).not.toContain('&amp;')
+  })
+
+  it('collapses multiple consecutive spaces into a single space', () => {
+    const { workingText } = canonicalDocumentStore._prepareUrlText(
+      'word1   word2   word3',
+      SOURCE_TYPES.TEXT
+    )
+
+    expect(workingText).not.toMatch(/  /)
+  })
+
+  it('does not strip HTML tags from pasted text (preserves angle brackets)', () => {
+    const text = 'Content with <p>HTML</p> tags left intact'
+    const { workingText } = canonicalDocumentStore._prepareUrlText(
+      text,
+      SOURCE_TYPES.TEXT
+    )
+
+    // Unlike the URL path, HTML tags are NOT stripped for TEXT source
+    expect(workingText).toContain('<p>')
+  })
+
+  it('does not extract Markdown links (no linkMap / preStripText)', () => {
+    const text = 'See [GOV.UK](https://www.gov.uk) for details'
+    const { workingText, preStripText } =
+      canonicalDocumentStore._prepareUrlText(text, SOURCE_TYPES.TEXT)
+
+    // Markdown link syntax preserved — no extraction performed
+    expect(workingText).toContain('[GOV.UK]')
+    expect(preStripText).toBeNull()
+  })
+
+  it('merges orphaned bullet markers produced by copy-paste', () => {
+    // A bullet character on its own line followed by the item text is an
+    // artefact of copy-pasting from some PDF / Word documents.
+    const text = '•\nFirst item\n•\nSecond item'
+    const { workingText } = canonicalDocumentStore._prepareUrlText(
+      text,
+      SOURCE_TYPES.TEXT
+    )
+
+    // After merging, bullet and text should appear on the same line
+    expect(workingText).toContain('• First item')
+  })
+})

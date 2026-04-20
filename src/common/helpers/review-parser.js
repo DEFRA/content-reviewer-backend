@@ -4,6 +4,7 @@ const logger = createLogger()
 
 // ─── Shared constants ────────────────────────────────────────────────────────
 const FALLBACK_PREVIEW_LENGTH = 200
+const CURRENT_LOG_PREVIEW_LENGTH = 80
 const SCORES_TAG = '[SCORES]'
 const REVIEWED_CONTENT_TAG = '[REVIEWED_CONTENT]'
 const ISSUE_POSITIONS_TAG = '[ISSUE_POSITIONS]'
@@ -412,6 +413,21 @@ function parseImprovementBlock(block) {
     logger.warn(
       { category, issue },
       '[review-parser] Discarding improvement block with missing SUGGESTED field'
+    )
+    return null
+  }
+
+  // Discard blocks where CURRENT and SUGGESTED are identical after normalising
+  // whitespace — these are no-op suggestions that provide no value to the user.
+  // The model is instructed to omit these, but this is a hard enforcement layer.
+  if (current.trim() === suggested.trim()) {
+    logger.warn(
+      {
+        category,
+        issue,
+        current: current.substring(0, CURRENT_LOG_PREVIEW_LENGTH)
+      },
+      '[review-parser] Discarding improvement block where CURRENT equals SUGGESTED'
     )
     return null
   }
