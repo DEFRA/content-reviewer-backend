@@ -171,3 +171,87 @@ describe('parseBedrockResponse - improvement block with no CURRENT field (line 3
     expect(result.improvements[0].suggested).toBe('use simpler words')
   })
 })
+
+// ── CURRENT equals SUGGESTED discard ─────────────────────────────────────────
+
+const ISSUE_JSON_REF1 =
+  '{"issues":[{"ref":1,"start":0,"end":5,"type":"plain-english","text":"Hello"}]}'
+
+describe('parseBedrockResponse - discards no-op improvement (CURRENT equals SUGGESTED)', () => {
+  it('discards improvement block where CURRENT and SUGGESTED are identical', () => {
+    const response = [
+      SCORES_OPEN,
+      PLAIN_ENGLISH_SCORE_LINE,
+      SCORES_CLOSE,
+      ISSUE_POSITIONS_OPEN,
+      ISSUE_JSON_REF1,
+      ISSUE_POSITIONS_CLOSE,
+      IMPROVEMENTS_OPEN,
+      '[PRIORITY: medium]',
+      'REF: 1',
+      CATEGORY_CLARITY,
+      'ISSUE: No-op suggestion',
+      WHY_BARRIERS,
+      'CURRENT: same text here',
+      'SUGGESTED: same text here',
+      '[/PRIORITY]',
+      IMPROVEMENTS_CLOSE
+    ].join('\n')
+
+    const result = parseBedrockResponse(response, undefined, 'Hello world')
+
+    expect(result.improvements).toHaveLength(0)
+  })
+
+  it('discards no-op improvement when whitespace differs but trimmed text is equal', () => {
+    const response = [
+      SCORES_OPEN,
+      PLAIN_ENGLISH_SCORE_LINE,
+      SCORES_CLOSE,
+      ISSUE_POSITIONS_OPEN,
+      ISSUE_JSON_REF1,
+      ISSUE_POSITIONS_CLOSE,
+      IMPROVEMENTS_OPEN,
+      '[PRIORITY: low]',
+      'REF: 1',
+      CATEGORY_CLARITY,
+      'ISSUE: Whitespace no-op',
+      WHY_BARRIERS,
+      'CURRENT:   padded text   ',
+      'SUGGESTED: padded text',
+      '[/PRIORITY]',
+      IMPROVEMENTS_CLOSE
+    ].join('\n')
+
+    const result = parseBedrockResponse(response, undefined, 'Hello world')
+
+    expect(result.improvements).toHaveLength(0)
+  })
+
+  it('keeps improvement when CURRENT and SUGGESTED are genuinely different', () => {
+    const response = [
+      SCORES_OPEN,
+      PLAIN_ENGLISH_SCORE_LINE,
+      SCORES_CLOSE,
+      ISSUE_POSITIONS_OPEN,
+      ISSUE_JSON_REF1,
+      ISSUE_POSITIONS_CLOSE,
+      IMPROVEMENTS_OPEN,
+      '[PRIORITY: high]',
+      'REF: 1',
+      CATEGORY_CLARITY,
+      'ISSUE: Real improvement',
+      WHY_BARRIERS,
+      'CURRENT: utilise',
+      'SUGGESTED: use',
+      '[/PRIORITY]',
+      IMPROVEMENTS_CLOSE
+    ].join('\n')
+
+    const result = parseBedrockResponse(response, undefined, 'Hello world')
+
+    expect(result.improvements).toHaveLength(1)
+    expect(result.improvements[0].current).toBe('utilise')
+    expect(result.improvements[0].suggested).toBe('use')
+  })
+})
