@@ -201,6 +201,25 @@ describe('PromptManager - Get System Prompt', () => {
     const result = await manager.getSystemPrompt()
     expect(result).toBe(DEFAULT_SYSTEM_PROMPT)
   })
+  test('Should still return default prompt when auto-seed upload also fails after S3 fetch error', async () => {
+    // First call: GetObjectCommand fails → fallback path triggered
+    // Second call: PutObjectCommand inside auto-seed uploadPrompt() also fails
+    mockSendFn
+      .mockRejectedValueOnce(new Error('S3 get error'))
+      .mockRejectedValueOnce(new Error('S3 put error'))
+
+    const manager = new PromptManager()
+    const result = await manager.getSystemPrompt()
+
+    // Should still return the embedded default prompt
+    expect(result).toBe(DEFAULT_SYSTEM_PROMPT)
+
+    // Allow the unawaited uploadPrompt().catch() handler to settle
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    // Both S3 calls were attempted (get + auto-seed put)
+    expect(mockSendFn).toHaveBeenCalledTimes(2)
+  })
 })
 
 describe('PromptManager - Cache Management', () => {

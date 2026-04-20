@@ -224,6 +224,47 @@ describe('validateTextContent', () => {
 
     expect(result.valid).toBe(true)
   })
+
+  it('returns invalid when content matches a blocked-access pattern', () => {
+    const logger = createLogger()
+    const result = validateTextContent(
+      {
+        content:
+          'Your request has been blocked due to content policy violations on this site.'
+      },
+      logger
+    )
+
+    expect(result.valid).toBe(false)
+    expect(result.statusCode).toBe(HTTP_STATUS.BAD_REQUEST)
+    expect(result.error).toContain('blocked access')
+    expect(logger.warn).toHaveBeenCalled()
+  })
+
+  it('returns invalid when content contains "access denied" pattern', () => {
+    const logger = createLogger()
+    const result = validateTextContent(
+      {
+        content: 'Access denied. You do not have permission to view this page.'
+      },
+      logger
+    )
+
+    expect(result.valid).toBe(false)
+    expect(result.statusCode).toBe(HTTP_STATUS.BAD_REQUEST)
+    expect(result.error).toContain('blocked access')
+  })
+
+  it('returns invalid when content contains "403 forbidden" pattern', () => {
+    const logger = createLogger()
+    const result = validateTextContent(
+      { content: '403 forbidden error occurred while fetching this resource.' },
+      logger
+    )
+
+    expect(result.valid).toBe(false)
+    expect(result.statusCode).toBe(HTTP_STATUS.BAD_REQUEST)
+  })
 })
 
 // ============ uploadTextToS3 ============

@@ -32,7 +32,16 @@ The input is **plain text only** — no formatting is preserved. You cannot see 
 
 **Accessibility:** Unexplained technical terms or jargon; language that creates barriers for users with different abilities or reading levels.
 
-**GOV.UK Style Compliance:** Style guide violations; incorrect numeral usage (e.g., "nine o'clock" → "9am"); inappropriate tone; corporate speak or buzzwords.
+**GOV.UK Style Compliance:** Based on the GOV.UK Content Style Guide (https://www.gov.uk/guidance/style-guide) and GOV.UK Design System (https://design-system.service.gov.uk/styles/). Covers:
+- Words to avoid: utilise→use, facilitate→help, going forward→in future, leverage→use, robust→strong, deliver (policies/services), drive (change), key (unless it unlocks something), streamline, transform
+- Abbreviations and acronyms: spell out in full on first use unless commonly understood (e.g. UK, EU, VAT)
+- Numbers: use numerals for all numbers (including 1–9); "9am" not "9 o'clock"; "20 April 2026" not "20th April"; "£3 million" not "£3,000,000"; percentages use % not "per cent"
+- Dates and times: "20 April 2026", "9am to 5pm", "Monday to Friday"
+- Capitalisation: sentence case for headings and titles; do not capitalise job titles or policy names unless they are proper nouns
+- Contractions: avoid (e.g. "don't" → "do not") in formal guidance; acceptable in more conversational content
+- Link text: must make sense out of context — never use "click here", "read more", "find out more" alone; link text should describe the destination
+- Lists: use bullet lists for 3 or more comparable items; do not use semicolons at the end of bullet items; introductory sentence should end in a colon
+- Tone: active voice; second person ("you should…") not third ("applicants must…"); direct and confident, not vague or corporate
 
 **Content Completeness:** Missing necessary information; unclear or non-actionable instructions; unexplained gaps; content disproportionate in length for its purpose.
 
@@ -124,7 +133,7 @@ SUGGESTED: In future, we will review all cases.
 
 **No False Positives:**
 - Only flag text that genuinely violates a GOV.UK standard and where a content designer would need to act
-- Before outputting any issue, compare CURRENT and SUGGESTED character-for-character. If they are identical, you **must not** include the issue — omit it entirely
+- Before outputting any issue, write out CURRENT and SUGGESTED side-by-side and compare them word-for-word. If they are identical or differ only in whitespace, you **must not** include the issue — omit it entirely. A suggestion that changes nothing is worse than no suggestion.
 - Do not flag correctly formatted numerals (e.g. "2,400" does not need commas added)
 - Do not flag reference codes or identifiers (e.g. "EPR 6.09", "BS EN 14181")
 - Do not flag "(opens in new tab)" in link text — GOV.UK style requires this text when a link opens in a new tab
@@ -135,7 +144,7 @@ SUGGESTED: In future, we will review all cases.
 - If the expansion already appears in your own CURRENT: text, it is a false positive — remove it
 
 **Date Handling:**
-- Today's date is in the user prompt. Only flag a date as "future" if it is strictly after today. Past/current dates are correct — do not flag them
+- Today's date (with ISO value) is in the user prompt. To decide if a date D is in the future: convert D to year/month/day numbers and compare numerically with today's year/month/day. D is a future date only if D > today when compared year first, then month, then day. Any date on or before today is NOT a future date — do not flag it. Example: if today is 20 April 2026, then "2 March 2026" is in the PAST (March comes before April in the same year) and must NOT be flagged.
 
 **Issue Span Rules:**
 - Mark complete words, phrases, or sentences — never cut mid-word
@@ -190,6 +199,11 @@ class PromptManager {
    * @returns {Promise<boolean>} Success status
    */
   async uploadPrompt(promptContent = DEFAULT_SYSTEM_PROMPT) {
+    // Clear the cache immediately so any concurrent getSystemPrompt() call
+    // is forced to re-fetch from S3 once the upload below completes,
+    // rather than serving a stale cached object.
+    this.clearCache()
+
     try {
       logger.info(
         {
@@ -222,9 +236,6 @@ class PromptManager {
         },
         'System prompt uploaded successfully to S3'
       )
-
-      // Clear cache to force reload on next request
-      this.clearCache()
 
       return true
     } catch (error) {

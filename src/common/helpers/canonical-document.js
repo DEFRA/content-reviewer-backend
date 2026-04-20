@@ -505,15 +505,22 @@ class CanonicalDocumentStore {
   }
 
   /**
-   * Step 0a: Prepare URL source text — strip HTML tags, normalise whitespace,
-   * and snapshot the text before Markdown link syntax is stripped.
+   * Step 0a: Prepare source text for the canonical pipeline.
    *
-   * Returns { workingText, preStripText } where:
-   *   workingText  — text with HTML stripped AND Markdown links reduced to
-   *                  plain anchor text (ready for PII redaction)
-   *   preStripText — text with HTML stripped but Markdown links INTACT
-   *                  (used to build the linkMap after normalisation); null for
-   *                  non-URL sources
+   * URL sources get the full treatment: HTML tag stripping, entity decoding,
+   * whitespace collapse, bullet merging, and Markdown link extraction.
+   *
+   * TEXT (paste) sources get the same whitespace and bullet cleanup — but NOT
+   * HTML tag stripping (users paste plain text intentionally) and NOT Markdown
+   * link stripping (pasted text has no Markdown links).  This brings the two
+   * paths close enough that Bedrock receives similarly structured canonical
+   * text, reducing spurious differences in issue distribution.
+   *
+   * FILE sources are returned as-is; they are handled by documentSectionStripper
+   * in the next step.
+   *
+   * Returns { workingText, preStripText } where preStripText is non-null only
+   * for URL sources (used to build the linkMap after normalisation).
    *
    * @param {string} text
    * @param {string} sourceType
@@ -521,33 +528,55 @@ class CanonicalDocumentStore {
    * @private
    */
   _prepareUrlText(text, sourceType) {
-    if (sourceType !== SOURCE_TYPES.URL) {
-      return { workingText: text, preStripText: null }
+    // ── URL: full pipeline (HTML strip → entities → whitespace → bullets → links)
+    if (sourceType === SOURCE_TYPES.URL) {
+      // Strip HTML tags (linear-time state machine, ReDoS-safe) then entities
+      let workingText = this._stripEntities(stripHtmlTags(text))
+
+      // Collapse horizontal whitespace and excessive blank lines
+      workingText = this._collapseWhitespace(workingText)
+
+      // Re-join orphaned bullet markers (two-pass: blank-line then single-line)
+      workingText = this._mergeOrphanedBulletsPassA(workingText)
+      workingText = this._mergeOrphanedBulletsPassB(workingText)
+
+      // Merge consecutive bullet paragraphs into a single block
+      workingText = this._mergeConsecutiveBullets(workingText)
+
+      // Snapshot the text with Markdown links still intact (for the linkMap)
+      const preStripText = workingText
+
+      // Strip Markdown links [anchor](url) → anchor for the canonical pipeline
+      workingText = workingText.replaceAll(
+        /\[([^\]]{0,2000})\]\([^)\s]{0,2048}\)/gu,
+        '$1'
+      )
+
+      return { workingText, preStripText }
     }
 
-    // Strip HTML tags (linear-time state machine, ReDoS-safe) then entities
-    let workingText = this._stripEntities(stripHtmlTags(text))
+    // ── TEXT (paste): entity decode + whitespace + bullets (no HTML strip, no links)
+    // Applying the same structural cleanup as URL ensures both paths produce
+    // similarly sized canonical text and comparable third boundaries for Bedrock.
+    if (sourceType === SOURCE_TYPES.TEXT) {
+      // Decode HTML entities that browsers insert on copy (&nbsp;, &amp;, etc.)
+      let workingText = this._stripEntities(text)
 
-    // Collapse horizontal whitespace and excessive blank lines
-    workingText = this._collapseWhitespace(workingText)
+      // Collapse multiple spaces and excessive blank lines
+      workingText = this._collapseWhitespace(workingText)
 
-    // Re-join orphaned bullet markers (two-pass: blank-line then single-line)
-    workingText = this._mergeOrphanedBulletsPassA(workingText)
-    workingText = this._mergeOrphanedBulletsPassB(workingText)
+      // Re-join orphaned bullet markers that copy-paste splits across lines
+      workingText = this._mergeOrphanedBulletsPassA(workingText)
+      workingText = this._mergeOrphanedBulletsPassB(workingText)
 
-    // Merge consecutive bullet paragraphs into a single block
-    workingText = this._mergeConsecutiveBullets(workingText)
+      // Merge consecutive bullet paragraphs into a single block
+      workingText = this._mergeConsecutiveBullets(workingText)
 
-    // Snapshot the text with Markdown links still intact (for the linkMap)
-    const preStripText = workingText
+      return { workingText, preStripText: null }
+    }
 
-    // Strip Markdown links [anchor](url) → anchor for the canonical pipeline
-    workingText = workingText.replaceAll(
-      /\[([^\]]{0,2000})\]\([^)\s]{0,2048}\)/gu,
-      '$1'
-    )
-
-    return { workingText, preStripText }
+    // ── FILE and any other source: pass through unchanged
+    return { workingText: text, preStripText: null }
   }
 
   /**
