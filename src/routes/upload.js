@@ -278,6 +278,7 @@ const handleUploadCallback = async (request, h) => {
     runCallbackPipeline(
       s3Key,
       filename,
+      contentType,
       reviewId,
       userId,
       request.logger
@@ -373,9 +374,16 @@ function validateUploadCallbackPayload(
  * scanned file.  Called asynchronously from handleUploadCallback so the 200
  * response is sent to CDP Uploader before this work begins.
  */
-async function runCallbackPipeline(s3Key, fileName, reviewId, userId, logger) {
+async function runCallbackPipeline(
+  s3Key,
+  fileName,
+  contentType,
+  reviewId,
+  userId,
+  logger
+) {
   logger.info(
-    { reviewId, s3Key, fileName, mimeType },
+    { reviewId, s3Key, fileName, contentType },
     '[CALLBACK] Starting canonical document pipeline'
   )
 
@@ -396,7 +404,7 @@ async function runCallbackPipeline(s3Key, fileName, reviewId, userId, logger) {
     fileName,
     charCount,
     logger,
-    { userId, mimeType, dbSourceType: SOURCE_TYPE_FILE }
+    { userId, contentType, dbSourceType: SOURCE_TYPE_FILE }
   )
 
   const sqsSendDuration = await queueReviewJob(
