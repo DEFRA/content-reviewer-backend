@@ -47,8 +47,8 @@ async function initiateUpload(
   const serverUrl = (config.get('serverUrl') || '').replace(/\/$/, '')
   const rawS3Path = config.get('s3.rawS3Path')
   const callbackUrl = `${serverUrl}${ENDPOINT_CALLBACK}`
-  const redirectUrl = `${serverUrl}/upload-success?reviewId=${reviewId}`
-
+  //const redirectUrl = `${serverUrl}/upload-success?reviewId=${reviewId}`
+  const redirectUrl = `/upload-success?reviewId=${encodeURIComponent(reviewId)}`
   const initBody = {
     s3Bucket,
     s3Path: rawS3Path,
