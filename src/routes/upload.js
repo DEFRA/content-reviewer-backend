@@ -254,54 +254,14 @@ const handleUploadCallback = async (request, h) => {
       'Upload callback received from CDP Uploader'
     )
 
-    // Check if upload is ready
-    if (uploadStatus !== 'ready') {
-      request.logger.warn({ uploadStatus }, 'Upload not ready yet')
-      return h
-        .response({ success: false, message: 'Upload not ready' })
-        .code(HTTP_STATUS.INTERNAL_SERVER_ERROR)
-    }
-
-    // Check for rejected files
-    if (numberOfRejectedFiles > 0) {
-      request.logger.error(
-        { numberOfRejectedFiles },
-        'Files rejected during scan'
-      )
-      return h
-        .response({
-          success: false,
-          message:
-            'One or more files were rejected (virus detected or validation failed)'
-        })
-        .code(HTTP_STATUS.INTERNAL_SERVER_ERROR)
-    }
-
     // Get file details from form
     const fileField = form.file
-    if (fileField?.fileStatus !== 'complete') {
-      request.logger.error({ fileField }, 'File not complete or missing')
-      return h
-        .response({
-          success: false,
-          message: 'File not available or incomplete'
-        })
-        .code(HTTP_STATUS.INTERNAL_SERVER_ERROR)
-    }
 
-    // Check if file was rejected
-    if (fileField.hasError) {
-      request.logger.error(
-        { errorMessage: fileField.errorMessage },
-        'File rejected with error'
-      )
-      return h
-        .response({
-          success: false,
-          message: fileField.errorMessage || 'File validation failed'
-        })
-        .code(HTTP_STATUS.INTERNAL_SERVER_ERROR)
-    }
+    validateUploadCallbackPayload(
+      uploadStatus,
+      numberOfRejectedFiles,
+      fileField
+    )
 
     const userId = metadata?.userId
     const reviewId = metadata?.reviewId
@@ -369,6 +329,44 @@ const handleUploadCallback = async (request, h) => {
   }
 }
 
+// Validate the callback payload structure and values
+function validateUploadCallbackPayload(
+  uploadStatus,
+  numberOfRejectedFiles,
+  fileField
+) {
+  if (uploadStatus !== 'ready') {
+    const error = new Error('Upload not ready yet')
+    error.statusCode = HTTP_STATUS.INTERNAL_SERVER_ERROR
+    error.details = { uploadStatus }
+    throw error
+  }
+
+  if (numberOfRejectedFiles > 0) {
+    const error = new Error(
+      `Upload validation failed: ${numberOfRejectedFiles} files rejected`
+    )
+    error.statusCode = HTTP_STATUS.INTERNAL_SERVER_ERROR
+    error.details = { numberOfRejectedFiles }
+    throw error
+  }
+
+  if (!fileField || fileField.fileStatus !== 'complete') {
+    const error = new Error('File not available or incomplete')
+    error.statusCode = HTTP_STATUS.INTERNAL_SERVER_ERROR
+    error.details = { fileStatus: fileField?.fileStatus }
+    throw error
+  }
+
+  if (fileField.hasError) {
+    const errorMessage = fileField.errorMessage || 'File validation failed'
+    const error = new Error(errorMessage)
+    error.statusCode = HTTP_STATUS.INTERNAL_SERVER_ERROR
+    error.details = { hasError: true, errorMessage }
+    throw error
+  }
+}
+
 // ─── POST /upload-callback ───────────────────────────────────────────────────
 
 /**
@@ -376,14 +374,7 @@ const handleUploadCallback = async (request, h) => {
  * scanned file.  Called asynchronously from handleUploadCallback so the 200
  * response is sent to CDP Uploader before this work begins.
  */
-async function runCallbackPipeline(
-  s3Key,
-  fileName,
-  contentType,
-  reviewId,
-  userId,
-  logger
-) {
+async function runCallbackPipeline(s3Key, fileName, reviewId, userId, logger) {
   logger.info(
     { reviewId, s3Key, fileName, mimeType },
     '[CALLBACK] Starting canonical document pipeline'
