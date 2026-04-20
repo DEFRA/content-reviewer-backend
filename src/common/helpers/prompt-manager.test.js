@@ -41,6 +41,7 @@ vi.mock('./logging/logger.js', () => ({
   }))
 }))
 
+import { config } from '../../config.js'
 import { PromptManager, DEFAULT_SYSTEM_PROMPT } from './prompt-manager.js'
 
 const TEST_CONSTANTS = {
@@ -314,6 +315,17 @@ describe('PromptManager - Error Handling', () => {
     const manager = new PromptManager()
     await expect(manager.uploadPrompt()).rejects.toThrow('Upload failed')
   })
+
+  test('Should return default and handle auto-seed failure when both get and put fail', async () => {
+    mockSendFn.mockRejectedValueOnce(new Error('S3 read error'))
+    mockSendFn.mockRejectedValueOnce(new Error('S3 write error'))
+    const manager = new PromptManager()
+
+    const result = await manager.getSystemPrompt()
+
+    expect(result).toBe(DEFAULT_SYSTEM_PROMPT)
+    await new Promise((r) => setTimeout(r, 50))
+  })
 })
 
 describe('PromptManager - Edge Cases', () => {
@@ -345,5 +357,30 @@ describe('PromptManager - Edge Cases', () => {
     manager.cacheTimestamp = Date.now() - TEST_CONSTANTS.ONE_HOUR
     const result = await manager.getSystemPrompt()
     expect(result).toBe('New content')
+  })
+})
+
+describe('PromptManager - Initialization with LocalStack endpoint', () => {
+  const DEFAULT_CONFIG = {
+    'aws.region': 'eu-west-2',
+    'aws.endpoint': null,
+    's3.bucket': 'test-bucket',
+    's3.promptKey': 'prompts/system-prompt.md'
+  }
+
+  afterEach(() => {
+    config.get.mockImplementation((key) => DEFAULT_CONFIG[key])
+  })
+
+  test('Should configure S3 client with endpoint and forcePathStyle when awsEndpoint is set', () => {
+    config.get.mockImplementation((key) => {
+      if (key === 'aws.endpoint') return 'http://localhost:4566'
+      return DEFAULT_CONFIG[key]
+    })
+
+    const manager = new PromptManager()
+
+    expect(manager.bucket).toBe(TEST_CONSTANTS.BUCKET_NAME)
+    expect(manager.promptKey).toBe(TEST_CONSTANTS.PROMPT_KEY)
   })
 })
