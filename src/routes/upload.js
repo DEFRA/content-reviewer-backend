@@ -278,7 +278,6 @@ const handleUploadCallback = async (request, h) => {
     runCallbackPipeline(
       s3Key,
       filename,
-      contentType,
       reviewId,
       userId,
       request.logger
@@ -351,14 +350,14 @@ function validateUploadCallbackPayload(
     throw error
   }
 
-  if (!fileField || fileField.fileStatus !== 'complete') {
+  if (fileField?.fileStatus !== 'complete') {
     const error = new Error('File not available or incomplete')
     error.statusCode = HTTP_STATUS.INTERNAL_SERVER_ERROR
     error.details = { fileStatus: fileField?.fileStatus }
     throw error
   }
 
-  if (fileField.hasError) {
+  if (fileField?.hasError) {
     const errorMessage = fileField.errorMessage || 'File validation failed'
     const error = new Error(errorMessage)
     error.statusCode = HTTP_STATUS.INTERNAL_SERVER_ERROR
