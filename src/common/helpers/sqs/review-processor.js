@@ -224,9 +224,9 @@ export class ReviewProcessor {
    *
    * @param {string} reviewId
    * @param {string} canonicalText
-   * @param {Object} messageBody
+   * @param {Object} _messageBody
    */
-  validateExtractedContent(reviewId, canonicalText, messageBody) {
+  validateExtractedContent(reviewId, canonicalText, _messageBody) {
     const BLOCKED_PATTERNS = [
       'blocked due to content policy',
       'your request has been blocked',

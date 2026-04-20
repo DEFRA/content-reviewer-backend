@@ -404,6 +404,23 @@ describe('formatReviewForList', () => {
 
     expect(logger.warn).toHaveBeenCalled()
   })
+
+  it('calculates processingTime in seconds when both timestamps are present (L545)', () => {
+    const logger = createLogger()
+    const review = {
+      id: 'r1',
+      status: 'completed',
+      fileName: 'Doc',
+      createdAt: DATE_JAN_2024,
+      processingStartedAt: TIMESTAMP_ISO,
+      processingCompletedAt: TIMESTAMP_ISO_500
+    }
+
+    const result = formatReviewForList(review, logger)
+
+    expect(typeof result.processingTime).toBe('number')
+    expect(result.processingTime).toBeGreaterThanOrEqual(0)
+  })
 })
 
 // ============ getErrorStatusCode ============

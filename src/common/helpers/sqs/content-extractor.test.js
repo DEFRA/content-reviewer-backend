@@ -436,9 +436,9 @@ describe('ContentExtractor - extractTextFromS3', () => {
   })
 })
 
-// ── extractTextFromCanonicalDocument ─────────────────────────────────────────
+// ── extractTextFromCanonicalDocument — success cases ─────────────────────────
 
-describe('ContentExtractor - extractTextFromCanonicalDocument', () => {
+describe('ContentExtractor - extractTextFromCanonicalDocument - success', () => {
   let extractor
 
   beforeEach(() => {
@@ -467,10 +467,7 @@ describe('ContentExtractor - extractTextFromCanonicalDocument', () => {
       messageBody
     )
 
-    expect(result).toEqual({
-      canonicalText: TEST_TEXT_CONTENT,
-      linkMap: null
-    })
+    expect(result).toEqual({ canonicalText: TEST_TEXT_CONTENT, linkMap: null })
   })
 
   test('returns { canonicalText, linkMap } when canonical document includes linkMap (URL source)', async () => {
@@ -506,9 +503,19 @@ describe('ContentExtractor - extractTextFromCanonicalDocument', () => {
     expect(result.canonicalText).toBe(canonicalText)
     expect(result.linkMap).toEqual(linkMap)
   })
+})
+
+// ── extractTextFromCanonicalDocument — fallback / error cases ─────────────────
+
+describe('ContentExtractor - extractTextFromCanonicalDocument - fallbacks', () => {
+  let extractor
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    extractor = new ContentExtractor()
+  })
 
   test('falls back to raw string with linkMap null for legacy plain-text S3 keys', async () => {
-    // Legacy key is NOT documents/*.json so the fallback code path is used
     const messageBody = {
       s3Bucket: TEST_BUCKET,
       s3Key: 'content-uploads/review-123/Title.txt'
@@ -521,14 +528,10 @@ describe('ContentExtractor - extractTextFromCanonicalDocument', () => {
       messageBody
     )
 
-    expect(result).toEqual({
-      canonicalText: TEST_TEXT_CONTENT,
-      linkMap: null
-    })
+    expect(result).toEqual({ canonicalText: TEST_TEXT_CONTENT, linkMap: null })
   })
 
   test('falls back gracefully when canonicalText field is missing from parsed JSON', async () => {
-    // Malformed canonical document — missing canonicalText field
     const doc = { documentId: TEST_REVIEW_ID, status: 'pending' }
     const messageBody = {
       s3Bucket: TEST_BUCKET,
@@ -542,7 +545,6 @@ describe('ContentExtractor - extractTextFromCanonicalDocument', () => {
       messageBody
     )
 
-    // Falls back to the raw JSON string, no linkMap
     expect(result.linkMap).toBeNull()
     expect(typeof result.canonicalText).toBe('string')
   })
@@ -562,6 +564,17 @@ describe('ContentExtractor - extractTextFromCanonicalDocument', () => {
 
     expect(result.linkMap).toBeNull()
     expect(typeof result.canonicalText).toBe('string')
+  })
+})
+
+// ── extractTextFromCanonicalDocument — routing integration ────────────────────
+
+describe('ContentExtractor - extractTextFromCanonicalDocument - routing', () => {
+  let extractor
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    extractor = new ContentExtractor()
   })
 
   test('extractTextContent routes text_review to extractTextFromCanonicalDocument and returns { canonicalText, linkMap }', async () => {

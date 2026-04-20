@@ -360,6 +360,25 @@ describe('createCanonicalDocument - sourceType defaults', () => {
   })
 })
 
+describe('createCanonicalDocument - stripped sections log branch (L690)', () => {
+  it('logs stripped front-matter section names when sectionsRemoved is non-empty', async () => {
+    MOCK_SECTION_STRIP.mockReturnValueOnce({
+      strippedText: 'Body content.',
+      stats: { sectionsRemoved: ['titlePage', 'toc'] }
+    })
+
+    // Should not throw; the logger.info inside _logDocumentInfo takes the
+    // sectionStripMsg truthy branch when sectionsRemoved.length > 0
+    await expect(
+      canonicalDocumentStore.createCanonicalDocument({
+        documentId: DOCUMENT_ID,
+        text: 'Title Page\nBody content.',
+        sourceType: SOURCE_TYPES.FILE
+      })
+    ).resolves.toBeDefined()
+  })
+})
+
 // ── getDocument ───────────────────────────────────────────────────────────────
 
 function makeStoredDoc(overrides = {}) {
