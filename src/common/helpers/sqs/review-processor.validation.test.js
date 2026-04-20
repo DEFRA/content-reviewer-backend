@@ -23,7 +23,8 @@ const mockTruncateReceiptHandle = vi.fn()
 vi.mock('../logging/logger.js', () => ({
   createLogger: () => ({
     info: (...args) => mockLoggerInfo(...args),
-    error: (...args) => mockLoggerError(...args)
+    error: (...args) => mockLoggerError(...args),
+    warn: vi.fn()
   })
 }))
 
@@ -236,5 +237,74 @@ describe('ReviewProcessor - validateAndParseMessage - invalid messages', () => {
         'Failed to parse SQS message body as JSON - deleting invalid message'
       )
     })
+  })
+})
+
+// ============ validateExtractedContent ============
+
+const MIN_CONTENT_LENGTH = 200
+const LONG_CONTENT = 'A'.repeat(MIN_CONTENT_LENGTH)
+
+describe('ReviewProcessor - validateExtractedContent - blocked content', () => {
+  let processor
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    processor = new ReviewProcessor()
+  })
+
+  test('Should throw when content contains "access denied"', () => {
+    expect(() => {
+      processor.validateExtractedContent(
+        'review-1',
+        'You cannot view this page. Access denied.',
+        { messageType: 'text_review' }
+      )
+    }).toThrow('Content access blocked')
+  })
+
+  test('Should throw when content matches another blocked pattern', () => {
+    expect(() => {
+      processor.validateExtractedContent(
+        'review-1',
+        'This request has been blocked due to content policy violations.',
+        { messageType: 'file_review' }
+      )
+    }).toThrow('Content access blocked')
+  })
+})
+
+describe('ReviewProcessor - validateExtractedContent - text_review length', () => {
+  let processor
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    processor = new ReviewProcessor()
+  })
+
+  test('Should throw when messageType is text_review and content is under 200 chars', () => {
+    expect(() => {
+      processor.validateExtractedContent(
+        'review-1',
+        'Short text that is clearly under the minimum length.',
+        { messageType: 'text_review' }
+      )
+    }).toThrow('Content too short')
+  })
+
+  test('Should not throw when text_review has sufficient content length', () => {
+    expect(() => {
+      processor.validateExtractedContent('review-1', LONG_CONTENT, {
+        messageType: 'text_review'
+      })
+    }).not.toThrow()
+  })
+
+  test('Should not throw when non-text_review messageType has short content', () => {
+    expect(() => {
+      processor.validateExtractedContent('review-1', 'Short content', {
+        messageType: 'file_review'
+      })
+    }).not.toThrow()
   })
 })

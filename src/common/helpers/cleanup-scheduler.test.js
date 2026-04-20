@@ -215,6 +215,15 @@ describe('cleanupScheduler.stop - when running', () => {
     await vi.advanceTimersByTimeAsync(DEFAULT_INTERVAL_HOURS * 60 * 60 * 1000)
     expect(mockDeleteOldReviews.mock.calls.length).toBe(callsAfterStop)
   })
+
+  test('should stop correctly when isRunning is true but intervalId is null', async () => {
+    const { cleanupScheduler } = await import('./cleanup-scheduler.js')
+    cleanupScheduler.isRunning = true
+    cleanupScheduler.intervalId = null
+    cleanupScheduler.stop()
+    expect(cleanupScheduler.isRunning).toBe(false)
+    expect(mockLoggerInfo).toHaveBeenCalledWith('Cleanup scheduler stopped')
+  })
 })
 
 describe('cleanupScheduler.stop - when not running', () => {

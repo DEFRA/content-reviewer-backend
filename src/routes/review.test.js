@@ -3,6 +3,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 const SAMPLE_CONTENT = 'hello world'
 const DEFAULT_LIMIT = 50
 const DEFAULT_SKIP = 0
+const REVIEW_TEXT_PATH = '/api/review/text'
+const TEST_QUERY_LIMIT = 10
+const TEST_QUERY_SKIP = 5
 vi.mock('../common/helpers/review-repository.js', () => ({
   reviewRepository: {
     getReview: vi.fn(),
@@ -88,7 +91,7 @@ describe('reviewRoutes plugin', () => {
   it('registers POST /api/review/text', () => {
     const routes = getRegisteredRoutes()
     expect(
-      routes.some((r) => r.method === 'POST' && r.path === '/api/review/text')
+      routes.some((r) => r.method === 'POST' && r.path === REVIEW_TEXT_PATH)
     ).toBe(true)
   })
 
@@ -118,13 +121,13 @@ describe('reviewRoutes plugin', () => {
 
 // ============ handleTextReview ============
 
-describe('handleTextReview', () => {
+describe('handleTextReview - validation failure', () => {
   let handler
 
   beforeEach(() => {
     vi.resetAllMocks()
     getCorsConfig.mockReturnValue({ origin: ['*'], credentials: true })
-    handler = getHandler('POST', '/api/review/text')
+    handler = getHandler('POST', REVIEW_TEXT_PATH)
   })
 
   it('returns 400 when validation fails', async () => {
@@ -145,6 +148,16 @@ describe('handleTextReview', () => {
       })
     )
     expect(h._responseMock.code).toHaveBeenCalledWith(HTTP_STATUS.BAD_REQUEST)
+  })
+})
+
+describe('handleTextReview - processing outcomes', () => {
+  let handler
+
+  beforeEach(() => {
+    vi.resetAllMocks()
+    getCorsConfig.mockReturnValue({ origin: ['*'], credentials: true })
+    handler = getHandler('POST', REVIEW_TEXT_PATH)
   })
 
   it('returns 202 with reviewId on success', async () => {
@@ -189,6 +202,29 @@ describe('handleTextReview', () => {
 
     expect(h.response).toHaveBeenCalledWith(
       expect.objectContaining({ success: false, error: 'S3 is down' })
+    )
+    expect(h._responseMock.code).toHaveBeenCalledWith(
+      HTTP_STATUS.INTERNAL_SERVER_ERROR
+    )
+  })
+
+  it('returns 500 with default message when error has no message property', async () => {
+    validateTextContent.mockReturnValueOnce({
+      valid: true,
+      content: SAMPLE_CONTENT,
+      title: 'T'
+    })
+    processTextReviewSubmission.mockRejectedValueOnce({})
+    const req = createMockRequest({ payload: { content: SAMPLE_CONTENT } })
+    const h = createMockH()
+
+    await handler(req, h)
+
+    expect(h.response).toHaveBeenCalledWith(
+      expect.objectContaining({
+        success: false,
+        error: 'Failed to queue text review'
+      })
     )
     expect(h._responseMock.code).toHaveBeenCalledWith(
       HTTP_STATUS.INTERNAL_SERVER_ERROR
@@ -261,7 +297,7 @@ describe('handleGetReview', () => {
 
 // ============ handleGetAllReviews ============
 
-describe('handleGetAllReviews', () => {
+describe('handleGetAllReviews - query parameters', () => {
   let handler
 
   beforeEach(() => {
@@ -322,6 +358,34 @@ describe('handleGetAllReviews', () => {
     )
   })
 
+  it('uses provided limit and skip values from query params', async () => {
+    reviewRepository.getAllReviews.mockResolvedValueOnce([])
+    reviewRepository.getReviewCount.mockResolvedValueOnce(0)
+    const req = createMockRequest({
+      query: { limit: String(TEST_QUERY_LIMIT), skip: String(TEST_QUERY_SKIP) }
+    })
+    const h = createMockH()
+
+    await handler(req, h)
+
+    expect(reviewRepository.getAllReviews).toHaveBeenCalledWith(
+      TEST_QUERY_LIMIT,
+      TEST_QUERY_SKIP,
+      null
+    )
+    expect(h._responseMock.code).toHaveBeenCalledWith(HTTP_STATUS.OK)
+  })
+})
+
+describe('handleGetAllReviews - error handling', () => {
+  let handler
+
+  beforeEach(() => {
+    vi.resetAllMocks()
+    getCorsConfig.mockReturnValue({ origin: ['*'], credentials: true })
+    handler = getHandler('GET', '/api/reviews')
+  })
+
   it('returns 500 when repository throws', async () => {
     reviewRepository.getAllReviews.mockRejectedValueOnce(
       new Error('DB failure')
@@ -339,7 +403,7 @@ describe('handleGetAllReviews', () => {
 
 // ============ handleDeleteReview ============
 
-describe('handleDeleteReview', () => {
+describe('handleDeleteReview - success', () => {
   let handler
 
   beforeEach(() => {
@@ -368,6 +432,37 @@ describe('handleDeleteReview', () => {
       })
     )
     expect(h._responseMock.code).toHaveBeenCalledWith(HTTP_STATUS.OK)
+  })
+
+  it('uses reviewId in message when result has no fileName', async () => {
+    reviewRepository.deleteReview.mockResolvedValueOnce({
+      reviewId: 'rev-no-name',
+      fileName: undefined,
+      deletedKeys: ['key1'],
+      deletedCount: 1
+    })
+    const req = createMockRequest({ params: { reviewId: 'rev-no-name' } })
+    const h = createMockH()
+
+    await handler(req, h)
+
+    expect(h.response).toHaveBeenCalledWith(
+      expect.objectContaining({
+        success: true,
+        message: 'Review "rev-no-name" deleted successfully'
+      })
+    )
+    expect(h._responseMock.code).toHaveBeenCalledWith(HTTP_STATUS.OK)
+  })
+})
+
+describe('handleDeleteReview - error handling', () => {
+  let handler
+
+  beforeEach(() => {
+    vi.resetAllMocks()
+    getCorsConfig.mockReturnValue({ origin: ['*'], credentials: true })
+    handler = getHandler('DELETE', '/api/reviews/{reviewId}')
   })
 
   it('returns 404 when delete throws not-found error', async () => {
