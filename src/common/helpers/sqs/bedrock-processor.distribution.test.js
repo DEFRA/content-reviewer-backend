@@ -513,4 +513,222 @@ describe('BedrockReviewProcessor - mergeFollowUp ref renumbering', () => {
     // Improvement ref should remain undefined when it had no ref to remap
     expect(parsedReview.improvements[2].ref).toBeUndefined()
   })
+
+  // ── L103: iss.ref ?? 0 fallback when existing issue has nullish ref ──────────
+
+  test('uses ?? 0 fallback in maxRef reduce when existing issue has null ref (L103)', async () => {
+    const text = makeText(900)
+    // Existing parsedReview whose issues have ref: null — exercises iss.ref ?? 0
+    const parsedReview = {
+      reviewedContent: {
+        issues: [{ ref: null, start: 10, end: 20, type: 'style', text: 'x' }]
+      },
+      improvements: [],
+      scores: {}
+    }
+
+    const followUpParsed = {
+      reviewedContent: {
+        issues: [{ ref: 1, start: 700, end: 710, type: 'style', text: 'y' }]
+      },
+      improvements: []
+    }
+
+    mockSendMessage.mockResolvedValueOnce({ success: true, content: 'fu' })
+    mockParseBedrockResponse.mockReturnValueOnce(followUpParsed)
+
+    // Middle third also missing — need issue only in first third
+    // But the single existing issue (start=10) covers only the first third, so
+    // second and third thirds are missing; we only care that mergeFollowUp runs
+    // and hits the ?? 0 path while computing maxRef from the null-ref issue.
+    // Provide a second follow-up result for the second-third call.
+    mockSendMessage.mockResolvedValueOnce({ success: true, content: 'fu2' })
+    mockParseBedrockResponse.mockReturnValueOnce({
+      reviewedContent: { issues: [] },
+      improvements: []
+    })
+
+    await processor.enforceDistribution(
+      'rev-null-ref',
+      parsedReview,
+      text,
+      'sys'
+    )
+
+    // The follow-up issue (ref=1 in follow-up) should be renumbered to 1
+    // because maxRef from existing issues is 0 (null ?? 0 = 0) + 0 + 1 = 1
+    const merged = parsedReview.reviewedContent.issues
+    expect(merged.length).toBeGreaterThan(1)
+    expect(merged[merged.length - 1].ref).toBe(1)
+  })
+
+  // ── L117-119: refMap.get(imp.ref) ?? imp.ref fallback ────────────────────────
+
+  test('falls back to imp.ref when improvement ref is absent from refMap (L117-119)', async () => {
+    const text = makeText(900)
+    const parsedReview = makeReview([50, 350]) // final third missing; existing refs 1,2
+
+    // Follow-up issue has ref=1 → refMap will contain { 1 → 3 }
+    // Follow-up improvement has ref=99 → refMap.get(99) is undefined → ?? imp.ref keeps 99
+    const followUpParsed = {
+      reviewedContent: {
+        issues: [{ ref: 1, start: 700, end: 710, type: 'style', text: 'z' }]
+      },
+      improvements: [
+        {
+          ref: 99,
+          severity: 'low',
+          category: 'Clarity',
+          issue: 'Orphan improvement',
+          why: 'W',
+          current: 'old',
+          suggested: 'new'
+        }
+      ]
+    }
+
+    mockSendMessage.mockResolvedValueOnce({ success: true, content: 'fu' })
+    mockParseBedrockResponse.mockReturnValueOnce(followUpParsed)
+
+    await processor.enforceDistribution(
+      'rev-orphan-ref',
+      parsedReview,
+      text,
+      'sys'
+    )
+
+    // Issue merged and renumbered to 3
+    expect(parsedReview.reviewedContent.issues).toHaveLength(3)
+    // Improvement ref=99 not in refMap → kept as 99 via ?? imp.ref fallback
+    const mergedImp = parsedReview.improvements[2]
+    expect(mergedImp.ref).toBe(99)
+  })
+})
+
+// ── mergeFollowUp — || [] fallback branches ───────────────────────────────────
+
+describe('BedrockReviewProcessor - mergeFollowUp || [] fallback branches', () => {
+  let processor
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    processor = new BedrockReviewProcessor()
+  })
+
+  // ── L94: followUp.reviewedContent?.issues || [] fallback ──────────────────────
+
+  test('mergeFollowUp exits early via || [] when follow-up has no reviewedContent (L94)', async () => {
+    const text = makeText(900)
+    const parsedReview = makeReview([50, 350]) // final third missing
+
+    // Follow-up result has no reviewedContent → followUp.reviewedContent?.issues || []
+    // evaluates to [] via the || [] branch, then returns early (no merge)
+    mockSendMessage.mockResolvedValueOnce({ success: true, content: 'raw' })
+    mockParseBedrockResponse.mockReturnValueOnce({ scores: {} })
+
+    const issuesBefore = parsedReview.reviewedContent.issues.length
+    await processor.enforceDistribution('rev-no-rc', parsedReview, text, 'sys')
+
+    // No issues merged because follow-up had no reviewedContent
+    expect(parsedReview.reviewedContent.issues).toHaveLength(issuesBefore)
+  })
+
+  // ── L100: parsedReview.improvements || [] fallback ────────────────────────────
+
+  test('mergeFollowUp uses || [] when parsedReview has no improvements property (L100)', async () => {
+    const text = makeText(900)
+    // parsedReview without improvements property → L100: parsedReview.improvements || []
+    const parsedReview = {
+      reviewedContent: {
+        issues: [{ ref: 1, start: 10, end: 20, type: 'style', text: 'x' }]
+      }
+      // no improvements property
+    }
+
+    const followUpParsed = {
+      reviewedContent: {
+        issues: [{ ref: 1, start: 700, end: 710, type: 'style', text: 'y' }]
+      },
+      improvements: []
+    }
+
+    mockSendMessage.mockResolvedValueOnce({ success: true, content: 'fu' })
+    mockParseBedrockResponse.mockReturnValueOnce(followUpParsed)
+
+    await processor.enforceDistribution(
+      'rev-no-imps',
+      parsedReview,
+      text,
+      'sys'
+    )
+
+    // Issue merged; improvements built from [] (fallback) + follow-up's []
+    expect(parsedReview.reviewedContent.issues).toHaveLength(2)
+    expect(parsedReview.improvements).toHaveLength(0)
+  })
+
+  // ── L117: followUp.improvements || [] fallback ────────────────────────────────
+
+  test('mergeFollowUp uses || [] when follow-up has no improvements property (L117)', async () => {
+    const text = makeText(900)
+    const parsedReview = makeReview([50, 350]) // final third missing
+
+    // Follow-up has reviewedContent.issues but NO improvements property
+    // → L117: (followUp.improvements || []).map(...) hits the || [] branch
+    const followUpParsed = {
+      reviewedContent: {
+        issues: [{ ref: 1, start: 700, end: 710, type: 'style', text: 'z' }]
+      }
+      // no improvements property
+    }
+
+    mockSendMessage.mockResolvedValueOnce({ success: true, content: 'fu' })
+    mockParseBedrockResponse.mockReturnValueOnce(followUpParsed)
+
+    await processor.enforceDistribution(
+      'rev-no-fu-imps',
+      parsedReview,
+      text,
+      'sys'
+    )
+
+    // Issue merged; zero improvements added (follow-up had none)
+    expect(parsedReview.reviewedContent.issues).toHaveLength(3)
+    expect(parsedReview.improvements).toHaveLength(2) // original 2, no new ones
+  })
+})
+
+// ── performFollowUpForThird — ?? 0 fallback when reviewedContent absent ───────
+
+describe('BedrockReviewProcessor - performFollowUpForThird - ?? 0 issueCount fallback (L345)', () => {
+  let processor
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    processor = new BedrockReviewProcessor()
+  })
+
+  test('uses ?? 0 when parsed result has no reviewedContent (L345)', async () => {
+    // parseBedrockResponse returns an object without reviewedContent — exercises
+    // parsed.reviewedContent?.issues?.length ?? 0 falling through to ?? 0
+    const parsedNoContent = { improvements: [], scores: {} }
+    mockSendMessage.mockResolvedValueOnce({ success: true, content: 'raw' })
+    mockParseBedrockResponse.mockReturnValueOnce(parsedNoContent)
+
+    const result = await processor.performFollowUpForThird(
+      'rev-no-content',
+      makeText(900),
+      2,
+      900,
+      'sys'
+    )
+
+    // Should still return the parsed object (not null)
+    expect(result).toEqual(parsedNoContent)
+    // Logger info should report issueCount of 0 (from ?? 0 fallback)
+    expect(mockLoggerInfo).toHaveBeenCalledWith(
+      expect.objectContaining({ issueCount: 0 }),
+      expect.any(String)
+    )
+  })
 })
