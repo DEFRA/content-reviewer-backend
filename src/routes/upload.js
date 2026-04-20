@@ -45,11 +45,14 @@ async function initiateUpload(
   logger
 ) {
   const serverUrl = (config.get('serverUrl') || '').replace(/\/$/, '')
+  const rawS3Path = config.get('s3.rawS3Path')
   const callbackUrl = `${serverUrl}${ENDPOINT_CALLBACK}`
+  const redirectUrl = `${serverUrl}/upload-success?reviewId=${reviewId}`
 
   const initBody = {
     s3Bucket,
-    redirect: 'manual',
+    s3Path: rawS3Path,
+    redirect: redirectUrl,
     callback: callbackUrl,
     mimeTypes: ACCEPTED_MIME_TYPES,
     maxFileSize: MAX_FILE_BYTES,
@@ -101,8 +104,7 @@ async function initiateUpload(
  *
  * CDP Uploader returns HTTP 302 on success (it redirects a browser to the
  * 'redirect' path from /initiate).  Because we passed redirect:'manual' in
- * /initiate and we set redirect:'manual' on the fetch itself, we accept any
- * 3xx as a success — we never follow the redirect.
+ * /initiate
  *
  * The file is buffered from the incoming octet-stream and wrapped in
  * multipart/form-data (field name: 'file') as CDP Uploader expects.
@@ -117,7 +119,7 @@ async function performUpload(uploadAndScanUrl, fileStream, fileName, logger) {
   const fileBuffer = Buffer.concat(chunks)
 
   const formData = new FormData()
-  formData.append('file', new Blob([fileBuffer]), fileName ?? 'upload')
+  formData.append('file', new Blob([fileBuffer]), fileName)
 
   logger.info(
     { uploadAndScanUrl, fileSize: fileBuffer.length, fileName },
@@ -126,18 +128,10 @@ async function performUpload(uploadAndScanUrl, fileStream, fileName, logger) {
 
   const uploadRes = await fetch(uploadAndScanUrl, {
     method: 'POST',
-    body: formData,
-    redirect: 'manual' // CDP Uploader returns 302 — accept it, do not follow
+    body: formData
   })
 
-  // 2xx = immediate success (shouldn't happen in practice)
-  // 3xx = expected redirect response from CDP Uploader — treat as success
-  // anything else = genuine error
-  const isSuccess =
-    uploadRes.ok ||
-    (uploadRes.status >= HTTP_REDIRECT_MIN &&
-      uploadRes.status < HTTP_REDIRECT_MAX)
-  if (!isSuccess) {
+  if (!uploadRes.ok) {
     const txt = await uploadRes.text().catch(() => '')
     logger.error(
       { status: uploadRes.status, body: txt },
@@ -240,6 +234,139 @@ const handleFileUpload = async (request, h) => {
   }
 }
 
+/**
+ * POST /upload-callback
+ *
+ * Called by CDP Uploader (server-to-server) after file scanning.
+ * Receives complete file metadata.
+ * This is where the actual pipeline runs.
+ */
+const handleUploadCallback = async (request, h) => {
+  const requestStartTime = performance.now()
+
+  try {
+    const { uploadStatus, metadata, form, numberOfRejectedFiles } =
+      request.payload
+
+    // ✅ Extract complete metadata from CDP Uploader POST
+    request.logger.info(
+      { uploadStatus, metadata, numberOfRejectedFiles },
+      'Upload callback received from CDP Uploader'
+    )
+
+    // Get file details from form
+    const fileField = form.file
+
+    validateUploadCallbackPayload(
+      uploadStatus,
+      numberOfRejectedFiles,
+      fileField
+    )
+
+    const userId = metadata?.userId
+    const reviewId = metadata?.reviewId
+
+    const { contentType, s3Key, filename } = fileField
+
+    request.logger.info(
+      { userId, reviewId, contentType, s3Key, filename },
+      'Processing uploaded file for review'
+    )
+
+    // ✅ Run pipeline ASYNCHRONOUSLY (don't await)
+    // So we can return quickly to CDP Uploader
+    runCallbackPipeline(
+      s3Key,
+      filename,
+      contentType,
+      reviewId,
+      userId,
+      request.logger
+    ).catch((error) => {
+      request.logger.error(
+        {
+          reviewId,
+          error: error.message,
+          stack: error.stack
+        },
+        '[CALLBACK] Async pipeline failed'
+      )
+    })
+
+    const totalDuration = Math.round(performance.now() - requestStartTime)
+
+    request.logger.info(
+      {
+        reviewId,
+        totalDurationMs: totalDuration
+      },
+      '[CALLBACK] Pipeline started asynchronously'
+    )
+
+    // ✅ Return 200 OK to CDP Uploader immediately
+    return h
+      .response({
+        success: true,
+        message: 'Callback received',
+        reviewId
+      })
+      .code(HTTP_STATUS.OK)
+  } catch (error) {
+    const totalDuration = Math.round(performance.now() - requestStartTime)
+
+    request.logger.error(
+      {
+        error: error.message,
+        stack: error.stack,
+        durationMs: totalDuration
+      },
+      '[CALLBACK] Handler failed'
+    )
+
+    return h
+      .response({ success: false, message: error.message })
+      .code(HTTP_STATUS.INTERNAL_SERVER_ERROR)
+  }
+}
+
+// Validate the callback payload structure and values
+function validateUploadCallbackPayload(
+  uploadStatus,
+  numberOfRejectedFiles,
+  fileField
+) {
+  if (uploadStatus !== 'ready') {
+    const error = new Error('Upload not ready yet')
+    error.statusCode = HTTP_STATUS.INTERNAL_SERVER_ERROR
+    error.details = { uploadStatus }
+    throw error
+  }
+
+  if (numberOfRejectedFiles > 0) {
+    const error = new Error(
+      `Upload validation failed: ${numberOfRejectedFiles} files rejected`
+    )
+    error.statusCode = HTTP_STATUS.INTERNAL_SERVER_ERROR
+    error.details = { numberOfRejectedFiles }
+    throw error
+  }
+
+  if (fileField?.fileStatus !== 'complete') {
+    const error = new Error('File not available or incomplete')
+    error.statusCode = HTTP_STATUS.INTERNAL_SERVER_ERROR
+    error.details = { fileStatus: fileField?.fileStatus }
+    throw error
+  }
+
+  if (fileField?.hasError) {
+    const errorMessage = fileField.errorMessage || 'File validation failed'
+    const error = new Error(errorMessage)
+    error.statusCode = HTTP_STATUS.INTERNAL_SERVER_ERROR
+    error.details = { hasError: true, errorMessage }
+    throw error
+  }
+}
+
 // ─── POST /upload-callback ───────────────────────────────────────────────────
 
 /**
@@ -247,13 +374,16 @@ const handleFileUpload = async (request, h) => {
  * scanned file.  Called asynchronously from handleUploadCallback so the 200
  * response is sent to CDP Uploader before this work begins.
  */
-async function runCallbackPipeline(file, reviewId, userId, logger) {
-  const s3Key = file.s3Key
-  const fileName = file.filename
-  const mimeType = file.detectedContentType ?? file.contentType
-
+async function runCallbackPipeline(
+  s3Key,
+  fileName,
+  contentType,
+  reviewId,
+  userId,
+  logger
+) {
   logger.info(
-    { reviewId, s3Key, fileName, mimeType },
+    { reviewId, s3Key, fileName, contentType },
     '[CALLBACK] Starting canonical document pipeline'
   )
 
@@ -274,7 +404,7 @@ async function runCallbackPipeline(file, reviewId, userId, logger) {
     fileName,
     charCount,
     logger,
-    { userId, mimeType, dbSourceType: SOURCE_TYPE_FILE }
+    { userId, contentType, dbSourceType: SOURCE_TYPE_FILE }
   )
 
   const sqsSendDuration = await queueReviewJob(
@@ -290,6 +420,49 @@ async function runCallbackPipeline(file, reviewId, userId, logger) {
     { reviewId, canonicalDuration, dbCreateDuration, sqsSendDuration },
     '[CALLBACK] Pipeline completed — review queued for AI processing'
   )
+}
+
+/**
+ * GET /upload-success
+ *
+ * Called by browser after CDP Uploader redirect.
+ * Used for UX (show success message).
+ * Real data processing happens in /upload-callback (POST).
+ */
+const handleUploadSuccess = async (request, h) => {
+  try {
+    const { reviewId } = request.query
+
+    request.logger.info(
+      {
+        reviewId,
+        source: 'browser-redirect'
+      },
+      '[REDIRECT] Browser redirected from CDP Uploader'
+    )
+
+    // ✅ Can either:
+    // 1. Return JSON response (for frontend to handle)
+
+    // Option 1: Return JSON (for single-page app)
+    return h
+      .response({
+        success: true,
+        message: 'File upload completed successfully',
+        reviewId,
+        status: 'processing' // Pipeline is running asynchronously
+      })
+      .code(HTTP_STATUS.OK)
+  } catch (error) {
+    request.logger.error(
+      { error: error.message, query: request.query },
+      '[REDIRECT] Handler failed'
+    )
+
+    return h
+      .response({ success: false, message: error.message })
+      .code(HTTP_STATUS.INTERNAL_SERVER_ERROR)
+  }
 }
 
 // ─── Route registration ──────────────────────────────────────────────────────
@@ -312,6 +485,22 @@ export const uploadRoutes = {
           cors: getCorsConfig()
         },
         handler: handleFileUpload
+      })
+      server.route({
+        method: 'POST',
+        path: ENDPOINT_CALLBACK,
+        options: {
+          cors: getCorsConfig()
+        },
+        handler: handleUploadCallback
+      })
+      server.route({
+        method: 'GET',
+        path: '/upload-success',
+        options: {
+          cors: getCorsConfig()
+        },
+        handler: handleUploadSuccess
       })
     }
   }
