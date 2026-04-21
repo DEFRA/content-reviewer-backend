@@ -45,6 +45,13 @@ export const PAGINATION_DEFAULTS = {
   SKIP: 0
 }
 
+// Pagination Limits — enforced to prevent unbounded queries
+export const PAGINATION_LIMITS = {
+  MIN_LIMIT: 1,
+  MAX_LIMIT: 100,
+  MIN_SKIP: 0
+}
+
 // Content Types
 const CONTENT_TYPES = {
   TEXT_PLAIN: 'text/plain',

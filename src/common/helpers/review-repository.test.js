@@ -7,7 +7,6 @@ const AWS_REGION = 'eu-west-2'
 const AWS_ENDPOINT = 'http://localhost:4566'
 const STATUS_PENDING = 'pending'
 const STATUS_COMPLETED = 'completed'
-const STATUS_FAILED = 'failed'
 const ERROR_REVIEW_NOT_FOUND = 'Review not found'
 const REVIEW_LIMIT = 50
 const PAGE_LIMIT = 3

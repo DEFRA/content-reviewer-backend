@@ -2,7 +2,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 const HTTP_BAD_REQUEST = 400
 const HTTP_INTERNAL_SERVER_ERROR = 500
-const HTTP_STATUS_OK = 200
 
 vi.mock('../common/helpers/review-repository.js', () => ({
   reviewRepository: {

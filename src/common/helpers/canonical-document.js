@@ -396,13 +396,20 @@ class CanonicalDocumentStore {
    * @private
    */
   _stripEntities(text) {
-    return text
-      .replaceAll('&nbsp;', ' ')
-      .replaceAll('&amp;', '&')
-      .replaceAll('&lt;', '<')
-      .replaceAll('&gt;', '>')
-      .replaceAll('&quot;', '"')
-      .replaceAll('&#39;', "'")
+    const entities = {
+      '&nbsp;': ' ',
+      '&amp;': '&',
+      '&lt;': '<',
+      '&gt;': '>',
+      '&quot;': '"',
+      '&#39;': "'"
+    }
+    // Single-pass replacement so each entity is decoded exactly once.
+    // Chained replaceAll calls would double-decode sequences like &amp;lt; → &lt; → <
+    return text.replace(
+      /&(?:nbsp|amp|lt|gt|quot|#39);/gu,
+      (match) => entities[match] ?? match
+    )
   }
 
   /**

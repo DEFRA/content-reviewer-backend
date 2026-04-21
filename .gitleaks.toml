@@ -1,0 +1,32 @@
+# Gitleaks configuration
+# https://github.com/gitleaks/gitleaks/blob/master/config/gitleaks.toml
+
+title = "content-reviewer-backend gitleaks config"
+
+[extend]
+# Extend the default ruleset that ships with gitleaks
+useDefault = true
+
+# ── Allowlisted findings ──────────────────────────────────────────────────────
+# These are documentation / example placeholders that are not real credentials.
+
+[[rules.allowlist]]
+description = "Generic minimum-length password placeholder in documentation"
+regexes = [
+  '''the-password-must-be-at-least-\d+-characters'''
+]
+paths = [
+  '''(^|/)\.env\.example$''',
+  '''(^|/)README\.md$'''
+]
+
+[[rules.allowlist]]
+description = "LocalStack test credentials in development environment files"
+regexes = [
+  # AWS_ACCESS_KEY_ID=test and AWS_SECRET_ACCESS_KEY=test used only with LocalStack
+  '''(?i)(aws_access_key_id|aws_secret_access_key)\s*=\s*test\b'''
+]
+paths = [
+  '''(^|/)\.env$''',
+  '''(^|/)\.env\.example$'''
+]

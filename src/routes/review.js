@@ -3,6 +3,7 @@ import {
   HTTP_STATUS,
   ENDPOINTS,
   PAGINATION_DEFAULTS,
+  PAGINATION_LIMITS,
   REVIEW_STATUSES,
   validateTextContent,
   processTextReviewSubmission,
@@ -197,10 +198,17 @@ const handleGetAllReviews = async (request, h) => {
   )
 
   try {
-    const limit =
-      Number.parseInt(request.query.limit, 10) || PAGINATION_DEFAULTS.LIMIT
-    const skip =
-      Number.parseInt(request.query.skip, 10) || PAGINATION_DEFAULTS.SKIP
+    const limit = Math.min(
+      Math.max(
+        Number.parseInt(request.query.limit, 10) || PAGINATION_DEFAULTS.LIMIT,
+        PAGINATION_LIMITS.MIN_LIMIT
+      ),
+      PAGINATION_LIMITS.MAX_LIMIT
+    )
+    const skip = Math.max(
+      Number.parseInt(request.query.skip, 10) || PAGINATION_DEFAULTS.SKIP,
+      PAGINATION_LIMITS.MIN_SKIP
+    )
     const userId = request.query.userId || null
 
     request.logger.info(

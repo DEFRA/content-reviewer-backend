@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
-const MAX_AGE_UNUSED = 30 // placeholder — actual config values hoisted below
 const SLEEP_MS = 10
 const BACKOFF_MS_BASE = 5000
 const BACKOFF_MS_MAX = 30000

@@ -8,22 +8,6 @@ const logger = createLogger()
 const HTTP_BAD_REQUEST = 400
 const HTTP_INTERNAL_SERVER_ERROR = 500
 
-const EMPTY_SCORES = {
-  plainEnglish: 0,
-  plainEnglishNote: '',
-  clarity: 0,
-  clarityNote: '',
-  accessibility: 0,
-  accessibilityNote: '',
-  govukStyle: 0,
-  govukStyleNote: '',
-  completeness: 0,
-  completenessNote: '',
-  overall: 0,
-  style: 0,
-  tone: 0
-}
-
 /**
  * GET /api/result/:reviewId
  *
