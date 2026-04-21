@@ -11,6 +11,7 @@ const mockServerLogger = { info: vi.fn(), error: vi.fn() }
 const mockServerEvents = { on: vi.fn() }
 const mockServer = {
   register: vi.fn().mockResolvedValue(undefined),
+  ext: vi.fn(),
   logger: mockServerLogger,
   events: mockServerEvents
 }
