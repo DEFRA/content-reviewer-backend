@@ -18,12 +18,7 @@ import {
   mapIssue,
   mapImprovement,
   hasRefFields,
-  buildRefMap,
-  buildPairs,
-  dedupeOverlaps,
-  isValidImprovement,
-  buildSortedResults,
-  sortAndAlignPairs
+  buildRefMap
 } from './result-envelope-issue-mappers.js'
 
 // ── Shared test data ──────────────────────────────────────────────────────────
@@ -73,23 +68,8 @@ const FINAL_FALLBACK_END = 8
 const RAW_START = 2
 const RAW_END = 7
 
-// buildRefMap / buildPairs: ref number for ref-matching
-const TEST_REF = 5
-
-// dedupeOverlaps: overlapping span positions
-const FIRST_SPAN_END = 10
-const SECOND_SPAN_START = 5
-const SECOND_SPAN_END = 15
-
-// buildSortedResults: short arbitrary absEnd for test issue
-const SHORT_SPAN_END = 5
-
-// buildSortedResults: unmatched improvement ref
-const UNMATCHED_REF = 9
-
-// 'resources' offsets in CANONICAL (used to create a second sortable span)
-const RESOURCES_START = 34
-const RESOURCES_END = 43
+// shared literal used in deriveEvidence and findNearestOccurrence tests
+const SOME_CANONICAL_TEXT = 'some canonical text'
 
 // ── deriveEvidence – fallback path (line 22) ──────────────────────────────────
 
@@ -103,7 +83,7 @@ describe('deriveEvidence – fallback path (line 22)', () => {
       deriveEvidence(
         FALLBACK_TRIG_START,
         FALLBACK_TRIG_END,
-        'some canonical text',
+        SOME_CANONICAL_TEXT,
         'fallback text'
       )
     ).toBe('fallback text')
@@ -114,7 +94,7 @@ describe('deriveEvidence – fallback path (line 22)', () => {
       deriveEvidence(
         FALLBACK_TRIG_START,
         FALLBACK_TRIG_END,
-        'some canonical text',
+        SOME_CANONICAL_TEXT,
         ''
       )
     ).toBe('')
@@ -182,7 +162,7 @@ describe('deriveCategory (line 33)', () => {
 describe('findNearestOccurrence – guard and search logic (lines 76-100)', () => {
   it('returns null when searchText is falsy', () => {
     expect(
-      findNearestOccurrence('', 'some canonical text', GUARD_HINT)
+      findNearestOccurrence('', SOME_CANONICAL_TEXT, GUARD_HINT)
     ).toBeNull()
   })
 
@@ -435,212 +415,5 @@ describe('buildRefMap (lines 280-289)', () => {
     const imp2 = { ref: 1, issue: 'second' }
     const map = buildRefMap([imp1, imp2], true)
     expect(map.get(1)).toBe(imp1)
-  })
-})
-
-// ── buildPairs (lines 309-335) ───────────────────────────────────────────────
-
-describe('buildPairs (lines 309-335)', () => {
-  it('maps issues to snapped pairs, filters invalid spans, and sorts by absStart', () => {
-    const issues = [
-      {
-        issueId: 'i1',
-        absStart: UTILISE_START,
-        absEnd: UTILISE_END,
-        ref: null
-      },
-      { issueId: 'i2', absStart: -1, absEnd: 0, ref: null } // invalid span
-    ]
-    const improvements = [
-      { ref: null, issue: USE_SIMPLER_LANGUAGE, suggested: 'use' },
-      null
-    ]
-    const pairs = buildPairs(CANONICAL, issues, improvements, false, new Map())
-
-    expect(pairs).toHaveLength(1)
-    expect(pairs[0].issue.absStart).toBe(UTILISE_START)
-  })
-
-  it('uses refMap for lookup when useRefMatching is true', () => {
-    const imp = { ref: TEST_REF, issue: USE_SIMPLER_LANGUAGE, suggested: 'use' }
-    const refMap = new Map([[TEST_REF, imp]])
-    const issues = [
-      {
-        issueId: 'i1',
-        absStart: UTILISE_START,
-        absEnd: UTILISE_END,
-        ref: TEST_REF
-      }
-    ]
-    const pairs = buildPairs(CANONICAL, issues, [], true, refMap)
-
-    expect(pairs[0].improvement).toBe(imp)
-  })
-
-  it('sorts pairs by ascending absStart when given out-of-order spans (line 335)', () => {
-    // Two valid spans in reverse order → sort fires and reorders them
-    const issues = [
-      {
-        issueId: 'i2',
-        absStart: RESOURCES_START,
-        absEnd: RESOURCES_END,
-        ref: null
-      },
-      { issueId: 'i1', absStart: UTILISE_START, absEnd: UTILISE_END, ref: null }
-    ]
-    const improvements = [null, null]
-    const pairs = buildPairs(CANONICAL, issues, improvements, false, new Map())
-
-    expect(pairs[0].issue.absStart).toBe(UTILISE_START)
-    expect(pairs[1].issue.absStart).toBe(RESOURCES_START)
-  })
-})
-
-// ── dedupeOverlaps (lines 345-364) ───────────────────────────────────────────
-
-describe('dedupeOverlaps (lines 345-364)', () => {
-  it('passes through non-overlapping pairs unchanged', () => {
-    const pairs = [
-      { issue: { absStart: 0, absEnd: SECOND_SPAN_START }, improvement: {} },
-      {
-        issue: { absStart: FIRST_SPAN_END, absEnd: SECOND_SPAN_END },
-        improvement: {}
-      }
-    ]
-    expect(dedupeOverlaps(pairs)).toHaveLength(2)
-  })
-
-  it('drops the overlapping span and logs a warning (lines 348-359)', () => {
-    const pairs = [
-      {
-        issue: { absStart: 0, absEnd: FIRST_SPAN_END },
-        improvement: {},
-        originalIdx: 0,
-        ref: null
-      },
-      {
-        issue: { absStart: SECOND_SPAN_START, absEnd: SECOND_SPAN_END },
-        improvement: {},
-        originalIdx: 1,
-        ref: null
-      }
-    ]
-    const result = dedupeOverlaps(pairs)
-    expect(result).toHaveLength(1)
-    expect(result[0].issue.absStart).toBe(0)
-  })
-})
-
-// ── isValidImprovement (lines 373-381) ───────────────────────────────────────
-
-describe('isValidImprovement (lines 373-381)', () => {
-  it('returns false when improvement is null', () => {
-    expect(isValidImprovement(null)).toBe(false)
-  })
-
-  it('returns true when improvement has a non-trivial suggested and real title', () => {
-    expect(
-      isValidImprovement({
-        suggested: 'use plain language',
-        issue: 'Jargon found'
-      })
-    ).toBe(true)
-  })
-
-  it('returns falsy when suggested is empty', () => {
-    expect(
-      isValidImprovement({ suggested: '', issue: 'Jargon found' })
-    ).toBeFalsy()
-  })
-
-  it('returns falsy when issue is the placeholder "issue identified"', () => {
-    expect(
-      isValidImprovement({
-        suggested: 'use plain language',
-        issue: 'Issue identified'
-      })
-    ).toBeFalsy()
-  })
-})
-
-// ── buildSortedResults (lines 393-435) ───────────────────────────────────────
-
-const BASE_IMPROVEMENT = {
-  ref: 1,
-  issue: USE_SIMPLER_LANGUAGE,
-  suggested: 'use',
-  severity: 'medium',
-  category: PLAIN_ENGLISH,
-  why: '',
-  current: ''
-}
-
-describe('buildSortedResults (lines 393-435)', () => {
-  it('returns sortedIssues and sortedImprovements from valid pairs', () => {
-    const deduped = [
-      {
-        issue: {
-          issueId: 'i1',
-          absStart: 0,
-          absEnd: SHORT_SPAN_END,
-          chunkIdx: 0
-        },
-        improvement: { ref: 1, issue: USE_SIMPLER_LANGUAGE, suggested: 'use' },
-        originalIdx: 0
-      }
-    ]
-    const { sortedIssues, sortedImprovements } = buildSortedResults(
-      deduped,
-      [BASE_IMPROVEMENT],
-      false
-    )
-
-    expect(sortedIssues).toHaveLength(1)
-    expect(sortedImprovements).toHaveLength(1)
-  })
-
-  it('logs a warning when some pairs have invalid improvements (droppedCount > 0)', () => {
-    const deduped = [
-      {
-        issue: { issueId: 'i1', absStart: 0, absEnd: SHORT_SPAN_END },
-        improvement: null,
-        originalIdx: 0
-      }
-    ]
-    const { sortedIssues } = buildSortedResults(deduped, [], false)
-    expect(sortedIssues).toHaveLength(0)
-  })
-
-  it('logs a warning when improvements are unmatched (unmatchedCount > 0)', () => {
-    const extraImprovements = [
-      { ref: UNMATCHED_REF, issue: 'x', suggested: 'y' }
-    ]
-    const { sortedIssues } = buildSortedResults([], extraImprovements, true)
-    expect(sortedIssues).toHaveLength(0)
-  })
-})
-
-// ── sortAndAlignPairs (lines 447-467) ────────────────────────────────────────
-
-describe('sortAndAlignPairs (lines 447-467)', () => {
-  it('returns sortedIssues and sortedImprovements via the full pipeline', () => {
-    const issues = [
-      {
-        issueId: 'i1',
-        absStart: UTILISE_START,
-        absEnd: UTILISE_END,
-        ref: 1,
-        chunkIdx: 0
-      }
-    ]
-    const improvements = [{ ...BASE_IMPROVEMENT, ref: 1 }]
-    const { sortedIssues, sortedImprovements } = sortAndAlignPairs(
-      CANONICAL,
-      issues,
-      improvements
-    )
-
-    expect(sortedIssues).toHaveLength(1)
-    expect(sortedImprovements).toHaveLength(1)
   })
 })

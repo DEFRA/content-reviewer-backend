@@ -116,7 +116,7 @@ function mergeFollowUp(parsedReview, followUp) {
   }))
   const renumberedImprovements = (followUp.improvements || []).map((imp) => ({
     ...imp,
-    ref: imp.ref !== undefined ? (refMap.get(imp.ref) ?? imp.ref) : undefined
+    ref: imp.ref === undefined ? undefined : (refMap.get(imp.ref) ?? imp.ref)
   }))
 
   parsedReview.reviewedContent.issues = [...existingIssues, ...renumberedIssues]
