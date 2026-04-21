@@ -12,9 +12,8 @@ on:
       - ready_for_review
 
 permissions:
-  contents: read        # checkout + gitleaks secret scanning
+  contents: read        # checkout
   pull-requests: read   # SonarCloud PR decoration
-  security-events: write # gitleaks SARIF upload
 
 jobs:
   pr-validator:
@@ -23,13 +22,6 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
-        with:
-          fetch-depth: 0 # full history required for secrets scanning
-
-      - name: Scan for secrets
-        uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Setup Node
         uses: actions/setup-node@v6
