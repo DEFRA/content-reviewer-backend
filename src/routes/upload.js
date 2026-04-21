@@ -178,23 +178,9 @@ const handleFileUpload = async (request, h) => {
   const payload = request.payload
   const file = payload.file
 
-  if (!file) {
-    return h
-      .response({
-        success: false,
-        message: 'No file provided'
-      })
-      .code(BAD_REQUEST)
-  }
+  validateFileExists(file, h)
 
-  const fileData = {
-    filename: file?.hapi?.filename || file?.filename,
-    contentType:
-      file?.hapi?.headers?.['content-type'] ||
-      file?.headers?.['content-type'] ||
-      file?.contentType,
-    path: file.path
-  }
+  const fileData = extractFileInfo(file)
 
   // Read the file from disk if needed
   const { readFile } = await import('node:fs/promises')
@@ -273,6 +259,33 @@ const handleFileUpload = async (request, h) => {
       .response({ success: false, message: error.message })
       .code(HTTP_STATUS.INTERNAL_SERVER_ERROR)
   }
+}
+
+function extractFileInfo(file) {
+  return {
+    filename: file?.hapi?.filename || file?.filename || 'unknown',
+    contentType:
+      file?.hapi?.headers?.['content-type'] ||
+      file?.headers?.['content-type'] ||
+      'application/octet-stream',
+    path: file?.path
+  }
+}
+
+/**
+ * Validate file exists
+ */
+function validateFileExists(file, h) {
+  if (!file) {
+    logger.warn('Upload validation failed: No file provided', {})
+    return h
+      .response({
+        success: false,
+        message: 'No file provided'
+      })
+      .code(400)
+  }
+  return null
 }
 
 /**
