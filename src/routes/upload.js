@@ -107,21 +107,10 @@ async function initiateUpload(
  * The file is buffered from the incoming octet-stream and wrapped in
  * multipart/form-data (field name: 'file') as CDP Uploader expects.
  */
-async function performUpload(
-  uploadAndScanUrl,
-  fileBuffer,
-  fileName,
-  reviewId,
-  uploadId,
-  logger
-) {
+async function performUpload(uploadAndScanUrl, fileBuffer, fileName, logger) {
   try {
     const formData = new FormData()
-    formData.append(
-      'file',
-      new Blob([fileBuffer], { type: fileInfo.contentType }),
-      fileName
-    )
+    formData.append('file', new Blob([fileBuffer]), fileName)
 
     logger.info(
       { uploadAndScanUrl, fileSize: fileBuffer.length, fileName },
@@ -155,28 +144,12 @@ async function performUpload(
     const redirectPath = new URL(finalUrl).pathname
 
     logger.info({ finalUrl, redirectPath }, '[UPLOAD] Upload completed')
-
-    // Return to frontend
-    return h
-      .response({
-        success: true,
-        redirect: redirectPath,
-        reviewId,
-        uploadId
-      })
-      .code(200)
   } catch (error) {
     logger.error(
       { error: error.message, stack: error.stack },
       '[UPLOAD] Upload failed'
     )
-
-    return h
-      .response({
-        success: false,
-        message: error.message
-      })
-      .code(500)
+    throw new Error(`cdp-uploader /upload-and-scan failed: ${uploadRes.status}`)
   }
 }
 
@@ -214,7 +187,7 @@ const handleFileUpload = async (request, h) => {
   }
 
   // Read the file from disk if needed
-  const { readFile } = await import('fs/promises')
+  const { readFile } = await import('node:fs/promises')
   const buffer = await readFile(fileData.path)
 
   // Hapi normalises all header names to lowercase
@@ -253,14 +226,7 @@ const handleFileUpload = async (request, h) => {
     // CDP Uploader base URL to get the absolute upload-and-scan endpoint.
     const uploadAndScanUrl = new URL(uploadUrl, CDP_UPLOADER).href
 
-    await performUpload(
-      uploadAndScanUrl,
-      buffer,
-      fileName,
-      reviewId,
-      uploadId,
-      request.logger
-    )
+    await performUpload(uploadAndScanUrl, buffer, fileName, request.logger)
 
     const totalDuration = Math.round(performance.now() - requestStartTime)
     request.logger.info(
