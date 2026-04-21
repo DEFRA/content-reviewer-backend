@@ -108,10 +108,16 @@ async function initiateUpload(
  * The file is buffered from the incoming octet-stream and wrapped in
  * multipart/form-data (field name: 'file') as CDP Uploader expects.
  */
-async function performUpload(uploadAndScanUrl, fileBuffer, fileName, logger) {
+async function performUpload(
+  uploadAndScanUrl,
+  file,
+  fileBuffer,
+  fileName,
+  logger
+) {
   try {
     const formData = new FormData()
-    formData.append('file', new Blob([fileBuffer]), fileName)
+    formData.append('file', file)
 
     logger.info(
       { uploadAndScanUrl, fileSize: fileBuffer.length, fileName },
@@ -182,8 +188,11 @@ const handleFileUpload = async (request, h) => {
   }
 
   const fileData = {
-    filename: file.hapi.filename,
-    contentType: file.hapi.headers['content-type'],
+    filename: file?.hapi?.filename || file?.filename,
+    contentType:
+      file?.hapi?.headers?.['content-type'] ||
+      file?.headers?.['content-type'] ||
+      file?.contentType,
     path: file.path
   }
 
@@ -227,7 +236,13 @@ const handleFileUpload = async (request, h) => {
     // CDP Uploader base URL to get the absolute upload-and-scan endpoint.
     const uploadAndScanUrl = new URL(uploadUrl, CDP_UPLOADER).href
 
-    await performUpload(uploadAndScanUrl, buffer, fileName, request.logger)
+    await performUpload(
+      uploadAndScanUrl,
+      file,
+      buffer,
+      fileName,
+      request.logger
+    )
 
     const totalDuration = Math.round(performance.now() - requestStartTime)
     request.logger.info(
@@ -519,7 +534,9 @@ export const uploadRoutes = {
             output: 'file',
             parse: true,
             multipart: true,
-            maxBytes: MAX_FILE_BYTES
+            maxBytes: MAX_FILE_BYTES,
+            allow: 'multipart/form-data',
+            uploads: '/tmp'
           },
           cors: getCorsConfig()
         },
