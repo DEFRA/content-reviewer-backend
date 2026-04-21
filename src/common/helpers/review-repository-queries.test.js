@@ -303,3 +303,82 @@ describe('getReviewCount - basic counts', () => {
     ).rejects.toThrow('S3 error')
   })
 })
+
+// ── sortReviewsByLastModified - fallback branches ─────────────────────────────
+// These tests exercise the `a.updatedAt` and `a.createdAt` fallbacks inside
+// sortReviewsByLastModified. When the S3 object has no LastModified,
+// fetchSingleReview sets review.lastModified = undefined, causing the sort to
+// fall through to updatedAt then createdAt.
+
+describe('getRecentReviews - sortReviewsByLastModified fallback timestamps', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('sorts by updatedAt when lastModified is absent from S3 object', async () => {
+    const reviewOld = {
+      reviewId: REVIEW_ID_2,
+      status: STATUS_PENDING,
+      updatedAt: LAST_MODIFIED_OLDER.toISOString()
+    }
+    const reviewNew = {
+      reviewId: REVIEW_ID_1,
+      status: STATUS_PENDING,
+      updatedAt: LAST_MODIFIED_RECENT.toISOString()
+    }
+
+    // S3 objects without LastModified → review.lastModified will be set to undefined
+    // Provide older review first so stable sort preserves that order, then
+    // sortReviewsByLastModified re-sorts by updatedAt putting newer first
+    MOCK_S3_SEND.mockResolvedValueOnce({
+      Contents: [
+        { Key: REVIEW_KEY_2 }, // no LastModified
+        { Key: REVIEW_KEY_1 } // no LastModified
+      ],
+      IsTruncated: false
+    })
+    MOCK_S3_SEND.mockResolvedValueOnce(makeS3Body(reviewOld))
+    MOCK_S3_SEND.mockResolvedValueOnce(makeS3Body(reviewNew))
+
+    const result = await getRecentReviews(
+      { send: MOCK_S3_SEND },
+      S3_BUCKET,
+      REVIEWS_PREFIX
+    )
+
+    expect(result.reviews.length).toBe(2)
+    expect(result.reviews[0].reviewId).toBe(REVIEW_ID_1)
+    expect(result.reviews[1].reviewId).toBe(REVIEW_ID_2)
+  })
+
+  it('sorts by createdAt when both lastModified and updatedAt are absent', async () => {
+    const reviewOld = {
+      reviewId: REVIEW_ID_2,
+      status: STATUS_PENDING,
+      createdAt: LAST_MODIFIED_OLDER.toISOString()
+    }
+    const reviewNew = {
+      reviewId: REVIEW_ID_1,
+      status: STATUS_PENDING,
+      createdAt: LAST_MODIFIED_RECENT.toISOString()
+    }
+
+    MOCK_S3_SEND.mockResolvedValueOnce({
+      Contents: [
+        { Key: REVIEW_KEY_2 }, // no LastModified
+        { Key: REVIEW_KEY_1 } // no LastModified
+      ],
+      IsTruncated: false
+    })
+    MOCK_S3_SEND.mockResolvedValueOnce(makeS3Body(reviewOld))
+    MOCK_S3_SEND.mockResolvedValueOnce(makeS3Body(reviewNew))
+
+    const result = await getRecentReviews(
+      { send: MOCK_S3_SEND },
+      S3_BUCKET,
+      REVIEWS_PREFIX
+    )
+
+    expect(result.reviews.length).toBe(2)
+    expect(result.reviews[0].reviewId).toBe(REVIEW_ID_1)
+    expect(result.reviews[1].reviewId).toBe(REVIEW_ID_2)
+  })
+})
