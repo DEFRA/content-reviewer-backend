@@ -14,6 +14,7 @@ const ENDPOINT_UPLOAD = '/api/upload'
 const ENDPOINT_CALLBACK = '/upload-callback'
 const MAX_FILE_BYTES = 10 * 1024 * 1024 // 10 MB
 const SOURCE_TYPE_FILE = 'file'
+const BAD_REQUEST = 400
 
 const ACCEPTED_MIME_TYPES = [
   'application/pdf',
@@ -149,7 +150,7 @@ async function performUpload(uploadAndScanUrl, fileBuffer, fileName, logger) {
       { error: error.message, stack: error.stack },
       '[UPLOAD] Upload failed'
     )
-    throw new Error(`cdp-uploader /upload-and-scan failed: ${uploadRes.status}`)
+    throw new Error(`cdp-uploader /upload-and-scan failed: ${error.message}`)
   }
 }
 
@@ -177,7 +178,7 @@ const handleFileUpload = async (request, h) => {
         success: false,
         message: 'No file provided'
       })
-      .code(400)
+      .code(BAD_REQUEST)
   }
 
   const fileData = {
