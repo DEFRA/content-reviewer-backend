@@ -41,6 +41,23 @@ function resolveIssueText(rawText, start, end, originalText) {
 }
 
 /**
+ * Returns true if the raw offset values are valid.
+ */
+function hasValidOffsets(start, end) {
+  return !Number.isNaN(start) && !Number.isNaN(end) && end > start && start >= 0
+}
+
+/**
+ * Returns true if the model's text field matches the actual slice from originalText.
+ */
+function isTextMatchingSlice(text, start, end, originalText) {
+  if (!originalText || end > originalText.length) {
+    return true
+  }
+  return originalText.slice(start, end) === text
+}
+
+/**
  * Map a raw issue entry from the JSON to a validated issue object.
  * Returns null if the issue has no resolvable text or has invalid offsets.
  * Preserves the optional `ref` field (1-based integer) used to link issues
@@ -51,8 +68,7 @@ function mapRawIssue(raw, originalText) {
   const end = Number(raw.end)
   const type = raw.type || 'plain-english'
 
-  // Reject entries with non-numeric or out-of-order offsets
-  if (Number.isNaN(start) || Number.isNaN(end) || end <= start || start < 0) {
+  if (!hasValidOffsets(start, end)) {
     logger.warn(
       { start: raw.start, end: raw.end, type },
       '[review-parser] Skipping issue with invalid offsets'
@@ -66,7 +82,21 @@ function mapRawIssue(raw, originalText) {
     return null
   }
 
-  // Preserve ref if present (integer); undefined when the model omits it
+  if (!isTextMatchingSlice(text, start, end, originalText)) {
+    const actualSlice = originalText.slice(start, end)
+    logger.warn(
+      {
+        ref: raw.ref,
+        start,
+        end,
+        modelText: text.substring(0, CURRENT_LOG_PREVIEW_LENGTH),
+        actualText: actualSlice.substring(0, CURRENT_LOG_PREVIEW_LENGTH)
+      },
+      '[review-parser] Discarding issue: model text field does not match originalText.slice(start, end)'
+    )
+    return null
+  }
+
   const ref = raw.ref === undefined ? undefined : Number(raw.ref)
 
   return { start, end, type, text, ref }

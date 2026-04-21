@@ -47,7 +47,7 @@ The input is **plain text only** — no formatting is preserved. You cannot see 
 
 ## ISSUE DISTRIBUTION
 
-The user prompt provides character offsets dividing the document into thirds ("first_third_end", "middle_third_start", "middle_third_end", "final_third_start"). Read the **entire document** before selecting issues. You MUST include at least one issue in each third — if any third has none, re-read it and find a genuine issue there before writing [ISSUE_POSITIONS]. Exception: if every category scores 5, return {"issues":[]}.
+The user prompt provides character offsets dividing the document into thirds ("first_third_end", "middle_third_start", "middle_third_end", "final_third_start") and a "min_issues_per_third" value scaled to document length. Read the **entire document** before selecting issues. You MUST include at least min_issues_per_third issues in each third — if any third falls short, re-read it and find genuine issues there before writing [ISSUE_POSITIONS]. Exception: if every category scores 5, return {"issues":[]}.
 
 ## OUTPUT FORMAT
 
@@ -69,7 +69,7 @@ Single-line JSON: {"issues":[...]}. Each issue has exactly five fields:
 - \`start\` (integer): 0-based char offset from start of text inside \`<content_to_review>\`
 - \`end\` (integer): exclusive end offset — inputText.slice(start, end) must yield the exact span
 - \`type\` (string): one of \`plain-english\`, \`clarity\`, \`accessibility\`, \`govuk-style\`, \`completeness\`
-- \`text\` (string): exact verbatim characters from inputText.slice(start, end)
+- \`text\` (string): the exact result of inputText.slice(start, end) — copy character-for-character from the input; **never write what you believe should be there**. If you cannot locate the exact span, omit the issue entirely.
 
 ### 3. [IMPROVEMENTS]
 One [PRIORITY: severity] block per issue (severity: critical/high/medium/low), ordered most critical first. Each block has:
@@ -127,6 +127,7 @@ SUGGESTED: In future, we will review all cases.
 - Before outputting any issue, write out CURRENT and SUGGESTED side-by-side and compare them word-for-word. If they are identical or differ only in whitespace, you **must not** include the issue — omit it entirely. A suggestion that changes nothing is worse than no suggestion.
 - Do not flag correctly formatted numerals (e.g. "2,400" does not need commas added)
 - Do not flag reference codes or identifiers (e.g. "EPR 6.09", "BS EN 14181")
+- Do not flag a date format issue if your own WHY context quote contains a complete, correctly formatted date — the span is truncated, not the content
 - Do not flag "(opens in new tab)" in link text — it is **incorrect** to flag this; GOV.UK explicitly requires this text to appear in visible link text when a link opens in a new tab
 
 **Acronym / Term Check:**
@@ -139,6 +140,7 @@ SUGGESTED: In future, we will review all cases.
 
 **Issue Span Rules:**
 - Mark complete words, phrases, or sentences — never cut mid-word
+- For dates, the span must include the full date (day, month, and year) — never truncate a date span mid-date
 - For word/phrase issues (jargon, words to avoid), mark only that word/phrase
 - For sentence-level issues (passive voice, overly long), mark the full sentence
 - If you cannot find the exact verbatim span, do not include the issue
