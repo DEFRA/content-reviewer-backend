@@ -277,7 +277,6 @@ function extractFileInfo(file) {
  */
 function validateFileExists(file, h) {
   if (!file) {
-    request.logger.warn('Upload validation failed: No file provided', {})
     return h
       .response({
         success: false,
