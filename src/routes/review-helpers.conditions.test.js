@@ -56,16 +56,13 @@ import {
   formatReviewForResponse,
   formatReviewForList,
   processTextReviewSubmission,
-  queueReviewJob,
-  HTTP_STATUS,
-  REVIEW_STATUSES
+  queueReviewJob
 } from './review-helpers.js'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const VALID_CONTENT = 'This is valid content for the conditions test'
 const DATE_JAN_2024 = '2024-01-01T00:00:00.000Z'
-const DATE_JAN_2024_PLUS_1S = '2024-01-01T00:00:01.000Z'
 const S3_RESULT = {
   key: 'documents/cond-uuid-5678.json',
   bucket: 'b',
