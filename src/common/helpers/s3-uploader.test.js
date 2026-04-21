@@ -512,6 +512,51 @@ describe('s3Uploader - S3 command verification', () => {
   })
 })
 
+// ── HTML content type branch (lines 222-223) ──────────────────────────────────
+// Covers the isHtml=true paths: filename gets .html extension and
+// contentType uses htmlContentType instead of textContentType.
+
+describe('s3Uploader - HTML content type', () => {
+  let mockS3Send
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockS3Send = vi.fn().mockResolvedValue({})
+    S3Client.mockImplementation(() => ({ send: mockS3Send }))
+    setupConfigMock(false)
+    setupPiiRedactorMock()
+    s3Uploader.s3Client = { send: mockS3Send }
+    s3Uploader.mockMode = false
+    s3Uploader.bucket = TEST_DATA.BUCKET
+  })
+
+  afterEach(() => {
+    vi.clearAllMocks()
+  })
+
+  test('Should use text/html content type when title ends with .html', async () => {
+    const result = await s3Uploader.uploadTextContent(
+      TEST_DATA.TEXT.SIMPLE,
+      TEST_DATA.UPLOAD_ID,
+      'page.html'
+    )
+
+    expect(result.contentType).toBe('text/html')
+    expect(result.filename).toBe('page.html')
+  })
+
+  test('Should sanitise the base name and preserve .html extension', async () => {
+    const result = await s3Uploader.uploadTextContent(
+      TEST_DATA.TEXT.SIMPLE,
+      TEST_DATA.UPLOAD_ID,
+      'my report.html'
+    )
+
+    expect(result.filename).toBe('my_report.html')
+    expect(result.contentType).toBe('text/html')
+  })
+})
+
 // ── Static getters ─────────────────────────────────────────────────────────
 describe('s3Uploader - static content type getters', () => {
   test('textContentType returns text/plain', () => {

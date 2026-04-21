@@ -198,6 +198,64 @@ describe('getResultHandler - result fetching', () => {
   })
 })
 
+describe('getResultHandler - response field fallbacks', () => {
+  let getResultHandler
+
+  beforeEach(async () => {
+    vi.resetAllMocks()
+    getResultHandler = getResultRouteHandler()
+  })
+
+  it('sets failedAt from review.updatedAt when status is failed', async () => {
+    const updatedAt = new Date('2024-01-05T00:00:00Z')
+    const review = buildCompletedReview({ status: 'failed', updatedAt })
+    reviewRepository.getReview.mockResolvedValueOnce(review)
+    const req = createMockRequest({ jobId: 'job-failed' })
+    const h = createMockH()
+
+    await getResultHandler(req, h)
+
+    expect(h.response).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ failedAt: updatedAt })
+      })
+    )
+  })
+
+  it('returns null originalText, empty issues, null summary and metrics when result fields are absent', async () => {
+    const review = buildCompletedReview({ result: {} })
+    reviewRepository.getReview.mockResolvedValueOnce(review)
+    const req = createMockRequest({ jobId: 'job-minimal' })
+    const h = createMockH()
+
+    await getResultHandler(req, h)
+
+    expect(h.response).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          originalText: null,
+          issues: [],
+          summary: null,
+          metrics: null
+        })
+      })
+    )
+  })
+
+  it('uses empty reviewDataKeys array when result has no reviewData', async () => {
+    const review = buildCompletedReview({ result: { originalText: 'hello' } })
+    reviewRepository.getReview.mockResolvedValueOnce(review)
+    const req = createMockRequest({ jobId: 'job-no-rdata' })
+    const h = createMockH()
+
+    await getResultHandler(req, h)
+
+    expect(h.response).toHaveBeenCalledWith(
+      expect.objectContaining({ success: true })
+    )
+  })
+})
+
 describe('getResultStatusHandler - via registered route', () => {
   let getResultStatusHandler
 
