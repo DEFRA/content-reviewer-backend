@@ -35,8 +35,10 @@ const PRIORITY_MEDIUM_OPEN = '[PRIORITY: medium]'
 const CATEGORY_PLAIN_ENGLISH = 'CATEGORY: Plain English'
 const CATEGORY_CLARITY = 'CATEGORY: Clarity'
 const WHY_BARRIERS = 'WHY: Barriers for users'
-const ORIGINAL_TEXT_DEFAULT = 'original text'
 const SAMPLE_UTILISE_TEXT = 'The department should utilise all resources.'
+const CURRENT_UTILISE = 'CURRENT: utilise'
+const SUGGESTED_USE = 'SUGGESTED: use'
+const ISSUE_JARGON_WORD = 'ISSUE: Jargon word'
 
 function buildMarkerResponse({
   scores = '',
@@ -52,19 +54,6 @@ function buildMarkerResponse({
     REVIEWED_CONTENT_CLOSE,
     IMPROVEMENTS_OPEN,
     improvements,
-    IMPROVEMENTS_CLOSE
-  ].join('\n')
-}
-
-function buildIssuePositionsResponse(jsonLine) {
-  return [
-    '[SCORES]',
-    PLAIN_ENGLISH_SCORE_LINE,
-    '[/SCORES]',
-    ISSUE_POSITIONS_OPEN,
-    jsonLine,
-    ISSUE_POSITIONS_CLOSE,
-    IMPROVEMENTS_OPEN,
     IMPROVEMENTS_CLOSE
   ].join('\n')
 }
@@ -402,8 +391,8 @@ describe('parseBedrockResponse - REF field in [IMPROVEMENTS]', () => {
       CATEGORY_PLAIN_ENGLISH,
       'ISSUE: Jargon used',
       WHY_BARRIERS,
-      'CURRENT: utilise',
-      'SUGGESTED: use',
+      CURRENT_UTILISE,
+      SUGGESTED_USE,
       '[/PRIORITY]',
       PRIORITY_MEDIUM_OPEN,
       'REF: 1',
@@ -421,115 +410,76 @@ describe('parseBedrockResponse - REF field in [IMPROVEMENTS]', () => {
   })
 })
 
-// ============ [ISSUE_POSITIONS] edge cases ============
+// ============ Hallucinated improvement filtering ============
 
-describe('parseBedrockResponse - [ISSUE_POSITIONS] edge cases', () => {
-  it('returns empty issues when [ISSUE_POSITIONS] contains no JSON object', () => {
-    const response = buildIssuePositionsResponse('no json here at all')
-    const result = parseBedrockResponse(
-      response,
-      undefined,
-      ORIGINAL_TEXT_DEFAULT
-    )
-    expect(result.reviewedContent.issues).toEqual([])
-  })
-
-  it('returns empty issues when [ISSUE_POSITIONS] JSON is invalid', () => {
-    const response = buildIssuePositionsResponse('{ invalid json }}}')
-    const result = parseBedrockResponse(
-      response,
-      undefined,
-      ORIGINAL_TEXT_DEFAULT
-    )
-    expect(result.reviewedContent.issues).toEqual([])
-  })
-
-  it('returns empty issues when JSON has no "issues" array', () => {
-    const response = buildIssuePositionsResponse('{"data":[]}')
-    const result = parseBedrockResponse(
-      response,
-      undefined,
-      ORIGINAL_TEXT_DEFAULT
-    )
-    expect(result.reviewedContent.issues).toEqual([])
-  })
-
-  it('skips issues with invalid (negative) start offsets', () => {
-    const response = buildIssuePositionsResponse(
-      '{"issues":[{"start":-1,"end":5,"type":"plain-english","text":"word"}]}'
-    )
-    const result = parseBedrockResponse(response, undefined, 'some text here')
-    expect(result.reviewedContent.issues).toEqual([])
-  })
-
-  it('skips issues where end <= start', () => {
-    const response = buildIssuePositionsResponse(
-      '{"issues":[{"start":10,"end":5,"type":"plain-english","text":"word"}]}'
-    )
-    const result = parseBedrockResponse(response, undefined, 'some text here')
-    expect(result.reviewedContent.issues).toEqual([])
-  })
-
-  it('resolves text from originalText slice when text field is missing', () => {
+describe('parseBedrockResponse - hallucinated improvement filtering', () => {
+  it('keeps improvement when CURRENT text exists in originalText', () => {
     const originalText = SAMPLE_UTILISE_TEXT
-    const response = buildIssuePositionsResponse(
-      '{"issues":[{"start":22,"end":29,"type":"plain-english"}]}'
-    )
-    const result = parseBedrockResponse(response, undefined, originalText)
-    expect(result.reviewedContent.issues).toHaveLength(1)
-    expect(result.reviewedContent.issues[0].text).toBe('utilise')
-  })
-
-  it('slices from start to end of originalText when end exceeds its length', () => {
-    const originalText = 'Short text'
-    const response = buildIssuePositionsResponse(
-      '{"issues":[{"start":6,"end":9999,"type":"plain-english"}]}'
-    )
-    const result = parseBedrockResponse(response, undefined, originalText)
-    expect(result.reviewedContent.issues).toHaveLength(1)
-    expect(result.reviewedContent.issues[0].text).toBe('text')
-  })
-
-  it('returns empty issues when text cannot be resolved and originalText is missing', () => {
-    const response = buildIssuePositionsResponse(
-      '{"issues":[{"start":0,"end":5,"type":"plain-english"}]}'
-    )
-    const result = parseBedrockResponse(response, undefined, '')
-    expect(result.reviewedContent.issues).toEqual([])
-  })
-})
-
-describe('parseBedrockResponse - empty [ISSUE_POSITIONS] content (line 102)', () => {
-  it('returns empty issues when [ISSUE_POSITIONS] section is whitespace only', () => {
-    const response = '[ISSUE_POSITIONS]   \n[/ISSUE_POSITIONS]'
-    const result = parseBedrockResponse(
-      response,
-      undefined,
-      ORIGINAL_TEXT_DEFAULT
-    )
-    expect(result.reviewedContent.issues).toEqual([])
-    expect(result.reviewedContent.plainText).toBe(ORIGINAL_TEXT_DEFAULT)
-  })
-})
-
-describe('parseBedrockResponse - malformed score line (line 157)', () => {
-  it('skips score line where value does not match digit/5 pattern', () => {
-    const response = [
-      '[SCORES]',
-      'Clarity: great/5 - Not a valid score',
-      '[/SCORES]'
+    const improvements = [
+      PRIORITY_HIGH_OPEN,
+      CATEGORY_PLAIN_ENGLISH,
+      ISSUE_JARGON_WORD,
+      WHY_BARRIERS,
+      CURRENT_UTILISE,
+      SUGGESTED_USE
     ].join('\n')
-    const result = parseBedrockResponse(response)
-    expect(result.scores.clarity).toBeUndefined()
+    const response = buildMarkerResponse({ improvements })
+    const result = parseBedrockResponse(response, undefined, originalText)
+    expect(result.improvements).toHaveLength(1)
+    expect(result.improvements[0].current).toBe('utilise')
   })
-})
 
-describe('parseBedrockResponse - score line with no dash (line 164)', () => {
-  it('skips score line where there is no dash after position 3', () => {
-    const response = ['[SCORES]', 'Clarity: 3/5 NoDashHere', '[/SCORES]'].join(
-      '\n'
-    )
-    const result = parseBedrockResponse(response)
-    expect(result.scores.clarity).toBeUndefined()
+  it('drops improvement when CURRENT text is not found in originalText', () => {
+    const originalText = 'This document does not contain the word at all.'
+    const improvements = [
+      PRIORITY_HIGH_OPEN,
+      CATEGORY_PLAIN_ENGLISH,
+      ISSUE_JARGON_WORD,
+      WHY_BARRIERS,
+      CURRENT_UTILISE,
+      SUGGESTED_USE
+    ].join('\n')
+    const response = buildMarkerResponse({ improvements })
+    const result = parseBedrockResponse(response, undefined, originalText)
+    expect(result.improvements).toEqual([])
+  })
+
+  it('keeps improvement when originalText is empty (no document to check against)', () => {
+    const improvements = [
+      PRIORITY_HIGH_OPEN,
+      CATEGORY_PLAIN_ENGLISH,
+      ISSUE_JARGON_WORD,
+      WHY_BARRIERS,
+      CURRENT_UTILISE,
+      SUGGESTED_USE
+    ].join('\n')
+    const response = buildMarkerResponse({ improvements })
+    const result = parseBedrockResponse(response, undefined, '')
+    expect(result.improvements).toHaveLength(1)
+  })
+
+  it('drops only the hallucinated improvement when mixed with a real one', () => {
+    const originalText = SAMPLE_UTILISE_TEXT
+    const improvements = [
+      PRIORITY_HIGH_OPEN,
+      'REF: 1',
+      CATEGORY_PLAIN_ENGLISH,
+      ISSUE_JARGON_WORD,
+      WHY_BARRIERS,
+      CURRENT_UTILISE,
+      SUGGESTED_USE,
+      '[/PRIORITY]',
+      '[PRIORITY: medium]',
+      'REF: 2',
+      CATEGORY_CLARITY,
+      'ISSUE: Hallucinated issue',
+      'WHY: Does not exist',
+      'CURRENT: going forward',
+      'SUGGESTED: in future'
+    ].join('\n')
+    const response = buildMarkerResponse({ improvements })
+    const result = parseBedrockResponse(response, undefined, originalText)
+    expect(result.improvements).toHaveLength(1)
+    expect(result.improvements[0].current).toBe('utilise')
   })
 })
