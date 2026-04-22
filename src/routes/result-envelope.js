@@ -81,6 +81,9 @@ async function getResultEnvelopeHandler(request, h) {
       '[result-envelope] Returning status stub'
     )
     const stub = resultEnvelopeStore.buildStubEnvelope(reviewId, review.status)
+    if (review.status === 'failed' && review.error?.message) {
+      stub.errorMessage = review.error.message
+    }
     return h.response({ success: true, data: stub })
   } catch (error) {
     logger.error(

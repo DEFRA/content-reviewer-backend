@@ -278,6 +278,41 @@ describe('getResultEnvelopeHandler - processing or failed status', () => {
       'failed'
     )
   })
+
+  it('attaches errorMessage to stub when failed review has an error message', async () => {
+    reviewRepository.getReview.mockResolvedValue({
+      status: 'failed',
+      error: { message: 'Content blocked by guardrails' }
+    })
+    const freshStub = { ...STUB_ENVELOPE, status: 'failed' }
+    resultEnvelopeStore.buildStubEnvelope.mockReturnValue(freshStub)
+
+    const req = createRequest(REVIEW_ID)
+    const h = createMockH()
+
+    await handler(req, h)
+
+    expect(h.response).toHaveBeenCalledWith({
+      success: true,
+      data: expect.objectContaining({
+        errorMessage: 'Content blocked by guardrails'
+      })
+    })
+  })
+
+  it('does not attach errorMessage to stub when failed review has no error', async () => {
+    reviewRepository.getReview.mockResolvedValue({ status: 'failed' })
+    const freshStub = { ...STUB_ENVELOPE, status: 'failed' }
+    resultEnvelopeStore.buildStubEnvelope.mockReturnValue(freshStub)
+
+    const req = createRequest(REVIEW_ID)
+    const h = createMockH()
+
+    await handler(req, h)
+
+    const responseArg = h.response.mock.calls[0][0]
+    expect(responseArg.data).not.toHaveProperty('errorMessage')
+  })
 })
 
 // ── Handler: S3 / repository error → 500 ─────────────────────────────────
