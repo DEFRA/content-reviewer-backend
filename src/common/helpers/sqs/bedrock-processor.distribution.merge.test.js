@@ -326,7 +326,10 @@ describe('BedrockReviewProcessor - mergeFollowUp - null ref in follow-up', () =>
       reviewedContent: {
         issues: [
           {
-            ref: null,
+            // Use a valid ref on the issue so refMap only maps 1→3.
+            // The improvement below uses ref:null which is therefore NOT
+            // in refMap, triggering the `?? imp.ref` fallback to null.
+            ref: 1,
             start: FINAL_THIRD_POS,
             end: FINAL_THIRD_END,
             type: 'style',
