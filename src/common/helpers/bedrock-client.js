@@ -174,8 +174,20 @@ class BedrockClient {
       guardrailAction: guardrailAssessment.action
     })
 
-    if (guardrailAssessment.action === 'BLOCKED') {
-      logger.warn('Content blocked by guardrail', { guardrailAssessment })
+    // Guardrails can block in two ways:
+    //  1. response.trace.guardrail.action === 'BLOCKED'  (explicit block flag)
+    //  2. response.stopReason === 'guardrail_intervened' (guardrail stopped the
+    //     generation; action may still read 'NONE' in the trace but the response
+    //     text is the guardrail's blocked message, not a real review)
+    const guardrailBlocked =
+      guardrailAssessment.action === 'BLOCKED' ||
+      response.stopReason === 'guardrail_intervened'
+
+    if (guardrailBlocked) {
+      logger.warn('Content blocked by guardrail', {
+        guardrailAssessment,
+        stopReason: response.stopReason
+      })
       return {
         success: false,
         blocked: true,
