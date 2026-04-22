@@ -190,12 +190,11 @@ const handleFileUpload = async (request, h) => {
 
   const fileName =
     fileData.filename || request.headers['x-file-name'] || 'unknown'
-  const contentLength = buffer.length || request.headers['content-length'] || 0
   const reviewId = randomUUID()
   const userId = request.headers['x-user-id'] || null
 
   request.logger.info(
-    { reviewId, fileName, fileSize: contentLength },
+    { reviewId, fileName },
     '[UPLOAD] File received — initiating CDP Uploader session'
   )
 
