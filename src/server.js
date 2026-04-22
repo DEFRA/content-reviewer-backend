@@ -14,6 +14,8 @@ import { sqsWorker } from './common/helpers/sqs-worker.js'
 import { cleanupScheduler } from './common/helpers/cleanup-scheduler.js'
 
 // ── Security constants ────────────────────────────────────────────────────────
+const HTTP_TOO_MANY_REQUESTS = 429
+
 // Content-Security-Policy for a pure REST API — no scripts, styles or frames
 // served by this service, so every directive is locked to 'none'.
 const CSP_HEADER_VALUE =
@@ -117,7 +119,7 @@ async function createServer() {
         )
         return h
           .response({ error: 'Too many requests, please try again later.' })
-          .code(429)
+          .code(HTTP_TOO_MANY_REQUESTS)
           .takeover()
       }
       return h.continue
