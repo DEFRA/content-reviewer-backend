@@ -501,3 +501,27 @@ describe('BedrockReviewProcessor - parseBedrockResponseData - Edge Cases - Impro
     )
   })
 })
+
+describe('BedrockReviewProcessor - buildUserPrompt - document size thresholds', () => {
+  let processor
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    processor = new BedrockReviewProcessor()
+  })
+
+  test('sets min_issues_per_third = 3 for large documents (>= 40000 chars)', () => {
+    const prompt = processor.buildUserPrompt('x'.repeat(40000))
+    expect(prompt).toContain('min_issues_per_third = 3')
+  })
+
+  test('sets min_issues_per_third = 2 for medium documents (>= 10000 and < 40000 chars)', () => {
+    const prompt = processor.buildUserPrompt('x'.repeat(10000))
+    expect(prompt).toContain('min_issues_per_third = 2')
+  })
+
+  test('sets min_issues_per_third = 1 for small documents (< 10000 chars)', () => {
+    const prompt = processor.buildUserPrompt('x'.repeat(100))
+    expect(prompt).toContain('min_issues_per_third = 1')
+  })
+})
