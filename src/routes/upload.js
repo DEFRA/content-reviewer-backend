@@ -108,10 +108,16 @@ async function initiateUpload(
  * The file is buffered from the incoming octet-stream and wrapped in
  * multipart/form-data (field name: 'file') as CDP Uploader expects.
  */
-async function performUpload(uploadAndScanUrl, fileBuffer, fileName, logger) {
+async function performUpload(
+  uploadAndScanUrl,
+  file,
+  fileBuffer,
+  fileName,
+  logger
+) {
   try {
     const formData = new FormData()
-    formData.append('file', new Blob([fileBuffer]), fileName)
+    formData.append('file', file)
 
     logger.info(
       { uploadAndScanUrl, fileSize: fileBuffer.length, fileName },
@@ -172,20 +178,9 @@ const handleFileUpload = async (request, h) => {
   const payload = request.payload
   const file = payload.file
 
-  if (!file) {
-    return h
-      .response({
-        success: false,
-        message: 'No file provided'
-      })
-      .code(BAD_REQUEST)
-  }
+  validateFileExists(file, h)
 
-  const fileData = {
-    filename: file.hapi.filename,
-    contentType: file.hapi.headers['content-type'],
-    path: file.path
-  }
+  const fileData = extractFileInfo(file)
 
   // Read the file from disk if needed
   const { readFile } = await import('node:fs/promises')
@@ -227,7 +222,13 @@ const handleFileUpload = async (request, h) => {
     // CDP Uploader base URL to get the absolute upload-and-scan endpoint.
     const uploadAndScanUrl = new URL(uploadUrl, CDP_UPLOADER).href
 
-    await performUpload(uploadAndScanUrl, buffer, fileName, request.logger)
+    await performUpload(
+      uploadAndScanUrl,
+      file,
+      buffer,
+      fileName,
+      request.logger
+    )
 
     const totalDuration = Math.round(performance.now() - requestStartTime)
     request.logger.info(
@@ -258,6 +259,32 @@ const handleFileUpload = async (request, h) => {
       .response({ success: false, message: error.message })
       .code(HTTP_STATUS.INTERNAL_SERVER_ERROR)
   }
+}
+
+function extractFileInfo(file) {
+  return {
+    filename: file?.hapi?.filename || file?.filename || 'unknown',
+    contentType:
+      file?.hapi?.headers?.['content-type'] ||
+      file?.headers?.['content-type'] ||
+      'application/octet-stream',
+    path: file?.path
+  }
+}
+
+/**
+ * Validate file exists
+ */
+function validateFileExists(file, h) {
+  if (!file) {
+    return h
+      .response({
+        success: false,
+        message: 'No file provided'
+      })
+      .code(BAD_REQUEST)
+  }
+  return null
 }
 
 /**
@@ -519,7 +546,9 @@ export const uploadRoutes = {
             output: 'file',
             parse: true,
             multipart: true,
-            maxBytes: MAX_FILE_BYTES
+            maxBytes: MAX_FILE_BYTES,
+            allow: 'multipart/form-data',
+            uploads: '/tmp'
           },
           cors: getCorsConfig()
         },
