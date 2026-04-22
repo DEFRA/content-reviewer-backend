@@ -174,6 +174,8 @@ describe('parseBedrockResponse - improvement block with no CURRENT field (line 3
 
 // ── CURRENT equals SUGGESTED discard ─────────────────────────────────────────
 
+const PRIORITY_CLOSE = '[/PRIORITY]'
+
 const ISSUE_JSON_REF1 =
   '{"issues":[{"ref":1,"start":0,"end":5,"type":"plain-english","text":"Hello"}]}'
 
@@ -194,7 +196,7 @@ describe('parseBedrockResponse - discards no-op improvement (CURRENT equals SUGG
       WHY_BARRIERS,
       'CURRENT: same text here',
       'SUGGESTED: same text here',
-      '[/PRIORITY]',
+      PRIORITY_CLOSE,
       IMPROVEMENTS_CLOSE
     ].join('\n')
 
@@ -219,7 +221,7 @@ describe('parseBedrockResponse - discards no-op improvement (CURRENT equals SUGG
       WHY_BARRIERS,
       'CURRENT:   padded text   ',
       'SUGGESTED: padded text',
-      '[/PRIORITY]',
+      PRIORITY_CLOSE,
       IMPROVEMENTS_CLOSE
     ].join('\n')
 
@@ -244,11 +246,15 @@ describe('parseBedrockResponse - discards no-op improvement (CURRENT equals SUGG
       WHY_BARRIERS,
       'CURRENT: utilise',
       'SUGGESTED: use',
-      '[/PRIORITY]',
+      PRIORITY_CLOSE,
       IMPROVEMENTS_CLOSE
     ].join('\n')
 
-    const result = parseBedrockResponse(response, undefined, 'Hello world')
+    const result = parseBedrockResponse(
+      response,
+      undefined,
+      'Hello world, please utilise this.'
+    )
 
     expect(result.improvements).toHaveLength(1)
     expect(result.improvements[0].current).toBe('utilise')

@@ -41,6 +41,25 @@ function resolveIssueText(rawText, start, end, originalText) {
 }
 
 /**
+ * Locate the exact position of a text span in the document using indexOf.
+ * Ignores the model's stated offsets entirely — they are frequently hallucinated.
+ * Returns { start, end } on success, or null if the text is not found.
+ */
+function locateTextInDocument(text, ref, originalText) {
+  const actualStart = originalText ? originalText.indexOf(text) : -1
+
+  if (actualStart === -1) {
+    logger.warn(
+      { ref, text: text.substring(0, CURRENT_LOG_PREVIEW_LENGTH) },
+      '[review-parser] Discarding issue: text not found in document'
+    )
+    return null
+  }
+
+  return { start: actualStart, end: actualStart + text.length }
+}
+
+/**
  * Map a raw issue entry from the JSON to a validated issue object.
  * Returns null if the issue has no resolvable text or has invalid offsets.
  * Preserves the optional `ref` field (1-based integer) used to link issues
@@ -66,10 +85,15 @@ function mapRawIssue(raw, originalText) {
     return null
   }
 
+  const located = locateTextInDocument(text, raw.ref, originalText)
+  if (!located) {
+    return null
+  }
+
   // Preserve ref if present (integer); undefined when the model omits it
   const ref = raw.ref === undefined ? undefined : Number(raw.ref)
 
-  return { start, end, type, text, ref }
+  return { start: located.start, end: located.end, type, text, ref }
 }
 
 /**
@@ -383,9 +407,42 @@ function extractSuggestedField(block) {
 }
 
 /**
+ * Returns true if the improvement's CURRENT text exists verbatim in the document,
+ * or if there is no originalText to check against (legacy/plain-text path).
+ * Used to discard hallucinated improvements that reference text never present
+ * in the submitted content.
+ */
+function currentTextExistsInDocument(current, originalText) {
+  if (!current || !originalText) {
+    return true
+  }
+  return originalText.includes(current)
+}
+
+/**
  * Parse a single improvement block
  */
-function parseImprovementBlock(block) {
+/**
+ * Validate the current/suggested fields of an improvement block.
+ * Returns a string reason for rejection, or null if the block is valid.
+ */
+function validateImprovementFields(current, suggested, originalText) {
+  if (!suggested) {
+    return 'missing SUGGESTED field'
+  }
+  if (current.trim() === suggested.trim()) {
+    return 'CURRENT equals SUGGESTED'
+  }
+  if (!currentTextExistsInDocument(current, originalText)) {
+    return 'CURRENT text not found in document'
+  }
+  return null
+}
+
+/**
+ * Parse a single improvement block
+ */
+function parseImprovementBlock(block, originalText = '') {
   const severityMatch = block.trim() && block.match(/^([^\]]+)\]/)
   if (!severityMatch) {
     return null
@@ -407,27 +464,19 @@ function parseImprovementBlock(block) {
   const current = extractCurrentField(block)
   const suggested = extractSuggestedField(block)
 
-  // Discard blocks where SUGGESTED is absent — the prompt mandates a concrete
-  // rewrite for every improvement; an empty SUGGESTED renders it unusable.
-  if (!suggested) {
-    logger.warn(
-      { category, issue },
-      '[review-parser] Discarding improvement block with missing SUGGESTED field'
-    )
-    return null
-  }
-
-  // Discard blocks where CURRENT and SUGGESTED are identical after normalising
-  // whitespace — these are no-op suggestions that provide no value to the user.
-  // The model is instructed to omit these, but this is a hard enforcement layer.
-  if (current.trim() === suggested.trim()) {
+  const rejectionReason = validateImprovementFields(
+    current,
+    suggested,
+    originalText
+  )
+  if (rejectionReason) {
     logger.warn(
       {
         category,
         issue,
         current: current.substring(0, CURRENT_LOG_PREVIEW_LENGTH)
       },
-      '[review-parser] Discarding improvement block where CURRENT equals SUGGESTED'
+      `[review-parser] Discarding improvement block: ${rejectionReason}`
     )
     return null
   }
@@ -446,13 +495,13 @@ function parseImprovementBlock(block) {
 /**
  * Parse the improvements section
  */
-function parseImprovements(improvementsText) {
+function parseImprovements(improvementsText, originalText = '') {
   const blocks = improvementsText.split('[PRIORITY:')
   const improvements = []
 
   for (const rawBlock of blocks) {
     const block = rawBlock.replaceAll('[/PRIORITY]', '')
-    const improvement = parseImprovementBlock(block)
+    const improvement = parseImprovementBlock(block, originalText)
     if (improvement) {
       improvements.push(improvement)
     }
@@ -593,7 +642,7 @@ function extractReviewedContent(bedrockResponse, originalText) {
 /**
  * Extract and parse the [IMPROVEMENTS] section from a Bedrock response
  */
-function extractImprovements(bedrockResponse) {
+function extractImprovements(bedrockResponse, originalText = '') {
   const improvementsStart = bedrockResponse.indexOf(IMPROVEMENTS_TAG)
   const improvementsEnd = bedrockResponse.indexOf('[/IMPROVEMENTS]')
   if (
@@ -605,7 +654,8 @@ function extractImprovements(bedrockResponse) {
       bedrockResponse.substring(
         improvementsStart + IMPROVEMENTS_TAG.length,
         improvementsEnd
-      )
+      ),
+      originalText
     )
   }
   return []
@@ -617,7 +667,7 @@ function extractImprovements(bedrockResponse) {
 function parseMarkerBasedReview(bedrockResponse, originalText = '') {
   const scores = extractScores(bedrockResponse)
   const reviewedContent = extractReviewedContent(bedrockResponse, originalText)
-  const improvements = extractImprovements(bedrockResponse)
+  const improvements = extractImprovements(bedrockResponse, originalText)
 
   logger.info(
     {
