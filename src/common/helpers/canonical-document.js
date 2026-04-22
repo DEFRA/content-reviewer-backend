@@ -406,7 +406,7 @@ class CanonicalDocumentStore {
     }
     // Single-pass replacement so each entity is decoded exactly once.
     // Chained replaceAll calls would double-decode sequences like &amp;lt; → &lt; → <
-    return text.replace(
+    return text.replaceAll(
       /&(?:nbsp|amp|lt|gt|quot|#39);/gu,
       (match) => entities[match] ?? match
     )
