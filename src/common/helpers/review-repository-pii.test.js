@@ -340,6 +340,31 @@ describe('redactPIIFromReview - comprehensive redaction', () => {
   })
 })
 
+describe('redactPIIFromReview - result without rawResponse', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+  it('should skip rawResponse redaction when rawResponse is absent', () => {
+    piiRedactorModule.piiRedactor.redact.mockReturnValue(
+      createMockRedactResult('Redacted plain text')
+    )
+    const review = {
+      result: {
+        reviewData: {
+          reviewedContent: {
+            plainText: 'Plain text with no raw response'
+          }
+        }
+      }
+    }
+    const result = redactPIIFromReview(review)
+    expect(
+      piiRedactorModule.piiRedactor.redactBedrockResponse
+    ).not.toHaveBeenCalled()
+    expect(result).toEqual({ hasPII: false, redactionCount: 0 })
+  })
+})
+
 describe('redactPIIFromReview - null handling', () => {
   beforeEach(() => {
     vi.clearAllMocks()
