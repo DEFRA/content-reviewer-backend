@@ -173,9 +173,6 @@ const handleFileUpload = async (request, h) => {
   const requestStartTime = performance.now()
 
   const fileStream = request.payload?.file
-  request.logger.info(
-    `[UPLOAD] File upload request received with payload keys: ${Object.keys(fileStream)} and headers: ${JSON.stringify(request.headers)}`
-  )
 
   // ✅ Validate file exists
   const validationResponse = validateFileExists(fileStream, h)
