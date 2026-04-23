@@ -106,12 +106,21 @@ async function initiateUpload(
  * The file is buffered from the incoming octet-stream and wrapped in
  * multipart/form-data (field name: 'file') as CDP Uploader expects.
  */
-async function performUpload(uploadAndScanUrl, fileStream, filename, logger) {
+async function performUpload(
+  uploadAndScanUrl,
+  fileStream,
+  fileBuffer,
+  filename,
+  contentType,
+  logger
+) {
   try {
     logger.info('[UPLOAD] Sending file to CDP Uploader /upload-and-scan')
 
+    const blob = new Blob([fileBuffer], { type: contentType })
+
     const formData = new FormData()
-    formData.append('file', fileStream, { filename })
+    formData.append('file', blob, filename)
 
     const uploadRes = await fetch(uploadAndScanUrl, {
       method: 'POST',
@@ -177,7 +186,14 @@ const handleFileUpload = async (request, h) => {
 
   const filename =
     fileStream.hapi?.filename || request.headers['x-file-name'] || 'unknown'
+  const contentType =
+    fileStream.hapi?.headers['content-type'] ||
+    request.headers['content-type'] ||
+    'application/octet-stream'
+
   request.logger.info(`[UPLOAD] Extracted filename: ${filename}`)
+
+  request.logger.info(`[UPLOAD] Extracted content type: ${contentType}`)
 
   const reviewId = randomUUID()
   const userId = request.headers['x-user-id'] || null
@@ -211,7 +227,17 @@ const handleFileUpload = async (request, h) => {
       `[UPLOAD] Upload URL resolved for CDP Uploader: ${uploadAndScanUrl}`
     )
 
-    await performUpload(uploadAndScanUrl, fileStream, filename, request.logger)
+    // Read file stream into buffer
+    const fileBuffer = await streamToBuffer(file)
+
+    await performUpload(
+      uploadAndScanUrl,
+      fileStream,
+      fileBuffer,
+      filename,
+      contentType,
+      request.logger
+    )
 
     const totalDuration = Math.round(performance.now() - requestStartTime)
     request.logger.info(
@@ -242,6 +268,15 @@ const handleFileUpload = async (request, h) => {
       .response({ success: false, message: error.message })
       .code(HTTP_STATUS.INTERNAL_SERVER_ERROR)
   }
+}
+
+async function streamToBuffer(stream) {
+  return new Promise((resolve, reject) => {
+    const chunks = []
+    stream.on('data', (chunk) => chunks.push(chunk))
+    stream.on('end', () => resolve(Buffer.concat(chunks)))
+    stream.on('error', reject)
+  })
 }
 
 /**
