@@ -178,7 +178,7 @@ const handleFileUpload = async (request, h) => {
 
   const mimeType = request.headers['x-file-content-type'] || 'application/pdf'
   const contentType =
-    request.headers['content-type'] || application/octet-stream
+    request.headers['content-type'] || 'application/octet-stream'
 
   request.logger.info(
     `[UPLOAD] Received upload request from userId: ${userId} with filename: ${fileName} and content-type: ${mimeType}`
