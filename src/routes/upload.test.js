@@ -1,565 +1,159 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { randomUUID } from 'node:crypto'
+import { beforeEach, afterEach, it, expect, vi } from 'vitest'
 
-// Mock dependencies
-vi.mock('node:crypto', () => ({
-  randomUUID: vi.fn()
+// Mock logger options expected by other modules during import
+vi.mock('../common/helpers/logging/logger-options.js', () => ({
+  loggerOptions: { isEnabled: () => false, level: 'info' }
 }))
 
+// deterministic UUID for tests
+vi.mock('node:crypto', () => ({ randomUUID: () => 'test-review-id' }))
+
+// minimal config mock used by upload.js
 vi.mock('../config.js', () => ({
   config: {
-    get: vi.fn((key) => {
-      const configMap = {
-        serverUrl: 'http://localhost:3000',
-        's3.rawS3Path': '/raw',
-        's3.bucket': 'test-bucket',
-        'cdpUploader.url': 'http://cdp-uploader:3002'
-      }
-      return configMap[key]
-    })
+    get: (key) => {
+      if (key === 'cdpUploader.url') return 'http://cdp-uploader:3002'
+      if (key === 's3.bucket') return 'test-bucket'
+      if (key === 'serverUrl') return 'http://backend'
+      if (key === 's3.rawS3Path') return '/raw'
+      return null
+    }
   }
 }))
 
-vi.mock('../common/helpers/canonical-document.js', () => ({
-  SOURCE_TYPES: {
-    FILE: 'file'
-  }
-}))
-
+// minimal review-helpers mock (only what upload.js imports)
 vi.mock('./review-helpers.js', () => ({
-  HTTP_STATUS: {
-    ACCEPTED: 202,
-    OK: 200,
-    BAD_REQUEST: 400,
-    INTERNAL_SERVER_ERROR: 500
-  },
-  REVIEW_STATUSES: {
-    PENDING: 'pending'
-  },
-  getCorsConfig: vi.fn(() => ({})),
+  HTTP_STATUS: { ACCEPTED: 202, OK: 200, INTERNAL_SERVER_ERROR: 500 },
+  REVIEW_STATUSES: { PENDING: 'pending' },
+  getCorsConfig: () => ({}),
   createCanonicalDocument: vi.fn(),
   createReviewRecord: vi.fn(),
   queueReviewJob: vi.fn()
 }))
 
+let uploadModule
+let fakeServer
+let storedRoutes = {}
 let mockFetch
 
-describe('Upload Routes', () => {
-  beforeEach(() => {
-    vi.clearAllMocks()
-    mockFetch = vi.fn()
-    global.fetch = mockFetch
-    randomUUID.mockReturnValue('review-123')
-  })
-
-  afterEach(() => {
-    delete global.fetch
-  })
-
-  describe('POST /api/upload - handleFileUpload', () => {
-    it('should accept PDF files', async () => {
-      mockFetch.mockResolvedValueOnce({
+beforeEach(async () => {
+  // stub global fetch before importing upload.js
+  mockFetch = vi.fn((url, opts) => {
+    const u = String(url)
+    if (u.endsWith('/initiate')) {
+      return Promise.resolve({
         ok: true,
         status: 200,
-        json: vi.fn().mockResolvedValueOnce({
+        json: async () => ({
           uploadId: 'upload-123',
           uploadUrl: '/upload-and-scan/upload-123'
         })
       })
-
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        url: 'http://cdp-uploader:3002/upload-and-scan/upload-123'
-      })
-
-      expect(true).toBe(true)
-    })
-
-    it('should return 202 Accepted on successful upload initiation', async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        json: vi.fn().mockResolvedValueOnce({
-          uploadId: 'upload-123',
-          uploadUrl: '/upload-and-scan/upload-123'
-        })
-      })
-
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        url: 'http://cdp-uploader:3002/upload-and-scan/upload-123'
-      })
-
-      // Verify fetch was called with correct URL
-      expect(mockFetch).not.toHaveBeenCalled()
-    })
-
-    it('should reject files exceeding size limit', async () => {
-      expect(true).toBe(true)
-    })
-
-    it('should reject invalid file types', async () => {
-      expect(true).toBe(true)
-    })
-
-    it('should log file received information', async () => {
-      expect(true).toBe(true)
-    })
-
-    it('should extract file information correctly', async () => {
-      expect(true).toBe(true)
-    })
-
-    it('should call initiateUpload with correct parameters', async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        json: vi.fn().mockResolvedValueOnce({
-          uploadId: 'upload-123',
-          uploadUrl: '/upload-and-scan/upload-123'
-        })
-      })
-
-      expect(mockFetch).not.toHaveBeenCalled()
-    })
-
-    it('should handle CDP Uploader /initiate failure', async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: false,
-        status: 500,
-        text: vi.fn().mockResolvedValueOnce('Internal server error')
-      })
-
-      expect(true).toBe(true)
-    })
-
-    it('should handle missing uploadUrl in initiate response', async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        json: vi.fn().mockResolvedValueOnce({
-          uploadId: 'upload-123'
-        })
-      })
-
-      expect(true).toBe(true)
-    })
-
-    it('should handle network timeouts', async () => {
-      mockFetch.mockRejectedValueOnce(new Error('Request timeout'))
-      expect(true).toBe(true)
-    })
-
-    it('should handle connection refused errors', async () => {
-      const error = new Error('ECONNREFUSED')
-      error.code = 'ECONNREFUSED'
-      mockFetch.mockRejectedValueOnce(error)
-      expect(true).toBe(true)
-    })
-
-    it('should handle DNS resolution errors', async () => {
-      const error = new Error('getaddrinfo ENOTFOUND cdp-uploader')
-      error.code = 'ENOTFOUND'
-      mockFetch.mockRejectedValueOnce(error)
-      expect(true).toBe(true)
-    })
-
-    it('should use correct file content type', async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        json: vi.fn().mockResolvedValueOnce({
-          uploadId: 'upload-123',
-          uploadUrl: '/upload-and-scan/upload-123'
-        })
-      })
-
-      expect(mockFetch).not.toHaveBeenCalled()
-    })
-
-    it('should include filename in upload request', async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        json: vi.fn().mockResolvedValueOnce({
-          uploadId: 'upload-123',
-          uploadUrl: '/upload-and-scan/upload-123'
-        })
-      })
-
-      expect(true).toBe(true)
-    })
-
-    it('should return reviewId in response', async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        json: vi.fn().mockResolvedValueOnce({
-          uploadId: 'upload-123',
-          uploadUrl: '/upload-and-scan/upload-123'
-        })
-      })
-
-      expect(true).toBe(true)
-    })
-
-    it('should include pending status in response', async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        json: vi.fn().mockResolvedValueOnce({
-          uploadId: 'upload-123',
-          uploadUrl: '/upload-and-scan/upload-123'
-        })
-      })
-
-      expect(true).toBe(true)
+    }
+    // upload-and-scan response (successful)
+    return Promise.resolve({
+      ok: true,
+      status: 200,
+      url: 'http://cdp-uploader/upload-and-scan/upload-123',
+      text: async () => ''
     })
   })
+  vi.stubGlobal('fetch', mockFetch)
 
-  describe('POST /upload-callback - handleUploadCallback', () => {
-    it('should receive callback from CDP Uploader', async () => {
-      const request = {
-        payload: {
-          uploadStatus: 'ready',
-          metadata: { reviewId: 'review-123', userId: 'user-456' },
-          form: {
-            file: {
-              hasError: false,
-              fileStatus: 'complete',
-              contentType: 'application/pdf',
-              s3Key: 'uploads/doc.pdf',
-              filename: 'document.pdf'
-            }
-          },
-          numberOfRejectedFiles: 0
-        },
-        logger: {
-          info: vi.fn(),
-          error: vi.fn()
+  // prepare a fake server object to avoid Hapi route validation during plugin registration
+  storedRoutes = {}
+  fakeServer = {
+    route: (routeConfig) => {
+      const key = `${routeConfig.method.toUpperCase()} ${routeConfig.path}`
+      storedRoutes[key] = routeConfig
+    },
+    ext: () => {}, // ignore onRequest ext registrations
+    events: { on: () => {} },
+    log: () => {}
+  }
+
+  // import module under test AFTER mocks are in place
+  uploadModule = await import('./upload.js')
+
+  // register plugin using fake server to capture handlers
+  await uploadModule.uploadRoutes.plugin.register(fakeServer)
+})
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+  vi.resetAllMocks()
+})
+
+// Helper: build minimal h object used by handlers
+function makeH() {
+  return {
+    response(payload) {
+      return {
+        _payload: payload,
+        code(status) {
+          return { statusCode: status, payload: this._payload }
         }
       }
+    }
+  }
+}
 
-      const h = {
-        response: vi.fn(function (data) {
-          return {
-            ...data,
-            code: vi.fn(function (code) {
-              this._statusCode = code
-              return this
-            })
-          }
-        })
-      }
+it('returns 202 Accepted and reviewId on successful upload initiation', async () => {
+  const handlerKey = 'POST /api/upload'
+  const route = storedRoutes[handlerKey]
+  expect(route).toBeDefined()
 
-      expect(request.payload.uploadStatus).toBe('ready')
-    })
+  const handler = route.handler
 
-    it('should validate upload status', async () => {
-      const request = {
-        payload: {
-          uploadStatus: 'ready',
-          metadata: { reviewId: 'review-123' },
-          form: { file: { hasError: false } },
-          numberOfRejectedFiles: 0
-        },
-        logger: { info: vi.fn(), error: vi.fn() }
-      }
+  // simulate request: raw octet-stream buffer (upload.js uses request.payload as file)
+  const request = {
+    headers: {
+      'content-type': 'application/octet-stream',
+      'x-file-name': encodeURIComponent('doc.pdf'),
+      'x-user-id': 'tester'
+    },
+    payload: Buffer.from('dummy-file-bytes'),
+    logger: { info: vi.fn(), error: vi.fn(), warn: vi.fn(), debug: vi.fn() }
+  }
 
-      expect(request.payload.uploadStatus).toBe('ready')
-    })
+  const h = makeH()
+  const res = await handler(request, h)
 
-    it('should handle file validation errors', async () => {
-      const request = {
-        payload: {
-          uploadStatus: 'ready',
-          metadata: { reviewId: 'review-123' },
-          form: {
-            file: {
-              hasError: true,
-              errorMessage: 'File validation failed'
-            }
-          },
-          numberOfRejectedFiles: 0
-        },
-        logger: { info: vi.fn(), error: vi.fn() }
-      }
-
-      expect(request.payload.form.file.hasError).toBe(true)
-    })
-
-    it('should handle rejected files', async () => {
-      const request = {
-        payload: {
-          uploadStatus: 'ready',
-          metadata: { reviewId: 'review-123' },
-          form: { file: { hasError: false } },
-          numberOfRejectedFiles: 1
-        },
-        logger: { info: vi.fn(), error: vi.fn() }
-      }
-
-      expect(request.payload.numberOfRejectedFiles).toBe(1)
-    })
-
-    it('should return 200 OK to CDP Uploader', async () => {
-      const request = {
-        payload: {
-          uploadStatus: 'ready',
-          metadata: { reviewId: 'review-123' },
-          form: { file: { hasError: false } },
-          numberOfRejectedFiles: 0
-        },
-        logger: { info: vi.fn(), error: vi.fn() }
-      }
-
-      expect(true).toBe(true)
-    })
-
-    it('should extract file metadata from callback', async () => {
-      const request = {
-        payload: {
-          uploadStatus: 'ready',
-          metadata: { reviewId: 'review-123', userId: 'user-456' },
-          form: {
-            file: {
-              filename: 'document.pdf',
-              contentType: 'application/pdf',
-              s3Key: 'uploads/doc.pdf'
-            }
-          },
-          numberOfRejectedFiles: 0
-        },
-        logger: { info: vi.fn(), error: vi.fn() }
-      }
-
-      expect(request.payload.form.file.filename).toBe('document.pdf')
-    })
-
-    it('should handle missing metadata', async () => {
-      const request = {
-        payload: {
-          uploadStatus: 'ready',
-          metadata: {},
-          form: { file: { hasError: false } },
-          numberOfRejectedFiles: 0
-        },
-        logger: { info: vi.fn(), error: vi.fn() }
-      }
-
-      expect(request.payload.metadata).toEqual({})
-    })
-
-    it('should log callback received', async () => {
-      const loggerSpy = vi.fn()
-      const request = {
-        payload: {
-          uploadStatus: 'ready',
-          metadata: { reviewId: 'review-123' },
-          form: { file: { hasError: false } },
-          numberOfRejectedFiles: 0
-        },
-        logger: { info: loggerSpy, error: vi.fn() }
-      }
-
-      expect(request.logger.info).toBe(loggerSpy)
-    })
-
-    it('should handle errors gracefully', async () => {
-      const request = {
-        payload: null,
-        logger: { info: vi.fn(), error: vi.fn() }
-      }
-
-      expect(request.payload).toBeNull()
-    })
-
-    it('should validate callback payload structure', async () => {
-      const request = {
-        payload: {
-          uploadStatus: 'ready',
-          metadata: { reviewId: 'review-123' },
-          form: { file: { hasError: false } },
-          numberOfRejectedFiles: 0
-        },
-        logger: { info: vi.fn(), error: vi.fn() }
-      }
-
-      const hasRequiredFields =
-        request.payload.uploadStatus !== undefined &&
-        request.payload.metadata !== undefined &&
-        request.payload.form !== undefined &&
-        request.payload.numberOfRejectedFiles !== undefined
-
-      expect(hasRequiredFields).toBe(true)
-    })
+  // response is the object returned by h.response(...).code(...)
+  expect(res.statusCode).toBe(202)
+  expect(res.payload).toMatchObject({
+    success: true,
+    reviewId: 'test-review-id',
+    uploadId: 'upload-123',
+    status: 'pending',
+    message: expect.any(String)
   })
 
-  describe('GET /upload-success - handleUploadSuccess', () => {
-    it('should handle browser redirect from CDP Uploader', async () => {
-      const request = {
-        query: { reviewId: 'review-123' },
-        logger: { info: vi.fn(), error: vi.fn() }
-      }
+  // external calls (initiate + upload) should have been invoked
+  expect(mockFetch).toHaveBeenCalled()
+  // first call to /initiate
+  expect(String(mockFetch.mock.calls[0][0])).toContain('/initiate')
+  // second call to upload-and-scan endpoint
+  expect(String(mockFetch.mock.calls[1][0])).toContain('/upload-and-scan')
+})
 
-      expect(request.query.reviewId).toBe('review-123')
-    })
+it('returns 500 when no payload (file) provided', async () => {
+  const handlerKey = 'POST /api/upload'
+  const route = storedRoutes[handlerKey]
+  expect(route).toBeDefined()
 
-    it('should return success response', async () => {
-      const request = {
-        query: { reviewId: 'review-123' },
-        logger: { info: vi.fn() }
-      }
+  const handler = route.handler
 
-      const h = {
-        response: vi.fn(function (data) {
-          return {
-            ...data,
-            code: vi.fn(function (code) {
-              this._statusCode = code
-              return this
-            })
-          }
-        })
-      }
+  const request = {
+    headers: { 'content-type': 'application/octet-stream' },
+    payload: null,
+    logger: { info: vi.fn(), error: vi.fn(), warn: vi.fn(), debug: vi.fn() }
+  }
 
-      expect(request.query.reviewId).toBe('review-123')
-    })
+  const h = makeH()
+  const res = await handler(request, h)
 
-    it('should log redirect from CDP Uploader', async () => {
-      const loggerSpy = vi.fn()
-      const request = {
-        query: { reviewId: 'review-123' },
-        logger: { info: loggerSpy }
-      }
-
-      expect(request.logger.info).toBe(loggerSpy)
-    })
-
-    it('should include processing status in response', async () => {
-      const request = {
-        query: { reviewId: 'review-123' },
-        logger: { info: vi.fn() }
-      }
-
-      expect(request.query.reviewId).toBeDefined()
-    })
-
-    it('should handle missing reviewId in query', async () => {
-      const request = {
-        query: {},
-        logger: { info: vi.fn() }
-      }
-
-      expect(request.query.reviewId).toBeUndefined()
-    })
-  })
-
-  describe('Route Registration', () => {
-    it('should register POST /api/upload route', () => {
-      expect(true).toBe(true)
-    })
-
-    it('should register POST /upload-callback route', () => {
-      expect(true).toBe(true)
-    })
-
-    it('should register GET /upload-success route', () => {
-      expect(true).toBe(true)
-    })
-
-    it('should apply CORS configuration to routes', () => {
-      expect(true).toBe(true)
-    })
-
-    it('should set correct payload handling options', () => {
-      expect(true).toBe(true)
-    })
-  })
-
-  describe('File Size Validation', () => {
-    it('should accept files under 10MB limit', () => {
-      const fileSizeBytes = 5 * 1024 * 1024 // 5MB
-      const maxFileBytes = 10 * 1024 * 1024 // 10MB
-      expect(fileSizeBytes).toBeLessThan(maxFileBytes)
-    })
-
-    it('should accept files at exactly 10MB', () => {
-      const fileSizeBytes = 10 * 1024 * 1024
-      const maxFileBytes = 10 * 1024 * 1024
-      expect(fileSizeBytes).toBeLessThanOrEqual(maxFileBytes)
-    })
-
-    it('should reject files over 10MB', () => {
-      const fileSizeBytes = 11 * 1024 * 1024
-      const maxFileBytes = 10 * 1024 * 1024
-      expect(fileSizeBytes).toBeGreaterThan(maxFileBytes)
-    })
-  })
-
-  describe('MIME Type Validation', () => {
-    it('should accept PDF files', () => {
-      const acceptedTypes = [
-        'application/pdf',
-        'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-      ]
-      expect(acceptedTypes).toContain('application/pdf')
-    })
-
-    it('should accept Word .docx files', () => {
-      const acceptedTypes = [
-        'application/pdf',
-        'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-      ]
-      expect(acceptedTypes).toContain(
-        'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-      )
-    })
-
-    it('should reject invalid MIME types', () => {
-      const acceptedTypes = [
-        'application/pdf',
-        'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-      ]
-      expect(acceptedTypes).not.toContain('application/exe')
-    })
-  })
-
-  describe('Error Handling', () => {
-    it('should handle network errors', () => {
-      expect(true).toBe(true)
-    })
-
-    it('should handle CDP Uploader service unavailability', () => {
-      expect(true).toBe(true)
-    })
-
-    it('should return appropriate HTTP status codes', () => {
-      expect(true).toBe(true)
-    })
-
-    it('should log errors for debugging', () => {
-      expect(true).toBe(true)
-    })
-  })
-
-  describe('Integration', () => {
-    it('should coordinate with CDP Uploader for file scanning', () => {
-      expect(true).toBe(true)
-    })
-
-    it('should queue review job after successful upload', () => {
-      expect(true).toBe(true)
-    })
-
-    it('should create canonical document record', () => {
-      expect(true).toBe(true)
-    })
-
-    it('should create database review record', () => {
-      expect(true).toBe(true)
-    })
-  })
+  expect(res.statusCode).toBe(500)
+  expect(res.payload).toHaveProperty('success', false)
+  expect(res.payload).toHaveProperty('message')
 })
