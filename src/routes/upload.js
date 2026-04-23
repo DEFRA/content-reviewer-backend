@@ -26,15 +26,19 @@ const ACCEPTED_MIME_TYPES = [
 /**
  * POST /initiate — tell CDP Uploader we are starting a new upload.
  *
- * Per the CDP Uploader docs:
- *  - redirect: 'manual' — we are a server client, not a browser; no browser
- *    redirect is needed after the file is scanned.
- *  - callback: our /upload-callback URL — CDP Uploader POSTs here when
- *    scanning + S3 delivery is complete (server-to-server notification).
- *  - metadata: { reviewId, userId } — echoed back verbatim in the callback
- *    payload so we can correlate the result to our review record.
+ * Per the CDP Uploader docs the request body must contain:
+ *  - s3Bucket:  tenant bucket where the scanned file will be delivered.
+ *  - redirect:  relative path CDP Uploader uses to redirect the browser after
+ *               the upload form submission (must start with '/').
+ *  - callback:  absolute URL CDP Uploader POSTs to (server-to-server) once
+ *               scanning + S3 delivery is complete.  Echoes back the metadata
+ *               object so we can correlate the result to our review record.
+ *  - metadata:  arbitrary object echoed verbatim in the callback payload.
+ *               We use { reviewId, userId } for correlation.
+ *  - mimeTypes: array of accepted MIME types (optional CDP extension).
+ *  - maxFileSize: maximum accepted file size in bytes (optional CDP extension).
  *
- * Returns { uploadId, uploadUrl } from the CDP Uploader response.
+ * Returns { uploadId, uploadUrl, statusUrl } from the CDP Uploader response.
  */
 async function initiateUpload(
   cdpUploaderUrl,
@@ -44,22 +48,26 @@ async function initiateUpload(
   logger
 ) {
   const serverUrl = (config.get('serverUrl') || '').replace(/\/$/, '')
-  const rawS3Path = config.get('s3.rawS3Path')
   const callbackUrl = `${serverUrl}${ENDPOINT_CALLBACK}`
-  //const redirectUrl = `${serverUrl}/upload-success?reviewId=${reviewId}`
+  // Relative redirect path — CDP Uploader returns this in its 302 Location
+  // header so a browser-based form submission lands back on our service.
   const redirectUrl = `/upload-success?reviewId=${encodeURIComponent(reviewId)}`
+
+  // Build initiate request body per CDP Uploader spec.
+  // Note: s3Path is NOT a CDP spec field and must not be included — CDP
+  // Uploader manages its own quarantine path and delivers to s3Bucket only.
   const initBody = {
-    s3Bucket,
-    s3Path: rawS3Path,
     redirect: redirectUrl,
     callback: callbackUrl,
+    s3Bucket,
     mimeTypes: ACCEPTED_MIME_TYPES,
     maxFileSize: MAX_FILE_BYTES,
     metadata: { reviewId, userId }
   }
 
   logger.info(
-    `[UPLOAD] Initiating CDP Uploader session with callback URL: ${callbackUrl} and redirect URL: ${redirectUrl}`
+    { callbackUrl, redirectUrl },
+    '[UPLOAD] Initiating CDP Uploader session'
   )
 
   const initResp = await fetch(`${cdpUploaderUrl}/initiate`, {
@@ -81,16 +89,19 @@ async function initiateUpload(
   }
 
   const initJson = await initResp.json().catch(() => ({}))
-  const { uploadId, uploadUrl } = initJson
+  // statusUrl is returned by CDP Uploader for polling; we use callbacks but
+  // log it for observability.
+  const { uploadId, uploadUrl, statusUrl } = initJson
 
   if (!uploadUrl) {
     throw new Error('cdp-uploader /initiate did not return an uploadUrl')
   }
 
   logger.info(
-    `[UPLOAD] CDP Uploader session initiated  with uploadId: ${uploadId} and uploadUrl: ${uploadUrl}`
+    { uploadId, uploadUrl, statusUrl },
+    '[UPLOAD] CDP Uploader session initiated'
   )
-  return { uploadId, uploadUrl }
+  return { uploadId, uploadUrl, statusUrl }
 }
 
 // ─── Step 2: /upload-and-scan ────────────────────────────────────────────────
@@ -99,11 +110,17 @@ async function initiateUpload(
  * POST /upload-and-scan/{uploadId} — send the file to CDP Uploader for virus
  * scanning and quarantine.
  *
- * CDP Uploader returns HTTP 302 on success (it redirects a browser to the
- * 'redirect' path from /initiate).  Because we passed redirect:'manual' in
- * /initiate
+ * Per the CDP Uploader spec the endpoint returns HTTP 302 on success — it
+ * redirects a browser to the 'redirect' path supplied during /initiate.
+ * Because we are a server-side client (not a browser) we use
+ * redirect: 'manual' so Node.js fetch does NOT follow the Location header.
+ * Treating a 302 (or any 2xx) as success is correct here.
  *
- * The file is buffered from the incoming octet-stream and wrapped in
+ * Using redirect: 'follow' would cause the fetch to chase the relative
+ * Location path against the CDP Uploader domain, landing on a URL that
+ * does not exist there and returning a 404 — silently failing the upload.
+ *
+ * The file is buffered from the incoming multipart stream and re-wrapped in
  * multipart/form-data (field name: 'file') as CDP Uploader expects.
  */
 async function performUpload(
@@ -124,10 +141,16 @@ async function performUpload(
     const uploadRes = await fetch(uploadAndScanUrl, {
       method: 'POST',
       body: formData,
-      redirect: 'follow'
+      redirect: 'manual' // CDP returns 302; do NOT follow — see JSDoc above
     })
 
-    if (!uploadRes.ok) {
+    // CDP Uploader returns 302 (accepted for scanning) or 2xx.
+    // Any 5xx or unexpected status indicates a real failure.
+    const isAccepted =
+      uploadRes.status === 302 ||
+      (uploadRes.status >= 200 && uploadRes.status < 300)
+
+    if (!isAccepted) {
       const txt = await uploadRes.text().catch(() => '')
       logger.error(
         { status: uploadRes.status, body: txt },
@@ -140,14 +163,8 @@ async function performUpload(
 
     logger.info(
       { status: uploadRes.status },
-      '[UPLOAD] File accepted by CDP Uploader — awaiting callback'
+      '[UPLOAD] File accepted by CDP Uploader — awaiting virus scan callback'
     )
-
-    // Extract final URL after redirect is followed
-    const finalUrl = uploadRes.url
-    const redirectPath = new URL(finalUrl).pathname
-
-    logger.info({ finalUrl, redirectPath }, '[UPLOAD] Upload completed')
   } catch (error) {
     logger.error(
       { error: error.message, stack: error.stack },
@@ -338,51 +355,44 @@ const handleUploadCallback = async (request, h) => {
         .code(HTTP_STATUS.OK)
     }
 
-    // validateUploadCallbackPayload(
-    //   uploadStatus,
-    //   numberOfRejectedFiles,
-    //   fileField
-    // )
-
-    // const userId = metadata?.userId
+    const userId = metadata?.userId
     const reviewId = metadata?.reviewId
+    const { contentType, s3Key, filename } = fileField
 
-    // const { contentType, s3Key, filename } = fileField
+    request.logger.info(
+      { userId, reviewId, contentType, s3Key, filename },
+      'Processing uploaded file for review'
+    )
 
-    // request.logger.info(
-    //   { userId, reviewId, contentType, s3Key, filename },
-    //   'Processing uploaded file for review'
-    // )
+    // Run pipeline ASYNCHRONOUSLY — return 200 to CDP Uploader immediately,
+    // then create the canonical document, review record and SQS job in the background.
+    runCallbackPipeline(
+      s3Key,
+      filename,
+      contentType,
+      reviewId,
+      userId,
+      request.logger
+    ).catch((error) => {
+      request.logger.error(
+        {
+          reviewId,
+          error: error.message,
+          stack: error.stack
+        },
+        '[CALLBACK] Async pipeline failed'
+      )
+    })
 
-    // // ✅ Run pipeline ASYNCHRONOUSLY (don't await)
-    // // So we can return quickly to CDP Uploader
-    // runCallbackPipeline(
-    //   s3Key,
-    //   filename,
-    //   contentType,
-    //   reviewId,
-    //   userId,
-    //   request.logger
-    // ).catch((error) => {
-    //   request.logger.error(
-    //     {
-    //       reviewId,
-    //       error: error.message,
-    //       stack: error.stack
-    //     },
-    //     '[CALLBACK] Async pipeline failed'
-    //   )
-    // })
+    const totalDuration = Math.round(performance.now() - requestStartTime)
 
-    // const totalDuration = Math.round(performance.now() - requestStartTime)
-
-    // request.logger.info(
-    //   {
-    //     reviewId,
-    //     totalDurationMs: totalDuration
-    //   },
-    //   '[CALLBACK] Pipeline started asynchronously'
-    // )
+    request.logger.info(
+      {
+        reviewId,
+        totalDurationMs: totalDuration
+      },
+      '[CALLBACK] Pipeline started asynchronously'
+    )
 
     // ✅ Return 200 OK to CDP Uploader immediately
     return h
@@ -547,6 +557,14 @@ const handleUploadSuccess = async (request, h) => {
 }
 
 // ─── Route registration ──────────────────────────────────────────────────────
+
+// Named exports for unit testing
+export {
+  handleFileUpload,
+  handleUploadCallback,
+  handleUploadSuccess,
+  runCallbackPipeline
+}
 
 export const uploadRoutes = {
   plugin: {
