@@ -265,12 +265,27 @@ const handleFileUpload = async (request, h) => {
   }
 }
 
-async function streamToBuffer(stream) {
+async function streamToBuffer(file) {
   return new Promise((resolve, reject) => {
     const chunks = []
-    stream.on('data', (chunk) => chunks.push(chunk))
-    stream.on('end', () => resolve(Buffer.concat(chunks)))
-    stream.on('error', reject)
+
+    if (!file.on) {
+      // File is already a buffer or blob
+      resolve(file)
+      return
+    }
+
+    file.on('data', (chunk) => {
+      chunks.push(chunk)
+    })
+
+    file.on('end', () => {
+      resolve(Buffer.concat(chunks))
+    })
+
+    file.on('error', (error) => {
+      reject(new Error(`File stream error: ${error.message}`))
+    })
   })
 }
 
