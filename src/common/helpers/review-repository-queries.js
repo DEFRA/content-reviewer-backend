@@ -118,7 +118,13 @@ export async function getRecentReviews(
     }
   } catch (error) {
     logger.error(
-      { error: error.message },
+      {
+        errorName: error.name,
+        errorCode: error.Code || error.code,
+        errorMessage: error.message,
+        httpStatusCode: error.$metadata?.httpStatusCode,
+        requestId: error.$metadata?.requestId
+      },
       'Failed to get recent reviews from S3'
     )
     throw error

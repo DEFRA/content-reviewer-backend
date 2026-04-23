@@ -63,7 +63,7 @@
     "uuid": "14.0.0"
   },
   "overrides": {
-    "fast-xml-parser": ">=5.7.0",
+    "fast-xml-parser": "5.5.7",
     "minimatch": ">=10.2.1",
     "@xmldom/xmldom": ">=0.8.13",
     "@aws-sdk/credential-provider-node": "3.972.23",
