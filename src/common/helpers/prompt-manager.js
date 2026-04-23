@@ -33,17 +33,24 @@ The input is **plain text only** — no formatting is preserved. You cannot see 
 **Accessibility:** Unexplained technical terms or jargon; language that creates barriers for users with different abilities or reading levels.
 
 **GOV.UK Style Compliance:** Based on the GOV.UK Content Style Guide and GOV.UK Design System. Covers:
-- Words to avoid: utilise→use, facilitate→help, going forward→in future, leverage→use, robust→strong, deliver (policies/services), drive (change), key (unless it unlocks something), streamline, transform
-- Abbreviations and acronyms: spell out in full on first use unless commonly understood (e.g. UK, EU, VAT)
+- Words to avoid (flag and suggest the replacement): agenda (unless a meeting)→plan; advance→improve; collaborate→work with; combat (unless military)→solve/fix; commit/pledge→plan to [specific verb]; counter→prevent; deliver (abstract concepts like improvements or change)→make/create/provide; deploy (unless military/software)→use/put into place; dialogue→discussion; disincentivise→discourage; empower→allow/give permission; facilitate→help; focus→work on; foster (unless children)→encourage; going forward→in future; impact (unless a collision)→affect/influence; incentivise→encourage; initiate→start; key (unless it unlocks something)→important/significant; land (unless aircraft)→get/achieve; leverage (unless financial)→influence/use; liaise→work with; overarching→omit or use "encompassing"; progress→work on/develop; promote (unless an ad campaign or career)→recommend/support; robust (unless a physical object)→well thought out/comprehensive; slim down (unless physical)→reduce; streamline→simplify; strengthening (unless physical structures)→increasing funding/adding staff; tackle (unless sport or fishing)→stop/solve/deal with; transform→describe the specific change; utilise→use
+- Metaphors to avoid (they obscure meaning and slow comprehension): drive/drive out→create/cause/encourage or stop/prevent; in order to→omit (usually unnecessary); one-stop shop→website; ring fencing→separate, or "money that will be spent on x" for budgets
+- Abbreviations and acronyms: spell out in full on first use unless commonly understood (e.g. UK, EU, VAT); no full stops in abbreviations or acronyms (UK not U.K., eg not e.g.)
 - Numbers: use numerals for all numbers (including 1–9); "9am" not "9 o'clock"; "20 April 2026" not "20th April"; "£3 million" not "£3,000,000"; percentages use % not "per cent"
-- Dates and times: "20 April 2026", "9am to 5pm", "Monday to Friday"
+- Dates and times: "20 April 2026", "9am to 5pm", "Monday to Friday"; use \`to\` not hyphens or \`/\` in ranges (e.g. "9am to 5pm" not "9am-5pm")
 - Capitalisation: sentence case for headings and titles; do not capitalise job titles or policy names unless they are proper nouns
 - Contractions: avoid (e.g. "don't" → "do not") in formal guidance; acceptable in more conversational content
-- Link text: must make sense out of context — never use "click here", "read more", "find out more" alone; link text should describe the destination. "(opens in new tab)"" in visible link text is **correct and required** by GOV.UK style when a link opens in a new tab — it is **never** a violation and must **never** be flagged
-- Lists: use bullet lists for 3 or more comparable items; do not use semicolons at the end of bullet items; introductory sentence should end in a colon
+- Use "and" not an ampersand (&) unless in a proper name or official logo
+- No exclamation marks
+- Avoid semicolons in body text and bullet lists
+- Government organisations are singular: "the department has" not "the department have"
+- Link text: must make sense out of context — never use "click here", "read more", "find out more" alone; link text should describe the destination. "(opens in new tab)" in visible link text is **correct and required** by GOV.UK style when a link opens in a new tab — it is **never** a violation and must **never** be flagged
+- Lists: use bullet lists for 3 or more comparable items; each bullet starts lowercase; introductory sentence ends in a colon
 - Tone: active voice; second person ("you should…") not third ("applicants must…"); direct and confident, not vague or corporate
 
-**Content Completeness:** Missing necessary information; unclear or non-actionable instructions; unexplained gaps; content disproportionate in length for its purpose.
+**Content Completeness:** Missing necessary information; unclear or non-actionable instructions; unexplained gaps; content disproportionate in length for its purpose. Also check:
+- Title (if identifiable): must be clear, specific, and in sentence case; flag jargon or technical terms; for consultation pages, "consultation" must not appear in the title as it is added automatically by the publishing platform
+- Summary (if identifiable): must expand on the title without repeating it; must clearly explain the page purpose; should begin with search-relevant words; must use complete sentences with verbs
 
 ## ISSUE DISTRIBUTION
 
