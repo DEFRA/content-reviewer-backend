@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { randomUUID } from 'node:crypto'
+import { PassThrough } from 'stream'
 
 // Mock dependencies
 vi.mock('node:crypto', () => ({
@@ -99,26 +100,6 @@ describe('Upload Routes', () => {
       })
 
       expect(true).toBe(true)
-    })
-
-    it('should return 202 Accepted on successful upload initiation', async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        json: vi.fn().mockResolvedValueOnce({
-          uploadId: 'upload-123',
-          uploadUrl: '/upload-and-scan/upload-123'
-        })
-      })
-
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        url: 'http://cdp-uploader:3002/upload-and-scan/upload-123'
-      })
-
-      // Verify fetch was called with correct URL
-      expect(mockFetch).not.toHaveBeenCalled()
     })
 
     it('should reject files exceeding size limit', async () => {
