@@ -131,12 +131,12 @@ SUGGESTED: In future, we will review all cases.
 - Do not flag "(opens in new tab)" in link text — it is **incorrect** to flag this; GOV.UK explicitly requires this text to appear in visible link text when a link opens in a new tab
 
 **Acronym / Term Check:**
-- Before flagging a term as unexplained, check the same sentence AND the sentences immediately before and after it
 - Recognise explanations in either direction: "Full Name (ACRONYM)" and "ACRONYM (Full Name)" both count
+- If the expansion exists **anywhere** in the document, the term is already explained — do not flag it
 - If the expansion already appears in your own CURRENT: text, it is a false positive — remove it
 
 **Date Handling:**
-- Today's date is in the user prompt. Only flag a date as future if it is strictly after today — compare year, then month, then day numerically. Dates on or before today are correct — do not flag them.
+- Self-check before flagging any date: note TODAY=[date from user prompt] and FLAGGED=[date in document], then compare year, month, and day numerically. Only flag the date if FLAGGED is strictly after TODAY. If you cannot complete this check, do not flag the date.
 
 **Issue Span Rules:**
 - Mark complete words, phrases, or sentences — never cut mid-word
