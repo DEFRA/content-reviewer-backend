@@ -109,21 +109,20 @@ async function initiateUpload(
 async function performUpload(
   uploadAndScanUrl,
   fileBuffer,
-  filename,
+  fileName,
   contentType,
   logger
 ) {
   try {
     logger.info('[UPLOAD] Sending file to CDP Uploader /upload-and-scan')
 
-    const blob = new Blob([fileBuffer], { type: contentType })
-
-    const formData = new FormData()
-    formData.append('file', blob, filename)
-
     const uploadRes = await fetch(uploadAndScanUrl, {
       method: 'POST',
-      body: formData,
+      body: fileBuffer,
+      headers: {
+        'Content-Type': contentType,
+        'x-filename': encodeURIComponent(fileName)
+      },
       redirect: 'follow'
     })
 
@@ -172,27 +171,26 @@ async function performUpload(
 const handleFileUpload = async (request, h) => {
   const requestStartTime = performance.now()
 
-  const fileStream = request.payload?.file
+  const userId = request.headers['x-user-id'] || 'content-reviewer-frontend'
+  const fileName = request.headers['x-file-name']
+    ? decodeURIComponent(request.headers['x-file-name'])
+    : `upload-${Date.now()}`
 
-  // ✅ Validate file exists
-  const validationResponse = validateFileExists(fileStream, h)
-  if (validationResponse) {
-    return validationResponse
-  }
-
-  const filename =
-    fileStream.hapi?.filename || request.headers['x-file-name'] || 'unknown'
+  const mimeType = request.headers['x-file-content-type'] || 'application/pdf'
   const contentType =
-    fileStream.hapi?.headers['content-type'] ||
-    request.headers['content-type'] ||
-    'application/octet-stream'
+    request.headers['content-type'] || 'application/octet-stream'
 
-  request.logger.info(`[UPLOAD] Extracted filename: ${filename}`)
+  request.logger.info(
+    `[UPLOAD] Received upload request from userId: ${userId} with filename: ${fileName} and content-type: ${mimeType}`
+  )
 
-  request.logger.info(`[UPLOAD] Extracted content type: ${contentType}`)
+  const fileStream = request.payload
+
+  request.logger.info(
+    `[UPLOAD] Received upload request with content-type: ${request.headers['content-type']}`
+  )
 
   const reviewId = randomUUID()
-  const userId = request.headers['x-user-id'] || null
 
   try {
     const CDP_UPLOADER = (config.get('cdpUploader.url') || '').replace(
@@ -229,21 +227,21 @@ const handleFileUpload = async (request, h) => {
     await performUpload(
       uploadAndScanUrl,
       fileBuffer,
-      filename,
+      fileName,
       contentType,
       request.logger
     )
 
     const totalDuration = Math.round(performance.now() - requestStartTime)
     request.logger.info(
-      { reviewId, uploadId, totalDurationMs: totalDuration },
-      '[UPLOAD] File sent to CDP Uploader — awaiting callback to complete pipeline'
+      `[UPLOAD] File sent to CDP Uploader — awaiting callback to complete pipeline with reviewId: ${reviewId}, uploadId: ${uploadId} and totalDurationMs: ${totalDuration}`
     )
 
     return h
       .response({
         success: true,
         reviewId,
+        uploadId,
         status: REVIEW_STATUSES.PENDING,
         message: 'File uploaded — review queued'
       })
@@ -388,8 +386,7 @@ const handleUploadCallback = async (request, h) => {
     return h
       .response({
         success: true,
-        message: 'Callback received',
-        reviewId
+        message: 'Callback received'
       })
       .code(HTTP_STATUS.OK)
   } catch (error) {
@@ -558,10 +555,10 @@ export const uploadRoutes = {
         path: ENDPOINT_UPLOAD,
         options: {
           payload: {
-            output: 'stream',
-            parse: true,
-            multipart: true,
-            maxBytes: MAX_FILE_BYTES
+            output: 'stream', // ✅ Return payload as stream
+            parse: false, // ✅ Don't parse - raw binary
+            maxBytes: 10 * 1024 * 1024, // ✅ Max 10MB
+            allow: 'application/octet-stream' // ✅ Only accept octet-stream
           },
           cors: getCorsConfig()
         },
