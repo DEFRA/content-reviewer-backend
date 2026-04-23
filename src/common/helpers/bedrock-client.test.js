@@ -187,6 +187,35 @@ describe('bedrockClient.sendMessage', () => {
     expect(result.reason).toContain('guardrail')
   })
 
+  it('returns blocked response when stopReason is guardrail_intervened and action is NONE', async () => {
+    // Reproduces the real-world case where AWS Bedrock's guardrail intercepts
+    // the response but trace.guardrail.action remains 'NONE' while stopReason
+    // is set to 'guardrail_intervened' and the response text is the guardrail
+    // blocked message — previously this bypassed the blocked check and produced
+    // zero scores because the blocked message was parsed as a review response.
+    MOCK_SEND.mockResolvedValueOnce(
+      buildBedrockResponse({
+        output: {
+          message: {
+            content: [
+              {
+                text: 'Your request has been blocked due to content policy violations.'
+              }
+            ]
+          }
+        },
+        trace: { guardrail: { action: 'NONE', assessments: [] } },
+        stopReason: 'guardrail_intervened'
+      })
+    )
+
+    const result = await bedrockClient.sendMessage(SAMPLE_USER_MESSAGE)
+
+    expect(result.success).toBe(false)
+    expect(result.blocked).toBe(true)
+    expect(result.reason).toContain('guardrail')
+  })
+
   it('passes conversation history as part of messages', async () => {
     MOCK_SEND.mockResolvedValueOnce(buildBedrockResponse())
     const history = [{ role: 'user', content: [{ text: 'previous message' }] }]

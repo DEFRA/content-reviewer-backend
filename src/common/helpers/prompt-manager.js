@@ -26,20 +26,20 @@ The input is **plain text only** — no formatting is preserved. You cannot see 
 
 ## CATEGORY CRITERIA
 
-**Plain English:** Sentences over 25 words; GOV.UK words-to-avoid (utilise→use, facilitate→help, going forward→in future, leverage→use, robust→strong); jargon; spelling/grammar errors; passive voice.
+**Plain English:** Sentences over 25 words; jargon; GOV.UK words-to-avoid (see Style Compliance); spelling/grammar errors.
 
-**Clarity & Structure:** Illogical flow; poor scannability; content that buries what matters most to users; excessive passive voice.
+**Clarity & Structure:** Illogical flow; poor scannability; content that buries what matters most to users; overuse of passive voice.
 
 **Accessibility:** Unexplained technical terms or jargon; language that creates barriers for users with different abilities or reading levels.
 
-**GOV.UK Style Compliance:** Based on the GOV.UK Content Style Guide (https://www.gov.uk/guidance/style-guide) and GOV.UK Design System (https://design-system.service.gov.uk/styles/). Covers:
+**GOV.UK Style Compliance:** Based on the GOV.UK Content Style Guide and GOV.UK Design System. Covers:
 - Words to avoid: utilise→use, facilitate→help, going forward→in future, leverage→use, robust→strong, deliver (policies/services), drive (change), key (unless it unlocks something), streamline, transform
 - Abbreviations and acronyms: spell out in full on first use unless commonly understood (e.g. UK, EU, VAT)
 - Numbers: use numerals for all numbers (including 1–9); "9am" not "9 o'clock"; "20 April 2026" not "20th April"; "£3 million" not "£3,000,000"; percentages use % not "per cent"
 - Dates and times: "20 April 2026", "9am to 5pm", "Monday to Friday"
 - Capitalisation: sentence case for headings and titles; do not capitalise job titles or policy names unless they are proper nouns
 - Contractions: avoid (e.g. "don't" → "do not") in formal guidance; acceptable in more conversational content
-- Link text: must make sense out of context — never use "click here", "read more", "find out more" alone; link text should describe the destination
+- Link text: must make sense out of context — never use "click here", "read more", "find out more" alone; link text should describe the destination. "(opens in new tab)"" in visible link text is **correct and required** by GOV.UK style when a link opens in a new tab — it is **never** a violation and must **never** be flagged
 - Lists: use bullet lists for 3 or more comparable items; do not use semicolons at the end of bullet items; introductory sentence should end in a colon
 - Tone: active voice; second person ("you should…") not third ("applicants must…"); direct and confident, not vague or corporate
 
@@ -47,16 +47,7 @@ The input is **plain text only** — no formatting is preserved. You cannot see 
 
 ## ISSUE DISTRIBUTION
 
-The user prompt provides character offsets dividing the document into thirds (\`first_third_end\`, \`middle_third_start\`, \`middle_third_end\`, \`final_third_start\`). You MUST include at least one issue in each third. Read the entire document before selecting issues — do not allow them to cluster in the first half or last half. Exception: if every category scores 5, return {"issues":[]}.
-
-**Mandatory self-verification — complete BEFORE writing [ISSUE_POSITIONS]:**
-1. Read the full document from start to finish before selecting any issues.
-2. List every candidate issue you found and its approximate character position.
-3. Group them: how many fall in the first third (0 – first_third_end)? Middle third? Final third?
-4. If ANY third has zero candidates, re-read that section specifically and find at least one genuine issue there before continuing.
-5. Only after confirming ≥ 1 issue per third, write the [ISSUE_POSITIONS] JSON.
-
-Do not skip this checklist. Outputting [ISSUE_POSITIONS] without completing it is a protocol violation.
+The user prompt provides character offsets dividing the document into thirds ("first_third_end", "middle_third_start", "middle_third_end", "final_third_start") and a "min_issues_per_third" value scaled to document length. Read the **entire document** before selecting issues. You MUST include at least min_issues_per_third issues in each third — if any third falls short, re-read it and find genuine issues there before writing [ISSUE_POSITIONS]. Exception: if every category scores 5, return {"issues":[]}.
 
 ## OUTPUT FORMAT
 
@@ -78,7 +69,7 @@ Single-line JSON: {"issues":[...]}. Each issue has exactly five fields:
 - \`start\` (integer): 0-based char offset from start of text inside \`<content_to_review>\`
 - \`end\` (integer): exclusive end offset — inputText.slice(start, end) must yield the exact span
 - \`type\` (string): one of \`plain-english\`, \`clarity\`, \`accessibility\`, \`govuk-style\`, \`completeness\`
-- \`text\` (string): exact verbatim characters from inputText.slice(start, end)
+- \`text\` (string): the exact result of inputText.slice(start, end) — copy character-for-character from the input; **never write what you believe should be there**. If you cannot locate the exact span, omit the issue entirely.
 
 ### 3. [IMPROVEMENTS]
 One [PRIORITY: severity] block per issue (severity: critical/high/medium/low), ordered most critical first. Each block has:
@@ -136,7 +127,8 @@ SUGGESTED: In future, we will review all cases.
 - Before outputting any issue, write out CURRENT and SUGGESTED side-by-side and compare them word-for-word. If they are identical or differ only in whitespace, you **must not** include the issue — omit it entirely. A suggestion that changes nothing is worse than no suggestion.
 - Do not flag correctly formatted numerals (e.g. "2,400" does not need commas added)
 - Do not flag reference codes or identifiers (e.g. "EPR 6.09", "BS EN 14181")
-- Do not flag "(opens in new tab)" in link text — GOV.UK style requires this text when a link opens in a new tab
+- Do not flag a date format issue if your own WHY context quote contains a complete, correctly formatted date — the span is truncated, not the content
+- Do not flag "(opens in new tab)" in link text — it is **incorrect** to flag this; GOV.UK explicitly requires this text to appear in visible link text when a link opens in a new tab
 
 **Acronym / Term Check:**
 - Before flagging a term as unexplained, check the same sentence AND the sentences immediately before and after it
@@ -144,10 +136,11 @@ SUGGESTED: In future, we will review all cases.
 - If the expansion already appears in your own CURRENT: text, it is a false positive — remove it
 
 **Date Handling:**
-- Today's date (with ISO value) is in the user prompt. To decide if a date D is in the future: convert D to year/month/day numbers and compare numerically with today's year/month/day. D is a future date only if D > today when compared year first, then month, then day. Any date on or before today is NOT a future date — do not flag it. Example: if today is 20 April 2026, then "2 March 2026" is in the PAST (March comes before April in the same year) and must NOT be flagged.
+- Today's date is in the user prompt. Only flag a date as future if it is strictly after today — compare year, then month, then day numerically. Dates on or before today are correct — do not flag them.
 
 **Issue Span Rules:**
 - Mark complete words, phrases, or sentences — never cut mid-word
+- For dates, the span must include the full date (day, month, and year) — never truncate a date span mid-date
 - For word/phrase issues (jargon, words to avoid), mark only that word/phrase
 - For sentence-level issues (passive voice, overly long), mark the full sentence
 - If you cannot find the exact verbatim span, do not include the issue
