@@ -227,7 +227,7 @@ const handleFileUpload = async (request, h) => {
     )
 
     // Read file stream into buffer
-    const fileBuffer = await streamToBuffer(file)
+    const fileBuffer = await streamToBuffer(fileStream)
 
     await performUpload(
       uploadAndScanUrl,
