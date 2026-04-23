@@ -63,8 +63,11 @@
     "uuid": "14.0.0"
   },
   "overrides": {
-    "fast-xml-parser": ">=5.3.6",
-    "minimatch": ">=10.2.1"
+    "fast-xml-parser": ">=5.7.0",
+    "minimatch": ">=10.2.1",
+    "@xmldom/xmldom": ">=0.8.13",
+    "@aws-sdk/credential-provider-node": "3.972.23",
+    "@aws-sdk/token-providers": "3.1013.0"
   },
   "devDependencies": {
     "@babel/core": "7.28.5",
