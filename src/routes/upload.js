@@ -343,7 +343,7 @@ const handleUploadCallback = async (request, h) => {
     // )
 
     // const userId = metadata?.userId
-    const reviewId = metadata?.reviewId
+    //const reviewId = metadata?.reviewId
 
     // const { contentType, s3Key, filename } = fileField
 
