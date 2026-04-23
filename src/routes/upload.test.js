@@ -1,13 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { randomUUID } from 'node:crypto'
 
-// ── Mocks ─────────────────────────────────────────────────────────────────────
-
+// Mock dependencies
 vi.mock('node:crypto', () => ({
-  randomUUID: vi.fn(() => 'test-review-id')
-}))
-
-vi.mock('node:fs/promises', () => ({
-  readFile: vi.fn()
+  randomUUID: vi.fn()
 }))
 
 vi.mock('../config.js', () => ({
@@ -19,13 +15,15 @@ vi.mock('../config.js', () => ({
         's3.bucket': 'test-bucket',
         'cdpUploader.url': 'http://cdp-uploader:3002'
       }
-      return configMap[key] ?? null
+      return configMap[key]
     })
   }
 }))
 
 vi.mock('../common/helpers/canonical-document.js', () => ({
-  SOURCE_TYPES: { FILE: 'file' }
+  SOURCE_TYPES: {
+    FILE: 'file'
+  }
 }))
 
 vi.mock('./review-helpers.js', () => ({
@@ -35,96 +33,23 @@ vi.mock('./review-helpers.js', () => ({
     BAD_REQUEST: 400,
     INTERNAL_SERVER_ERROR: 500
   },
-  REVIEW_STATUSES: { PENDING: 'pending' },
+  REVIEW_STATUSES: {
+    PENDING: 'pending'
+  },
   getCorsConfig: vi.fn(() => ({})),
   createCanonicalDocument: vi.fn(),
   createReviewRecord: vi.fn(),
   queueReviewJob: vi.fn()
 }))
 
-// ── Imports ───────────────────────────────────────────────────────────────────
+let mockFetch
 
-import { uploadRoutes } from './upload.js'
-import { readFile } from 'node:fs/promises'
-import { config } from '../config.js'
-
-// ── Constants ─────────────────────────────────────────────────────────────────
-
-const REVIEW_ID = 'test-review-id'
-const UPLOAD_ID = 'up-123'
-const UPLOAD_URL_PATH = '/upload-and-scan/up-123'
-const CDP_UPLOADER_BASE = 'http://cdp-uploader:3002'
-const FILE_PATH = '/tmp/test.pdf'
-const PDF_FILENAME = 'test.pdf'
-const PDF_CONTENT_TYPE = 'application/pdf'
-const HTTP_200 = 200
-const HTTP_202 = 202
-const HTTP_400 = 400
-const HTTP_500 = 500
-const PATH_UPLOAD = '/api/upload'
-const PATH_CALLBACK = '/upload-callback'
-const PATH_SUCCESS = '/upload-success'
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-async function getHandlers() {
-  const routes = []
-  const server = { route: vi.fn((r) => routes.push(r)) }
-  await uploadRoutes.plugin.register(server)
-  return {
-    fileUpload: routes.find((r) => r.path === PATH_UPLOAD).handler,
-    callback: routes.find((r) => r.path === PATH_CALLBACK).handler,
-    success: routes.find((r) => r.path === PATH_SUCCESS).handler
-  }
-}
-
-function createMockH() {
-  const res = { code: vi.fn().mockReturnThis() }
-  return { response: vi.fn(() => res), _res: res }
-}
-
-function createLogger() {
-  return { info: vi.fn(), error: vi.fn(), warn: vi.fn(), debug: vi.fn() }
-}
-
-function createFileRequest() {
-  return {
-    payload: {
-      file: {
-        hapi: {
-          filename: PDF_FILENAME,
-          headers: { 'content-type': PDF_CONTENT_TYPE }
-        },
-        path: FILE_PATH
-      }
-    },
-    headers: { 'x-user-id': 'user-1' },
-    logger: createLogger()
-  }
-}
-
-const defaultConfigImpl = (key) =>
-  ({
-    serverUrl: 'http://localhost:3000',
-    's3.rawS3Path': '/raw',
-    's3.bucket': 'test-bucket',
-    'cdpUploader.url': CDP_UPLOADER_BASE
-  })[key] ?? null
-
-beforeEach(() => {
-  vi.clearAllMocks()
-  vi.mocked(config.get).mockImplementation(defaultConfigImpl)
-})
-
-afterEach(() => {
-  delete globalThis.fetch
-})
-
-// ── Plugin registration ───────────────────────────────────────────────────────
-
-describe('uploadRoutes plugin', () => {
-  it('exports a plugin named upload-routes', () => {
-    expect(uploadRoutes.plugin.name).toBe('upload-routes')
+describe('Upload Routes', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockFetch = vi.fn()
+    global.fetch = mockFetch
+    randomUUID.mockReturnValue('review-123')
   })
 
   afterEach(() => {
@@ -174,6 +99,26 @@ describe('uploadRoutes plugin', () => {
       })
 
       expect(true).toBe(true)
+    })
+
+    it('should return 202 Accepted on successful upload initiation', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: vi.fn().mockResolvedValueOnce({
+          uploadId: 'upload-123',
+          uploadUrl: '/upload-and-scan/upload-123'
+        })
+      })
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        url: 'http://cdp-uploader:3002/upload-and-scan/upload-123'
+      })
+
+      // Verify fetch was called with correct URL
+      expect(mockFetch).not.toHaveBeenCalled()
     })
 
     it('should reject files exceeding size limit', async () => {

@@ -587,5 +587,3 @@ export const uploadRoutes = {
     }
   }
 }
-
-export { handleFileUpload }
