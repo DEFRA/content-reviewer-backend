@@ -57,31 +57,6 @@ describe('Upload Routes', () => {
   })
 
   describe('POST /api/upload - handleFileUpload', () => {
-    it('should reject request with no file', async () => {
-      const request = {
-        payload: { file: null },
-        headers: {},
-        logger: {
-          info: vi.fn(),
-          error: vi.fn()
-        }
-      }
-      const h = {
-        response: vi.fn(function (data) {
-          return {
-            ...data,
-            code: vi.fn(function (code) {
-              this._statusCode = code
-              return this
-            })
-          }
-        })
-      }
-
-      // Import and test would go here
-      expect(true).toBe(true)
-    })
-
     it('should accept PDF files', async () => {
       mockFetch.mockResolvedValueOnce({
         ok: true,
