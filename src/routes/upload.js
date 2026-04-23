@@ -561,8 +561,7 @@ export const uploadRoutes = {
             output: 'stream',
             parse: true,
             multipart: true,
-            maxBytes: MAX_FILE_BYTES,
-            allow: 'multipart/form-data'
+            maxBytes: MAX_FILE_BYTES
           },
           cors: getCorsConfig()
         },
