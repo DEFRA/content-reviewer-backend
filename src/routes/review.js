@@ -241,7 +241,11 @@ const handleGetAllReviews = async (request, h) => {
   } catch (error) {
     request.logger.error(
       {
-        error: error.message
+        errorName: error.name,
+        errorCode: error.Code || error.code,
+        errorMessage: error.message,
+        httpStatusCode: error.$metadata?.httpStatusCode,
+        requestId: error.$metadata?.requestId
       },
       'Failed to get reviews'
     )
