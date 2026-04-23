@@ -300,8 +300,7 @@ const handleUploadCallback = async (request, h) => {
   const requestStartTime = performance.now()
 
   try {
-    const { uploadStatus, metadata, form, numberOfRejectedFiles } =
-      request.payload
+    const { metadata, form } = request.payload
 
     // ✅ Extract complete metadata from CDP Uploader POST
     request.logger.info(
