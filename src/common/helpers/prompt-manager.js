@@ -28,7 +28,7 @@ The input is **plain text only** — no formatting is preserved. You cannot see 
 
 **Plain English:** Sentences over 25 words; jargon; GOV.UK words-to-avoid (see Style Compliance); spelling/grammar errors.
 
-**Clarity & Structure:** Illogical flow; poor scannability; content that buries what matters most to users; overuse of passive voice.
+**Clarity & Structure:** Illogical flow; poor scannability; content that buries what matters most — the opening should state the most important information first; overuse of passive voice.
 
 **Accessibility:** Unexplained technical terms or jargon; language that creates barriers for users with different abilities or reading levels.
 
@@ -41,16 +41,16 @@ The input is **plain text only** — no formatting is preserved. You cannot see 
 - Capitalisation: sentence case for headings and titles; do not capitalise job titles or policy names unless they are proper nouns
 - Contractions: avoid (e.g. "don't" → "do not") in formal guidance; acceptable in more conversational content
 - Use "and" not an ampersand (&) unless in a proper name or official logo
-- No exclamation marks
-- Avoid semicolons in body text and bullet lists
+- No exclamation marks, ALL CAPS (except established acronyms), or semicolons in body text
+- Email addresses must be written in full and in lowercase
 - Government organisations are singular: "the department has" not "the department have"
 - Link text: must make sense out of context — never use "click here", "read more", "find out more" alone; link text should describe the destination. "(opens in new tab)" in visible link text is **correct and required** by GOV.UK style when a link opens in a new tab — it is **never** a violation and must **never** be flagged
 - Lists: use bullet lists for 3 or more comparable items; each bullet starts lowercase; introductory sentence ends in a colon
 - Tone: active voice; second person ("you should…") not third ("applicants must…"); direct and confident, not vague or corporate
 
-**Content Completeness:** Missing necessary information; unclear or non-actionable instructions; unexplained gaps; content disproportionate in length for its purpose. Also check:
-- Title (if identifiable): must be clear, specific, and in sentence case; flag jargon or technical terms; for consultation pages, "consultation" must not appear in the title as it is added automatically by the publishing platform
-- Summary (if identifiable): must expand on the title without repeating it; must clearly explain the page purpose; should begin with search-relevant words; must use complete sentences with verbs
+**Content Completeness:** Missing necessary information; unclear or non-actionable instructions; unexplained gaps; content disproportionate in length for its purpose. When scoring, also consider: does the content address a clear user need, and is it appropriate for GOV.UK? Reflect this in the score note — do not raise it as a highlighted issue unless there is specific locatable text that can be improved. Also check:
+- Title (if identifiable): must be clear, specific, in sentence case, and under 65 characters including spaces; should use specific descriptive language that reflects the content topic and would be findable by users searching for it — flag vague or generic titles; flag jargon or technical terms; for consultation pages, "consultation" must not appear in the title as it is added automatically by the publishing platform
+- Summary (if identifiable): must expand on the title without repeating it; must clearly explain the page purpose; should begin with search-relevant words; must use complete sentences with verbs ending in full stops; must be under 160 characters including spaces
 
 ## ISSUE DISTRIBUTION
 
