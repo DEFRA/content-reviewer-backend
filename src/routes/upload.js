@@ -108,7 +108,6 @@ async function initiateUpload(
  */
 async function performUpload(
   uploadAndScanUrl,
-  fileStream,
   fileBuffer,
   filename,
   contentType,
@@ -232,7 +231,6 @@ const handleFileUpload = async (request, h) => {
 
     await performUpload(
       uploadAndScanUrl,
-      fileStream,
       fileBuffer,
       filename,
       contentType,
