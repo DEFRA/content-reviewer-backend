@@ -59,8 +59,7 @@ async function initiateUpload(
   }
 
   logger.info(
-    { cdpUploaderUrl, callbackUrl, reviewId },
-    '[UPLOAD] Initiating CDP Uploader session'
+    `[UPLOAD] Initiating CDP Uploader session with callback URL: ${callbackUrl} and redirect URL: ${redirectUrl}`
   )
 
   const initResp = await fetch(`${cdpUploaderUrl}/initiate`, {
@@ -89,8 +88,7 @@ async function initiateUpload(
   }
 
   logger.info(
-    { uploadId, uploadUrl },
-    '[UPLOAD] CDP Uploader session initiated'
+    `[UPLOAD] CDP Uploader session initiated  with uploadId: ${uploadId} and uploadUrl: ${uploadUrl}`
   )
   return { uploadId, uploadUrl }
 }
@@ -108,21 +106,12 @@ async function initiateUpload(
  * The file is buffered from the incoming octet-stream and wrapped in
  * multipart/form-data (field name: 'file') as CDP Uploader expects.
  */
-async function performUpload(
-  uploadAndScanUrl,
-  file,
-  fileBuffer,
-  fileName,
-  logger
-) {
+async function performUpload(uploadAndScanUrl, fileStream, filename, logger) {
   try {
-    const formData = new FormData()
-    formData.append('file', file)
+    logger.info('[UPLOAD] Sending file to CDP Uploader /upload-and-scan')
 
-    logger.info(
-      { uploadAndScanUrl, fileSize: fileBuffer.length, fileName },
-      '[UPLOAD] Sending file to CDP Uploader /upload-and-scan'
-    )
+    const formData = new FormData()
+    formData.append('file', fileStream, { filename })
 
     const uploadRes = await fetch(uploadAndScanUrl, {
       method: 'POST',
@@ -175,34 +164,31 @@ async function performUpload(
 const handleFileUpload = async (request, h) => {
   const requestStartTime = performance.now()
 
-  const payload = request.payload
-  const file = payload.file
+  const fileStream = request.payload?.file
+  request.logger.info(
+    `[UPLOAD] File upload request received with payload keys: ${Object.keys(fileStream)} and headers: ${JSON.stringify(request.headers)}`
+  )
 
-  validateFileExists(file, h)
+  // ✅ Validate file exists
+  const validationResponse = validateFileExists(fileStream, h)
+  if (validationResponse) {
+    return validationResponse
+  }
 
-  const fileData = extractFileInfo(file)
+  const filename =
+    fileStream.hapi?.filename || request.headers['x-file-name'] || 'unknown'
+  request.logger.info(`[UPLOAD] Extracted filename: ${filename}`)
 
-  // Read the file from disk if needed
-  const { readFile } = await import('node:fs/promises')
-  const buffer = await readFile(fileData.path)
-
-  // Hapi normalises all header names to lowercase
-
-  const fileName =
-    fileData.filename || request.headers['x-file-name'] || 'unknown'
   const reviewId = randomUUID()
   const userId = request.headers['x-user-id'] || null
-
-  request.logger.info(
-    { reviewId, fileName },
-    '[UPLOAD] File received — initiating CDP Uploader session'
-  )
 
   try {
     const CDP_UPLOADER = (config.get('cdpUploader.url') || '').replace(
       /\/$/,
       ''
     )
+    request.logger.info(`CDP Uploader URL from config: ${CDP_UPLOADER}`)
+
     const S3_BUCKET = config.get('s3.bucket')
 
     if (!CDP_UPLOADER) {
@@ -221,13 +207,11 @@ const handleFileUpload = async (request, h) => {
     // CDP Uploader base URL to get the absolute upload-and-scan endpoint.
     const uploadAndScanUrl = new URL(uploadUrl, CDP_UPLOADER).href
 
-    await performUpload(
-      uploadAndScanUrl,
-      file,
-      buffer,
-      fileName,
-      request.logger
+    request.logger.info(
+      `[UPLOAD] Upload URL resolved for CDP Uploader: ${uploadAndScanUrl}`
     )
+
+    await performUpload(uploadAndScanUrl, fileStream, filename, request.logger)
 
     const totalDuration = Math.round(performance.now() - requestStartTime)
     request.logger.info(
@@ -257,17 +241,6 @@ const handleFileUpload = async (request, h) => {
     return h
       .response({ success: false, message: error.message })
       .code(HTTP_STATUS.INTERNAL_SERVER_ERROR)
-  }
-}
-
-function extractFileInfo(file) {
-  return {
-    filename: file?.hapi?.filename || file?.filename || 'unknown',
-    contentType:
-      file?.hapi?.headers?.['content-type'] ||
-      file?.headers?.['content-type'] ||
-      'application/octet-stream',
-    path: file?.path
   }
 }
 
@@ -302,8 +275,7 @@ const handleUploadCallback = async (request, h) => {
 
     // ✅ Extract complete metadata from CDP Uploader POST
     request.logger.info(
-      { uploadStatus, metadata, numberOfRejectedFiles },
-      'Upload callback received from CDP Uploader'
+      `Upload callback received from CDP Uploader with payload: ${JSON.stringify(request.payload)}`
     )
 
     // Get file details from form
@@ -542,12 +514,11 @@ export const uploadRoutes = {
         path: ENDPOINT_UPLOAD,
         options: {
           payload: {
-            output: 'file',
+            output: 'stream',
             parse: true,
             multipart: true,
             maxBytes: MAX_FILE_BYTES,
-            allow: 'multipart/form-data',
-            uploads: '/tmp'
+            allow: 'multipart/form-data'
           },
           cors: getCorsConfig()
         },
