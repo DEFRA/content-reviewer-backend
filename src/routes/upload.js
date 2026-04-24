@@ -297,7 +297,7 @@ const handleUploadCallback = async (request, h) => {
   const requestStartTime = performance.now()
 
   try {
-    const { metadata,form } = request.payload
+    const { metadata, form } = request.payload
 
     // ✅ Extract complete metadata from CDP Uploader POST
     request.logger.info(
@@ -327,7 +327,7 @@ const handleUploadCallback = async (request, h) => {
     // )
 
     // const userId = metadata?.userId
-     const reviewId = metadata?.reviewId
+    const reviewId = metadata?.reviewId
 
     // const { contentType, s3Key, filename } = fileField
 
@@ -366,7 +366,9 @@ const handleUploadCallback = async (request, h) => {
     //   '[CALLBACK] Pipeline started asynchronously'
     // )
 
-    request.logger.info(`reviewId: ${reviewId} - Callback received from CDP Uploader`)
+    request.logger.info(
+      `reviewId: ${reviewId} - Callback received from CDP Uploader`
+    )
     // ✅ Return 200 OK to CDP Uploader immediately
     return h
       .response({
