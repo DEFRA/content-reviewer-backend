@@ -109,7 +109,7 @@ async function performUpload(
   uploadAndScanUrl,
   fileBuffer,
   fileName,
-  contentType,
+  mimeType,
   logger
 ) {
   try {
@@ -119,7 +119,7 @@ async function performUpload(
       method: 'POST',
       body: fileBuffer,
       headers: {
-        'Content-Type': contentType,
+        'Content-Type': mimeType,
         'x-filename': encodeURIComponent(fileName)
       },
       redirect: 'follow'
@@ -132,7 +132,7 @@ async function performUpload(
         'cdp-uploader /upload-and-scan failed'
       )
       throw new Error(
-        `cdp-uploader /upload-and-scan failed: ${uploadRes.status}`
+        `cdp-uploader /upload-and-scan failed: ${uploadRes.text ? txt : uploadRes.status}`
       )
     }
 
@@ -176,8 +176,6 @@ const handleFileUpload = async (request, h) => {
     : `upload-${Date.now()}`
 
   const mimeType = request.headers['x-file-content-type'] || 'application/pdf'
-  const contentType =
-    request.headers['content-type'] || 'application/octet-stream'
 
   request.logger.info(
     `[UPLOAD] Received upload request from userId: ${userId} with filename: ${fileName} and content-type: ${mimeType}`
@@ -227,7 +225,7 @@ const handleFileUpload = async (request, h) => {
       uploadAndScanUrl,
       fileBuffer,
       fileName,
-      contentType,
+      mimeType,
       request.logger
     )
 
