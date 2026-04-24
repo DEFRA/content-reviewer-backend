@@ -14,7 +14,6 @@ const ENDPOINT_UPLOAD = '/api/upload'
 const ENDPOINT_CALLBACK = '/upload-callback'
 const MAX_FILE_BYTES = 10 * 1024 * 1024 // 10 MB
 const SOURCE_TYPE_FILE = 'file'
-const BAD_REQUEST = 400
 
 const ACCEPTED_MIME_TYPES = [
   'application/pdf',
@@ -288,21 +287,6 @@ async function streamToBuffer(file) {
 }
 
 /**
- * Validate file exists
- */
-function validateFileExists(file, h) {
-  if (!file) {
-    return h
-      .response({
-        success: false,
-        message: 'No file provided'
-      })
-      .code(BAD_REQUEST)
-  }
-  return null
-}
-
-/**
  * POST /upload-callback
  *
  * Called by CDP Uploader (server-to-server) after file scanning.
@@ -313,7 +297,7 @@ const handleUploadCallback = async (request, h) => {
   const requestStartTime = performance.now()
 
   try {
-    const { metadata, form } = request.payload
+    const { metadata,form } = request.payload
 
     // ✅ Extract complete metadata from CDP Uploader POST
     request.logger.info(
@@ -343,7 +327,7 @@ const handleUploadCallback = async (request, h) => {
     // )
 
     // const userId = metadata?.userId
-    //const reviewId = metadata?.reviewId
+     const reviewId = metadata?.reviewId
 
     // const { contentType, s3Key, filename } = fileField
 
@@ -382,6 +366,7 @@ const handleUploadCallback = async (request, h) => {
     //   '[CALLBACK] Pipeline started asynchronously'
     // )
 
+    request.logger.info(`reviewId: ${reviewId} - Callback received from CDP Uploader`)
     // ✅ Return 200 OK to CDP Uploader immediately
     return h
       .response({
