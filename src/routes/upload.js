@@ -122,30 +122,19 @@ async function performUpload(
         'Content-Type': mimeType,
         'x-filename': encodeURIComponent(fileName)
       },
-      redirect: 'follow'
+      redirect: 'manual'
     })
 
-    if (!uploadRes.ok) {
-      const txt = await uploadRes.text().catch(() => '')
-      logger.error(
-        { status: uploadRes.status, body: txt },
-        'cdp-uploader /upload-and-scan failed'
+    // If we got a redirect response, inspect Location
+    if (uploadRes.status >= 300 && uploadRes.status < 400) {
+      const location = uploadRes.headers.get('location')
+      logger.info(
+        `cdp-uploader redirected after upload with Location: ${location} and status: ${uploadRes.status}`
       )
-      throw new Error(
-        `cdp-uploader /upload-and-scan failed: ${uploadRes.text ? txt : uploadRes.status}`
+      logger.info(
+        `[UPLOAD] File accepted by CDP Uploader — awaiting callback to complete pipeline`
       )
     }
-
-    logger.info(
-      { status: uploadRes.status },
-      '[UPLOAD] File accepted by CDP Uploader — awaiting callback'
-    )
-
-    // Extract final URL after redirect is followed
-    const finalUrl = uploadRes.url
-    const redirectPath = new URL(finalUrl).pathname
-
-    logger.info({ finalUrl, redirectPath }, '[UPLOAD] Upload completed')
   } catch (error) {
     logger.error(
       { error: error.message, stack: error.stack },
