@@ -366,8 +366,16 @@ export class BedrockReviewProcessor {
     const issueCount = parsed.reviewedContent?.issues?.length ?? 0
 
     logger.info(
-      { reviewId, thirdIndex, thirdName, issueCount },
-      `[DISTRIBUTION] Follow-up for ${thirdName} third returned ${issueCount} issue(s)`
+      {
+        reviewId,
+        thirdIndex,
+        thirdName,
+        issueCount,
+        inputTokens: result.usage?.inputTokens,
+        outputTokens: result.usage?.outputTokens,
+        totalTokens: result.usage?.totalTokens
+      },
+      `[DISTRIBUTION] Follow-up for ${thirdName} third returned ${issueCount} issue(s) — input: ${result.usage?.inputTokens} tokens, output: ${result.usage?.outputTokens} tokens`
     )
 
     return parsed
