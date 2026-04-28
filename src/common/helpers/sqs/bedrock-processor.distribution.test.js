@@ -1,6 +1,7 @@
 import { describe, test, expect, beforeEach, vi } from 'vitest'
 
 import { BedrockReviewProcessor } from './bedrock-processor.js'
+import { config } from '../../../config.js'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -86,6 +87,26 @@ describe('BedrockReviewProcessor - enforceDistribution - skip conditions', () =>
   beforeEach(() => {
     vi.clearAllMocks()
     processor = new BedrockReviewProcessor()
+  })
+
+  test('skips when distribution enforcement is disabled', async () => {
+    vi.mocked(config.get).mockReturnValueOnce(false)
+
+    const parsedReview = makeReview([FIRST_THIRD_OFFSET, SECOND_THIRD_OFFSET])
+    const text = makeText(STANDARD_DOC_LENGTH)
+
+    await processor.enforceDistribution(
+      'rev-disabled',
+      parsedReview,
+      text,
+      'sys'
+    )
+
+    expect(mockSendMessage).not.toHaveBeenCalled()
+    expect(mockLoggerInfo).toHaveBeenCalledWith(
+      expect.objectContaining({ reviewId: 'rev-disabled' }),
+      expect.stringContaining('disabled')
+    )
   })
 
   test('skips when document is shorter than 300 chars', async () => {
