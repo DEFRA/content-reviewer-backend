@@ -29,6 +29,12 @@ vi.mock('../review-parser.js', () => ({
   parseBedrockResponse: (...args) => mockParseBedrockResponse(...args)
 }))
 
+vi.mock('../../../config.js', () => ({
+  config: {
+    get: vi.fn((key) => key === 'bedrock.enforceDistribution')
+  }
+}))
+
 // ── Test constants ────────────────────────────────────────────────────────────
 
 const TEXT_LENGTH = 900
