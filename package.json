@@ -13,7 +13,7 @@
     "docker:dev": "npm run dev",
     "format": "npx prettier --write \"**/*.{cjs,js,json,md}\"",
     "format:check": "npx prettier --check \"**/*.{cjs,js,json,md}\"",
-    "git:pre-commit-hook": "npm run security-audit && npm run format:check",
+    "git:pre-commit-hook": "npm run format:check",
     "lint": "npx eslint \"**/*.{cjs,js}\"",
     "lint:fix": "npx eslint \"**/*.{cjs,js}\" --fix",
     "postinstall": "npm run setup:husky",

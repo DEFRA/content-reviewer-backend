@@ -10,7 +10,7 @@ const HTTP_INTERNAL_SERVER_ERROR = 500
 // Routes that do not require service token authentication
 const PUBLIC_ROUTES = [
   /^\/health$/,
-  /^\/api\/upload-callback$/,
+  /^\/upload-callback$/,
   /^\/api\/sqs-worker\/status$/
 ]
 
