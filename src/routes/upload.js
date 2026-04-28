@@ -414,7 +414,10 @@ async function bufferFromS3(s3Client, bucket, key) {
   return Buffer.concat(chunks)
 }
 
-async function extractTextFromFileField(fileField, options = {}) {
+async function extractTextFromFileField(
+  fileField,
+  { s3Client, s3Bucket } = {}
+) {
   // fileField may contain: path (local temp), s3Key, filename, contentType
   const buf = await getBufferFromField(fileField, { s3Client, s3Bucket })
 
@@ -441,7 +444,7 @@ async function getBufferFromField(fileField, { s3Client, s3Bucket } = {}) {
     if (!s3Client || !s3Bucket) {
       throw new Error('S3 client/bucket required to fetch s3Key')
     }
-    return await bufferFromS3(s3Client, s3Bucket, fileField.s3Key)
+    return bufferFromS3(s3Client, s3Bucket, fileField.s3Key)
   }
 
   throw new Error('No file data available on fileField')
@@ -449,8 +452,7 @@ async function getBufferFromField(fileField, { s3Client, s3Bucket } = {}) {
 
 function isPdf(contentType, filename) {
   return (
-    contentType === APPLICATION_PDF ||
-    (filename && filename.toLowerCase().endsWith('.pdf'))
+    contentType === APPLICATION_PDF || filename?.toLowerCase().endsWith('.pdf')
   )
 }
 
@@ -458,7 +460,7 @@ function isDocx(contentType, filename) {
   return (
     contentType ===
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
-    (filename && filename.toLowerCase().endsWith('.docx'))
+    filename?.toLowerCase().endsWith('.docx')
   )
 }
 
