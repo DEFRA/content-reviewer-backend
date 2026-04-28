@@ -2,6 +2,7 @@ import { createLogger } from '../logging/logger.js'
 import { bedrockClient } from '../bedrock-client.js'
 import { promptManager } from '../prompt-manager.js'
 import { parseBedrockResponse } from '../review-parser.js'
+import { config } from '../../../config.js'
 
 const logger = createLogger()
 
@@ -400,6 +401,14 @@ export class BedrockReviewProcessor {
     canonicalText,
     systemPrompt
   ) {
+    if (!config.get('bedrock.enforceDistribution')) {
+      logger.info(
+        { reviewId },
+        '[DISTRIBUTION] Distribution enforcement disabled — skipping'
+      )
+      return
+    }
+
     const MIN_DOC_LENGTH = 300
     const docLength = canonicalText.length
     const issues = parsedReview.reviewedContent?.issues || []
