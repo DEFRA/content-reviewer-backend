@@ -18,9 +18,12 @@ const ENDPOINT_CALLBACK = '/upload-callback'
 const MAX_FILE_BYTES = 10 * 1024 * 1024 // 10 MB
 const SOURCE_TYPE_FILE = 'file'
 const MAX_REVIEW_CHARS = 100000
+const APPLICATION_PDF = 'application/pdf'
+const STATUS_300 = 300
+const STATUS_400 = 400
 
 const ACCEPTED_MIME_TYPES = [
-  'application/pdf',
+  APPLICATION_PDF,
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
 ]
 
@@ -130,7 +133,7 @@ async function performUpload(
     })
 
     // If we got a redirect response, inspect Location
-    if (uploadRes.status >= 300 && uploadRes.status < 400) {
+    if (uploadRes.status >= STATUS_300 && uploadRes.status < STATUS_400) {
       const location = uploadRes.headers.get('location')
       logger.info(
         `cdp-uploader redirected after upload with Location: ${location} and status: ${uploadRes.status}`
@@ -168,7 +171,7 @@ const handleFileUpload = async (request, h) => {
     ? decodeURIComponent(request.headers['x-file-name'])
     : `upload-${Date.now()}`
 
-  const mimeType = request.headers['x-file-content-type'] || 'application/pdf'
+  const mimeType = request.headers['x-file-content-type']
 
   request.logger.info(
     `[UPLOAD] Received upload request from userId: ${userId} with filename: ${fileName} and content-type: ${mimeType}`
@@ -312,11 +315,12 @@ const handleUploadCallback = async (request, h) => {
     }
 
     const reviewId = metadata?.reviewId
+    const userId = metadata?.userId || 'content-reviewer-frontend'
 
     const { contentType, s3Key, filename } = fileField
 
     request.logger.info(
-      `Extracted metadata from callback - reviewId: ${reviewId}, s3Key: ${s3Key}, filename: ${filename}, contentType: ${contentType}`
+      `Extracted metadata from callback - reviewId: ${reviewId},userId: ${userId}, s3Key: ${s3Key}, filename: ${filename}, contentType: ${contentType}`
     )
 
     const { text, textLength } = await extractTextFromFileField(fileField, {
@@ -412,48 +416,68 @@ async function bufferFromS3(s3Client, bucket, key) {
 
 async function extractTextFromFileField(fileField, options = {}) {
   // fileField may contain: path (local temp), s3Key, filename, contentType
-  const { s3Client, s3Bucket } = options
+  const buf = await getBufferFromField(fileField, { s3Client, s3Bucket })
 
-  let buf
-  if (fileField.s3Key) {
-    if (!s3Client || !s3Bucket)
-      throw new Error('S3 client/bucket required to fetch s3Key')
-    buf = await bufferFromS3(s3Client, s3Bucket, fileField.s3Key)
-  } else {
-    throw new Error('No file data available on fileField')
-  }
-
-  const contentType = fileField.contentType
+  const contentType = fileField.contentType || ''
   let text = ''
 
-  if (
-    contentType === 'application/pdf' ||
-    (fileField.filename && fileField.filename.endsWith('.pdf'))
-  ) {
-    try {
-      const parsed = await pdfParse(buf)
-      text = parsed.text || ''
-    } catch (err) {
-      // handle parse error (log + fallback)
-      throw new Error(`PDF parsing failed: ${err.message}`)
-    }
-  } else if (
-    contentType ===
-      'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
-    (fileField.filename && fileField.filename.endsWith('.docx'))
-  ) {
-    try {
-      const result = await mammoth.extractRawText({ buffer: buf })
-      text = result.value || ''
-    } catch (err) {
-      // handle parse error (log + fallback)
-      throw new Error(`docx parsing failed: ${err.message}`)
-    }
+  if (isPdf(contentType, fileField.filename)) {
+    text = await extractPdfText(buf)
+  } else if (isDocx(contentType, fileField.filename)) {
+    text = await extractDocxText(buf)
+  } else {
+    text = buf.toString('utf8')
   }
 
-  // enforce review char limit
-  if (text.length > MAX_REVIEW_CHARS) text = text.slice(0, MAX_REVIEW_CHARS)
-  return { text, charCount: text.length }
+  if (text.length > MAX_REVIEW_CHARS) {
+    text = text.slice(0, MAX_REVIEW_CHARS)
+  }
+
+  return { text, textLength: text.length }
+}
+
+async function getBufferFromField(fileField, { s3Client, s3Bucket } = {}) {
+  if (fileField.s3Key) {
+    if (!s3Client || !s3Bucket) {
+      throw new Error('S3 client/bucket required to fetch s3Key')
+    }
+    return await bufferFromS3(s3Client, s3Bucket, fileField.s3Key)
+  }
+
+  throw new Error('No file data available on fileField')
+}
+
+function isPdf(contentType, filename) {
+  return (
+    contentType === APPLICATION_PDF ||
+    (filename && filename.toLowerCase().endsWith('.pdf'))
+  )
+}
+
+function isDocx(contentType, filename) {
+  return (
+    contentType ===
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
+    (filename && filename.toLowerCase().endsWith('.docx'))
+  )
+}
+
+async function extractPdfText(buf) {
+  try {
+    const parsed = await pdfParse(buf)
+    return parsed.text || ''
+  } catch (err) {
+    throw new Error(`PDF parsing failed: ${err.message}`)
+  }
+}
+
+async function extractDocxText(buf) {
+  try {
+    const result = await mammoth.extractRawText({ buffer: buf })
+    return result.value || ''
+  } catch (err) {
+    throw new Error(`docx parsing failed: ${err.message}`)
+  }
 }
 
 // ─── POST /upload-callback ───────────────────────────────────────────────────
