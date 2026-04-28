@@ -4,6 +4,7 @@ import { secureContext } from '@defra/hapi-secure-context'
 
 import { config } from './config.js'
 import { router } from './plugins/router.js'
+import { serviceTokenAuth } from './plugins/service-token-auth.js'
 import { requestLogger } from './common/helpers/logging/request-logger.js'
 import { mongoDb } from './common/helpers/mongodb.js'
 import { failAction } from './common/helpers/fail-action.js'
@@ -50,13 +51,21 @@ async function createServer() {
   })
 
   // Hapi Plugins:
-  // requestLogger  - automatically logs incoming requests
-  // requestTracing - trace header logging and propagation
-  // secureContext  - loads CA certificates from environment config
-  // pulse          - provides shutdown handlers
-  // mongoDb        - sets up mongo connection pool and attaches to `server` and `request` objects
-  // router         - routes used in the app
-  const plugins = [requestLogger, requestTracing, secureContext, pulse, router]
+  // requestLogger      - automatically logs incoming requests
+  // requestTracing     - trace header logging and propagation
+  // secureContext      - loads CA certificates from environment config
+  // pulse              - provides shutdown handlers
+  // mongoDb            - sets up mongo connection pool and attaches to `server` and `request` objects
+  // serviceTokenAuth   - validates x-service-token and x-timestamp headers for service-to-service auth
+  // router             - routes used in the app
+  const plugins = [
+    requestLogger,
+    requestTracing,
+    secureContext,
+    pulse,
+    serviceTokenAuth,
+    router
+  ]
 
   // Only register MongoDB if enabled in config
   const mongoConfig = config.get('mongo')

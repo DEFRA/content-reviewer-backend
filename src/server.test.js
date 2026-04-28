@@ -1,10 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 // ── Constants ──────────────────────────────────────────────────────────────
-const MOCK_HOST = 'localhost'
-const MOCK_PORT = 3000
-const MOCK_ORIGIN = ['*']
-const MOCK_MONGO = { enabled: true, uri: 'mongodb://localhost:27017/test' }
+// vi.hoisted() ensures these are available when vi.mock() factories are hoisted
+// to the top of the file — plain const declarations are not hoisted in ESM.
+const { MOCK_HOST, MOCK_PORT, MOCK_ORIGIN, MOCK_MONGO } = vi.hoisted(() => ({
+  MOCK_HOST: 'localhost',
+  MOCK_PORT: 3000,
+  MOCK_ORIGIN: ['*'],
+  MOCK_MONGO: { enabled: true, uri: 'mongodb://localhost:27017/test' }
+}))
 
 // ── Hapi server mock ───────────────────────────────────────────────────────
 const mockServerLogger = { info: vi.fn(), error: vi.fn() }
@@ -43,6 +47,10 @@ vi.mock('./config.js', () => ({
 
 vi.mock('./plugins/router.js', () => ({
   router: { plugin: { name: 'router', register: vi.fn() } }
+}))
+
+vi.mock('./plugins/service-token-auth.js', () => ({
+  serviceTokenAuth: { plugin: { name: 'serviceTokenAuth', register: vi.fn() } }
 }))
 
 vi.mock('./common/helpers/logging/request-logger.js', () => ({

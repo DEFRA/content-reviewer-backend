@@ -382,6 +382,13 @@ const config = convict({
       default: 100000,
       env: 'CONTENT_REVIEW_MAX_CHAR_LEN'
     }
+  },
+  backendServiceToken: {
+    doc: 'Shared secret for HMAC-based service authentication with frontend',
+    format: String,
+    sensitive: true,
+    default: '',
+    env: 'BACKEND_SERVICE_TOKEN'
   }
 })
 
