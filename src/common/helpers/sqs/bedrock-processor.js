@@ -2,6 +2,7 @@ import { createLogger } from '../logging/logger.js'
 import { bedrockClient } from '../bedrock-client.js'
 import { promptManager } from '../prompt-manager.js'
 import { parseBedrockResponse } from '../review-parser.js'
+import { config } from '../../../config.js'
 
 const logger = createLogger()
 
@@ -366,8 +367,16 @@ export class BedrockReviewProcessor {
     const issueCount = parsed.reviewedContent?.issues?.length ?? 0
 
     logger.info(
-      { reviewId, thirdIndex, thirdName, issueCount },
-      `[DISTRIBUTION] Follow-up for ${thirdName} third returned ${issueCount} issue(s)`
+      {
+        reviewId,
+        thirdIndex,
+        thirdName,
+        issueCount,
+        inputTokens: result.usage?.inputTokens,
+        outputTokens: result.usage?.outputTokens,
+        totalTokens: result.usage?.totalTokens
+      },
+      `[DISTRIBUTION] Follow-up for ${thirdName} third returned ${issueCount} issue(s) — input: ${result.usage?.inputTokens} tokens, output: ${result.usage?.outputTokens} tokens`
     )
 
     return parsed
@@ -392,6 +401,14 @@ export class BedrockReviewProcessor {
     canonicalText,
     systemPrompt
   ) {
+    if (!config.get('bedrock.enforceDistribution')) {
+      logger.info(
+        { reviewId },
+        '[DISTRIBUTION] Distribution enforcement disabled — skipping'
+      )
+      return
+    }
+
     const MIN_DOC_LENGTH = 300
     const docLength = canonicalText.length
     const issues = parsedReview.reviewedContent?.issues || []
