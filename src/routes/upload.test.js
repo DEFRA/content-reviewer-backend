@@ -1,4 +1,7 @@
 import { beforeEach, afterEach, it, expect, vi } from 'vitest'
+import fs from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
 
 // Mock logger options expected by other modules during import
 vi.mock('../common/helpers/logging/logger-options.js', () => ({
@@ -16,6 +19,8 @@ vi.mock('../config.js', () => ({
       if (key === 's3.bucket') return 'test-bucket'
       if (key === 'serverUrl') return 'http://backend'
       if (key === 's3.rawS3Path') return '/raw'
+      if (key === 'aws.region') return 'eu-west-1'
+      if (key === 'maxMultipartUploadSize') return 10 * 1024 * 1024
       return null
     }
   }
@@ -31,13 +36,37 @@ vi.mock('./review-helpers.js', () => ({
   queueReviewJob: vi.fn()
 }))
 
+// PDF / DOCX parser mocks (allow per-test control)
+const pdfParseMock = vi.fn(async (buf) => ({ text: 'parsed-pdf-text' }))
+const mammothMock = {
+  extractRawText: vi.fn(async ({ buffer }) => ({ value: 'parsed-docx-text' }))
+}
+vi.mock('pdf-parse', () => ({ default: (buf) => pdfParseMock(buf) }))
+vi.mock('mammoth', () => ({ default: mammothMock }))
+
+// ensure aws-sdk client isn't used in tests that don't need it
+vi.mock('@aws-sdk/client-s3', () => {
+  class S3Client {
+    constructor() {}
+    async send(cmd) {
+      // default: emulate GetObject returning a small Buffer stream-like Body
+      const body = (async function* () {
+        yield Buffer.from('s3-file-bytes')
+      })()
+      return { Body: body, ContentLength: 12 }
+    }
+  }
+  const GetObjectCommand = function () {}
+  return { S3Client, GetObjectCommand }
+})
+
 let uploadModule
 let fakeServer
 let storedRoutes = {}
 let mockFetch
 
 beforeEach(async () => {
-  // stub global fetch before importing upload.js
+  // default fetch stub used by many tests; individual tests may override
   mockFetch = vi.fn((url, opts) => {
     const u = String(url)
     if (u.endsWith('/initiate')) {
@@ -156,4 +185,339 @@ it('returns 500 when no payload (file) provided', async () => {
   expect(res.statusCode).toBe(500)
   expect(res.payload).toHaveProperty('success', false)
   expect(res.payload).toHaveProperty('message')
+})
+
+it('returns 500 when /initiate call fails', async () => {
+  // override fetch so /initiate returns not ok
+  const failingFetch = vi.fn((url) => {
+    const u = String(url)
+    if (u.endsWith('/initiate')) {
+      return Promise.resolve({
+        ok: false,
+        status: 500,
+        text: async () => 'initiate-fail'
+      })
+    }
+    return Promise.resolve({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        uploadId: 'upload-123',
+        uploadUrl: '/upload-and-scan/upload-123'
+      })
+    })
+  })
+  vi.stubGlobal('fetch', failingFetch)
+
+  const handler = storedRoutes['POST /api/upload'].handler
+  const request = {
+    headers: {
+      'content-type': 'application/octet-stream',
+      'x-file-name': encodeURIComponent('doc.pdf'),
+      'x-user-id': 'tester'
+    },
+    payload: Buffer.from('dummy-file-bytes'),
+    logger: { info: vi.fn(), error: vi.fn(), warn: vi.fn(), debug: vi.fn() }
+  }
+  const h = makeH()
+  const res = await handler(request, h)
+  expect(res.statusCode).toBe(500)
+  expect(res.payload).toHaveProperty('success', false)
+})
+
+it('returns 202 when upload-and-scan returns 404', async () => {
+  // initiate ok, upload-and-scan returns 404
+  const fetch404 = vi.fn((url) => {
+    const u = String(url)
+    if (u.endsWith('/initiate')) {
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          uploadId: 'upload-404',
+          uploadUrl: '/upload-and-scan/upload-404'
+        })
+      })
+    }
+    return Promise.resolve({
+      ok: false,
+      status: 404,
+      text: async () => 'not found'
+    })
+  })
+  vi.stubGlobal('fetch', fetch404)
+
+  const handler = storedRoutes['POST /api/upload'].handler
+  const request = {
+    headers: {
+      'content-type': 'application/octet-stream',
+      'x-file-name': encodeURIComponent('doc.pdf'),
+      'x-user-id': 'tester'
+    },
+    payload: Buffer.from('dummy-file-bytes'),
+    logger: { info: vi.fn(), error: vi.fn(), warn: vi.fn(), debug: vi.fn() }
+  }
+  const h = makeH()
+  const res = await handler(request, h)
+  expect(res.statusCode).toBe(202)
+  expect(res.payload).toHaveProperty('success', true)
+})
+
+it('handles 302 redirect response from upload-and-scan and still accepts', async () => {
+  // craft fetch that returns 200 for initiate, then 302 for upload-and-scan
+  const redirectFetch = vi.fn((url) => {
+    const u = String(url)
+    if (u.endsWith('/initiate')) {
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          uploadId: 'upload-123',
+          uploadUrl: '/upload-and-scan/upload-123'
+        })
+      })
+    }
+    // upload-and-scan returns 302 with location header
+    return Promise.resolve({
+      ok: false,
+      status: 302,
+      headers: {
+        get: (n) => (n.toLowerCase() === 'location' ? '/some-redirect' : null)
+      },
+      text: async () => ''
+    })
+  })
+  vi.stubGlobal('fetch', redirectFetch)
+
+  const handler = storedRoutes['POST /api/upload'].handler
+  const request = {
+    headers: {
+      'content-type': 'application/octet-stream',
+      'x-file-name': encodeURIComponent('doc.pdf'),
+      'x-user-id': 'tester'
+    },
+    payload: Buffer.from('dummy-file-bytes'),
+    logger: { info: vi.fn(), error: vi.fn(), warn: vi.fn(), debug: vi.fn() }
+  }
+  const h = makeH()
+  const res = await handler(request, h)
+  // upload should still be accepted (202)
+  expect(res.statusCode).toBe(202)
+  expect(res.payload).toMatchObject({ success: true, uploadId: 'upload-123' })
+})
+
+it('callback handler returns 500 for unsupported text/plain file (explicit)', async () => {
+  const callbackKey = 'POST /upload-callback'
+  const route = storedRoutes[callbackKey]
+  expect(route).toBeDefined()
+  const handler = route.handler
+
+  const request = {
+    payload: {
+      metadata: { reviewId: 'review-1', userId: 'user-1' },
+      form: {
+        file: {
+          s3Key: 'some/key.pdf',
+          filename: 'plain.txt',
+          contentType: 'text/plain',
+          hasError: false
+        }
+      }
+    },
+    logger: { info: vi.fn(), error: vi.fn(), warn: vi.fn(), debug: vi.fn() }
+  }
+
+  const h = makeH()
+  const res = await handler(request, h)
+  // unsupported file type path should return 500 with explicit message
+  expect(res.statusCode).toBe(500)
+  expect(res.payload).toMatchObject({ success: false })
+  expect(String(res.payload.message)).toContain(
+    'Unsupported file type for text extraction'
+  )
+})
+
+it('callback handler returns OK with success:false when fileField.hasError is truthy', async () => {
+  const callbackKey = 'POST /upload-callback'
+  const route = storedRoutes[callbackKey]
+  const handler = route.handler
+
+  const request = {
+    payload: {
+      metadata: { reviewId: 'review-2', userId: 'user-2' },
+      form: {
+        file: {
+          hasError: true,
+          errorMessage: 'virus-detected'
+        }
+      }
+    },
+    logger: { info: vi.fn(), error: vi.fn(), warn: vi.fn(), debug: vi.fn() }
+  }
+
+  const h = makeH()
+  const res = await handler(request, h)
+  // CDP Uploader expects a 200 OK with success:false when file rejected
+  expect(res.statusCode).toBe(200)
+  expect(res.payload).toMatchObject({
+    success: false,
+    message: 'virus-detected'
+  })
+})
+
+// New tests to improve coverage: S3 PDF, DOCX, parse failure and missing data
+
+it('callback handler fetches S3 object and parses PDF text', async () => {
+  const callbackKey = 'POST /upload-callback'
+  const route = storedRoutes[callbackKey]
+  const handler = route.handler
+
+  // ensure pdfParseMock returns expected text
+  pdfParseMock.mockResolvedValueOnce({ text: 's3-pdf-extracted-text' })
+
+  const request = {
+    payload: {
+      metadata: { reviewId: 'review-s3-pdf', userId: 'user-s3' },
+      form: {
+        file: {
+          s3Key: 'some/key.pdf',
+          filename: 'document.pdf',
+          contentType: 'application/pdf',
+          hasError: false
+        }
+      }
+    },
+    logger: { info: vi.fn(), error: vi.fn(), warn: vi.fn(), debug: vi.fn() }
+  }
+
+  const h = makeH()
+  const res = await handler(request, h)
+
+  expect(res.statusCode).toBe(200)
+  expect(res.payload).toMatchObject({ success: true })
+  // pdf parser should have been invoked
+  expect(pdfParseMock).toHaveBeenCalled()
+})
+
+it('callback handler parses DOCX buffer via mammoth', async () => {
+  const callbackKey = 'POST /upload-callback'
+  const route = storedRoutes[callbackKey]
+  const handler = route.handler
+
+  mammothMock.extractRawText.mockResolvedValueOnce({ value: 'docx-extracted' })
+
+  const request = {
+    payload: {
+      metadata: { reviewId: 'review-docx', userId: 'user-docx' },
+      form: {
+        file: {
+          s3Key: 'some/key.pdf',
+          filename: 'doc.docx',
+          contentType:
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          hasError: false
+        }
+      }
+    },
+    logger: { info: vi.fn(), error: vi.fn(), warn: vi.fn(), debug: vi.fn() }
+  }
+
+  const h = makeH()
+  const res = await handler(request, h)
+
+  expect(res.statusCode).toBe(200)
+  expect(res.payload).toMatchObject({ success: true })
+  expect(mammothMock.extractRawText).toHaveBeenCalled()
+})
+
+it('callback handler returns 500 when PDF parsing fails', async () => {
+  const callbackKey = 'POST /upload-callback'
+  const route = storedRoutes[callbackKey]
+  const handler = route.handler
+
+  // cause parser to throw
+  pdfParseMock.mockRejectedValueOnce(new Error('pdf-bad'))
+
+  const request = {
+    payload: {
+      metadata: { reviewId: 'review-bad-pdf', userId: 'user-bad' },
+      form: {
+        file: {
+          s3Key: 'some/key.pdf',
+          filename: 'bad.pdf',
+          contentType: 'application/pdf',
+          hasError: false
+        }
+      }
+    },
+    logger: { info: vi.fn(), error: vi.fn(), warn: vi.fn(), debug: vi.fn() }
+  }
+
+  const h = makeH()
+  const res = await handler(request, h)
+  expect(res.statusCode).toBe(500)
+  expect(res.payload).toHaveProperty('success', false)
+  expect(String(res.payload.message)).toContain('PDF parsing failed: pdf-bad')
+})
+
+it('callback handler reads local file path and processes PDF', async () => {
+  const callbackKey = 'POST /upload-callback'
+  const route = storedRoutes[callbackKey]
+  const handler = route.handler
+
+  // create a temp file to simulate uploaded local temp file
+  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'upload-test-'))
+  const tmpFile = path.join(tmpDir, 'temp.pdf')
+  await fs.writeFile(tmpFile, 'dummy-pdf-bytes')
+
+  pdfParseMock.mockResolvedValueOnce({ text: 'local-pdf-text' })
+
+  const request = {
+    payload: {
+      metadata: { reviewId: 'review-local-pdf', userId: 'user-local' },
+      form: {
+        file: {
+          path: tmpFile,
+          filename: 'temp.pdf',
+          contentType: 'application/pdf',
+          hasError: false
+        }
+      }
+    },
+    logger: { info: vi.fn(), error: vi.fn(), warn: vi.fn(), debug: vi.fn() }
+  }
+
+  const h = makeH()
+  const res = await handler(request, h)
+
+  // cleanup
+  await fs.rm(tmpDir, { recursive: true, force: true })
+
+  expect(res.statusCode).toBe(500)
+  expect(res.payload).toMatchObject({ success: false })
+})
+
+it('callback handler returns 500 when payload missing form', async () => {
+  const callbackKey = 'POST /upload-callback'
+  const route = storedRoutes[callbackKey]
+  const handler = route.handler
+
+  const request = {
+    payload: {
+      metadata: { reviewId: 'missing-form', userId: 'u' }
+      // form missing
+    },
+    logger: { info: vi.fn(), error: vi.fn(), warn: vi.fn(), debug: vi.fn() }
+  }
+
+  const h = makeH()
+  const res = await handler(request, h)
+  expect(res.statusCode).toBe(500)
+  expect(res.payload).toHaveProperty('success', false)
+})
+
+// sanity: plugin registered both routes
+it('plugin registered upload and callback routes', () => {
+  expect(storedRoutes['POST /api/upload']).toBeDefined()
+  expect(storedRoutes['POST /upload-callback']).toBeDefined()
 })

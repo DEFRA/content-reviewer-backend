@@ -429,7 +429,9 @@ async function extractTextFromFileField(
   } else if (isDocx(contentType, fileField.filename)) {
     text = await extractDocxText(buf)
   } else {
-    text = buf.toString('utf8')
+    throw new Error(
+      `Unsupported file type for text extraction: ${contentType} with filename: ${fileField.filename}`
+    )
   }
 
   if (text.length > MAX_REVIEW_CHARS) {
