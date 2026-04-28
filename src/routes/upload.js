@@ -14,8 +14,6 @@ const ENDPOINT_UPLOAD = '/api/upload'
 const ENDPOINT_CALLBACK = '/upload-callback'
 const MAX_FILE_BYTES = 10 * 1024 * 1024 // 10 MB
 const SOURCE_TYPE_FILE = 'file'
-const HTTP_REDIRECT_MIN = 300
-const HTTP_REDIRECT_MAX = 400
 
 const ACCEPTED_MIME_TYPES = [
   'application/pdf',
@@ -60,8 +58,7 @@ async function initiateUpload(
   }
 
   logger.info(
-    { cdpUploaderUrl, callbackUrl, reviewId },
-    '[UPLOAD] Initiating CDP Uploader session'
+    `[UPLOAD] Initiating CDP Uploader session with callback URL: ${callbackUrl} and redirect URL: ${redirectUrl}`
   )
 
   const initResp = await fetch(`${cdpUploaderUrl}/initiate`, {
@@ -90,8 +87,7 @@ async function initiateUpload(
   }
 
   logger.info(
-    { uploadId, uploadUrl },
-    '[UPLOAD] CDP Uploader session initiated'
+    `[UPLOAD] CDP Uploader session initiated  with uploadId: ${uploadId} and uploadUrl: ${uploadUrl}`
   )
   return { uploadId, uploadUrl }
 }
@@ -109,41 +105,54 @@ async function initiateUpload(
  * The file is buffered from the incoming octet-stream and wrapped in
  * multipart/form-data (field name: 'file') as CDP Uploader expects.
  */
-async function performUpload(uploadAndScanUrl, fileStream, fileName, logger) {
-  // Buffer the incoming stream — avoids the Node.js 18+ 'duplex' requirement
-  // that applies when passing a ReadableStream as a fetch body.
-  const chunks = []
-  for await (const chunk of fileStream) {
-    chunks.push(chunk)
-  }
-  const fileBuffer = Buffer.concat(chunks)
+async function performUpload(
+  uploadAndScanUrl,
+  fileBuffer,
+  fileName,
+  mimeType,
+  logger
+) {
+  try {
+    logger.info('[UPLOAD] Sending file to CDP Uploader /upload-and-scan')
 
-  const formData = new FormData()
-  formData.append('file', new Blob([fileBuffer]), fileName)
+    const uploadRes = await fetch(uploadAndScanUrl, {
+      method: 'POST',
+      body: fileBuffer,
+      headers: {
+        'Content-Type': mimeType,
+        'x-filename': encodeURIComponent(fileName)
+      },
+      redirect: 'follow'
+    })
 
-  logger.info(
-    { uploadAndScanUrl, fileSize: fileBuffer.length, fileName },
-    '[UPLOAD] Sending file to CDP Uploader /upload-and-scan'
-  )
+    if (!uploadRes.ok) {
+      const txt = await uploadRes.text().catch(() => '')
+      logger.error(
+        { status: uploadRes.status, body: txt },
+        'cdp-uploader /upload-and-scan failed'
+      )
+      throw new Error(
+        `cdp-uploader /upload-and-scan failed: ${uploadRes.text ? txt : uploadRes.status}`
+      )
+    }
 
-  const uploadRes = await fetch(uploadAndScanUrl, {
-    method: 'POST',
-    body: formData
-  })
-
-  if (!uploadRes.ok) {
-    const txt = await uploadRes.text().catch(() => '')
-    logger.error(
-      { status: uploadRes.status, body: txt },
-      'cdp-uploader /upload-and-scan failed'
+    logger.info(
+      { status: uploadRes.status },
+      '[UPLOAD] File accepted by CDP Uploader — awaiting callback'
     )
-    throw new Error(`cdp-uploader /upload-and-scan failed: ${uploadRes.status}`)
-  }
 
-  logger.info(
-    { status: uploadRes.status },
-    '[UPLOAD] File accepted by CDP Uploader — awaiting callback'
-  )
+    // Extract final URL after redirect is followed
+    const finalUrl = uploadRes.url
+    const redirectPath = new URL(finalUrl).pathname
+
+    logger.info({ finalUrl, redirectPath }, '[UPLOAD] Upload completed')
+  } catch (error) {
+    logger.error(
+      { error: error.message, stack: error.stack },
+      '[UPLOAD] Upload failed'
+    )
+    throw new Error(`cdp-uploader /upload-and-scan failed: ${error.message}`)
+  }
 }
 
 // ─── POST /api/upload ────────────────────────────────────────────────────────
@@ -161,23 +170,32 @@ async function performUpload(uploadAndScanUrl, fileStream, fileName, logger) {
 const handleFileUpload = async (request, h) => {
   const requestStartTime = performance.now()
 
-  // Hapi normalises all header names to lowercase
-  const rawFileName = request.headers['x-file-name']
-  const fileName = rawFileName ? decodeURIComponent(rawFileName) : null
-  const contentLength = request.headers['content-length']
-  const reviewId = randomUUID()
-  const userId = request.headers['x-user-id'] || null
+  const userId = request.headers['x-user-id'] || 'content-reviewer-frontend'
+  const fileName = request.headers['x-file-name']
+    ? decodeURIComponent(request.headers['x-file-name'])
+    : `upload-${Date.now()}`
+
+  const mimeType = request.headers['x-file-content-type'] || 'application/pdf'
 
   request.logger.info(
-    { reviewId, fileName, fileSize: contentLength },
-    '[UPLOAD] File received — initiating CDP Uploader session'
+    `[UPLOAD] Received upload request from userId: ${userId} with filename: ${fileName} and content-type: ${mimeType}`
   )
+
+  const fileStream = request.payload
+
+  request.logger.info(
+    `[UPLOAD] Received upload request with content-type: ${request.headers['content-type']}`
+  )
+
+  const reviewId = randomUUID()
 
   try {
     const CDP_UPLOADER = (config.get('cdpUploader.url') || '').replace(
       /\/$/,
       ''
     )
+    request.logger.info(`CDP Uploader URL from config: ${CDP_UPLOADER}`)
+
     const S3_BUCKET = config.get('s3.bucket')
 
     if (!CDP_UPLOADER) {
@@ -196,23 +214,31 @@ const handleFileUpload = async (request, h) => {
     // CDP Uploader base URL to get the absolute upload-and-scan endpoint.
     const uploadAndScanUrl = new URL(uploadUrl, CDP_UPLOADER).href
 
+    request.logger.info(
+      `[UPLOAD] Upload URL resolved for CDP Uploader: ${uploadAndScanUrl}`
+    )
+
+    // Read file stream into buffer
+    const fileBuffer = await streamToBuffer(fileStream)
+
     await performUpload(
       uploadAndScanUrl,
-      request.payload,
+      fileBuffer,
       fileName,
+      mimeType,
       request.logger
     )
 
     const totalDuration = Math.round(performance.now() - requestStartTime)
     request.logger.info(
-      { reviewId, uploadId, totalDurationMs: totalDuration },
-      '[UPLOAD] File sent to CDP Uploader — awaiting callback to complete pipeline'
+      `[UPLOAD] File sent to CDP Uploader — awaiting callback to complete pipeline with reviewId: ${reviewId}, uploadId: ${uploadId} and totalDurationMs: ${totalDuration}`
     )
 
     return h
       .response({
         success: true,
         reviewId,
+        uploadId,
         status: REVIEW_STATUSES.PENDING,
         message: 'File uploaded — review queued'
       })
@@ -234,6 +260,30 @@ const handleFileUpload = async (request, h) => {
   }
 }
 
+async function streamToBuffer(file) {
+  return new Promise((resolve, reject) => {
+    const chunks = []
+
+    if (!file.on) {
+      // File is already a buffer or blob
+      resolve(file)
+      return
+    }
+
+    file.on('data', (chunk) => {
+      chunks.push(chunk)
+    })
+
+    file.on('end', () => {
+      resolve(Buffer.concat(chunks))
+    })
+
+    file.on('error', (error) => {
+      reject(new Error(`File stream error: ${error.message}`))
+    })
+  })
+}
+
 /**
  * POST /upload-callback
  *
@@ -245,70 +295,83 @@ const handleUploadCallback = async (request, h) => {
   const requestStartTime = performance.now()
 
   try {
-    const { uploadStatus, metadata, form, numberOfRejectedFiles } =
-      request.payload
+    const { metadata, form } = request.payload
 
     // ✅ Extract complete metadata from CDP Uploader POST
     request.logger.info(
-      { uploadStatus, metadata, numberOfRejectedFiles },
-      'Upload callback received from CDP Uploader'
+      `Upload callback received from CDP Uploader with payload: ${JSON.stringify(request.payload)}`
     )
 
     // Get file details from form
     const fileField = form.file
 
-    validateUploadCallbackPayload(
-      uploadStatus,
-      numberOfRejectedFiles,
-      fileField
-    )
+    if (fileField.hasError) {
+      request.logger.error(
+        { errorMessage: fileField.errorMessage },
+        'File rejected with error in callback'
+      )
+      return h
+        .response({
+          success: false,
+          message: fileField.errorMessage || 'File validation failed'
+        })
+        .code(HTTP_STATUS.OK)
+    }
 
-    const userId = metadata?.userId
+    // validateUploadCallbackPayload(
+    //   uploadStatus,
+    //   numberOfRejectedFiles,
+    //   fileField
+    // )
+
+    // const userId = metadata?.userId
     const reviewId = metadata?.reviewId
 
-    const { contentType, s3Key, filename } = fileField
+    // const { contentType, s3Key, filename } = fileField
+
+    // request.logger.info(
+    //   { userId, reviewId, contentType, s3Key, filename },
+    //   'Processing uploaded file for review'
+    // )
+
+    // // ✅ Run pipeline ASYNCHRONOUSLY (don't await)
+    // // So we can return quickly to CDP Uploader
+    // runCallbackPipeline(
+    //   s3Key,
+    //   filename,
+    //   contentType,
+    //   reviewId,
+    //   userId,
+    //   request.logger
+    // ).catch((error) => {
+    //   request.logger.error(
+    //     {
+    //       reviewId,
+    //       error: error.message,
+    //       stack: error.stack
+    //     },
+    //     '[CALLBACK] Async pipeline failed'
+    //   )
+    // })
+
+    // const totalDuration = Math.round(performance.now() - requestStartTime)
+
+    // request.logger.info(
+    //   {
+    //     reviewId,
+    //     totalDurationMs: totalDuration
+    //   },
+    //   '[CALLBACK] Pipeline started asynchronously'
+    // )
 
     request.logger.info(
-      { userId, reviewId, contentType, s3Key, filename },
-      'Processing uploaded file for review'
+      `reviewId: ${reviewId} - Callback received from CDP Uploader`
     )
-
-    // ✅ Run pipeline ASYNCHRONOUSLY (don't await)
-    // So we can return quickly to CDP Uploader
-    runCallbackPipeline(
-      s3Key,
-      filename,
-      contentType,
-      reviewId,
-      userId,
-      request.logger
-    ).catch((error) => {
-      request.logger.error(
-        {
-          reviewId,
-          error: error.message,
-          stack: error.stack
-        },
-        '[CALLBACK] Async pipeline failed'
-      )
-    })
-
-    const totalDuration = Math.round(performance.now() - requestStartTime)
-
-    request.logger.info(
-      {
-        reviewId,
-        totalDurationMs: totalDuration
-      },
-      '[CALLBACK] Pipeline started asynchronously'
-    )
-
     // ✅ Return 200 OK to CDP Uploader immediately
     return h
       .response({
         success: true,
-        message: 'Callback received',
-        reviewId
+        message: 'Callback received'
       })
       .code(HTTP_STATUS.OK)
   } catch (error) {
@@ -477,10 +540,10 @@ export const uploadRoutes = {
         path: ENDPOINT_UPLOAD,
         options: {
           payload: {
-            output: 'stream',
-            parse: false,
-            multipart: false,
-            maxBytes: MAX_FILE_BYTES
+            output: 'stream', // ✅ Return payload as stream
+            parse: false, // ✅ Don't parse - raw binary
+            maxBytes: 10 * 1024 * 1024, // ✅ Max 10MB
+            allow: 'application/octet-stream' // ✅ Only accept octet-stream
           },
           cors: getCorsConfig()
         },

@@ -344,6 +344,12 @@ const config = convict({
       format: Number,
       default: 1,
       env: 'BEDROCK_TOP_P'
+    },
+    enforceDistribution: {
+      doc: 'Fire follow-up Bedrock calls for any document third that has no issues. Disable to reduce Bedrock usage during testing.',
+      format: Boolean,
+      default: false,
+      env: 'BEDROCK_ENFORCE_DISTRIBUTION'
     }
   },
   mockMode: {

@@ -320,6 +320,74 @@ describe('SQSWorker.sleep', () => {
   })
 })
 
+// ── poll() ────────────────────────────────────────────────────────────────────
+
+describe('SQSWorker.poll', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('does not call fetchAndEnqueueMessages when isRunning is false', async () => {
+    const worker = new SQSWorker()
+    vi.spyOn(worker, 'fetchAndEnqueueMessages').mockResolvedValue(undefined)
+
+    // isRunning is false by default — loop body never executes
+    await worker.poll()
+
+    expect(worker.fetchAndEnqueueMessages).not.toHaveBeenCalled()
+  })
+
+  it('exits loop when isRunning becomes false after one iteration', async () => {
+    const worker = new SQSWorker()
+    vi.spyOn(worker, 'fetchAndEnqueueMessages').mockImplementation(async () => {
+      worker.stop()
+    })
+    vi.spyOn(worker, 'processQueuedMessages').mockResolvedValue(undefined)
+    vi.spyOn(worker, 'sleep').mockResolvedValue(undefined)
+
+    worker.isRunning = true
+    await worker.poll()
+
+    expect(worker.fetchAndEnqueueMessages).toHaveBeenCalledTimes(1)
+    expect(worker.isRunning).toBe(false)
+  })
+
+  it('breaks out of loop when handlePollingError returns true', async () => {
+    const worker = new SQSWorker()
+    vi.spyOn(worker, 'fetchAndEnqueueMessages').mockRejectedValue(
+      new Error('SQS down')
+    )
+    vi.spyOn(worker, 'handlePollingError').mockResolvedValue(true)
+
+    worker.isRunning = true
+    await worker.poll()
+
+    expect(worker.handlePollingError).toHaveBeenCalledTimes(1)
+  })
+
+  it('continues loop when handlePollingError returns false', async () => {
+    const worker = new SQSWorker()
+    let fetchCalls = 0
+
+    vi.spyOn(worker, 'fetchAndEnqueueMessages').mockImplementation(async () => {
+      fetchCalls++
+      if (fetchCalls === 1) {
+        throw new Error('transient error')
+      }
+      worker.stop()
+    })
+    vi.spyOn(worker, 'processQueuedMessages').mockResolvedValue(undefined)
+    vi.spyOn(worker, 'sleep').mockResolvedValue(undefined)
+    vi.spyOn(worker, 'handlePollingError').mockResolvedValue(false)
+
+    worker.isRunning = true
+    await worker.poll()
+
+    expect(fetchCalls).toBe(2)
+    expect(worker.handlePollingError).toHaveBeenCalledTimes(1)
+  })
+})
+
 // ── singleton export ──────────────────────────────────────────────────────────
 
 describe('sqsWorker singleton', () => {

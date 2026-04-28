@@ -1,6 +1,18 @@
 import { describe, test, expect, beforeEach, vi } from 'vitest'
 
 import { BedrockReviewProcessor } from './bedrock-processor.js'
+import { config } from '../../../config.js'
+
+// ── Constants ─────────────────────────────────────────────────────────────────
+
+const SCORE_VALUE = 3
+const BELOW_MIN_DOC_LENGTH = 299
+const MEDIUM_DOC_LENGTH = 600
+const STANDARD_DOC_LENGTH = 900
+const FIRST_THIRD_OFFSET = 50
+const SECOND_THIRD_OFFSET = 350
+const THIRD_THIRD_OFFSET = 650
+const FOLLOW_UP_OFFSET = 700
 
 // ── Shared mocks ──────────────────────────────────────────────────────────────
 
@@ -31,26 +43,11 @@ vi.mock('../review-parser.js', () => ({
   parseBedrockResponse: (...args) => mockParseBedrockResponse(...args)
 }))
 
-// ── Test constants ────────────────────────────────────────────────────────────
-
-// Document lengths
-const SHORT_TEXT_LENGTH = 299 // one below the 300-char minimum threshold
-const MEDIUM_TEXT_LENGTH = 600 // long enough to pass the minimum check
-const TEXT_LENGTH = 900 // standard 3-equal-thirds document
-
-// Issue start positions within a TEXT_LENGTH=900 document
-const FIRST_THIRD_POS = 50 // well inside first third (0–299)
-const FIRST_THIRD_POS_B = 10 // alternative first-third position
-const MIDDLE_THIRD_POS = 350 // well inside middle third (300–599)
-const FINAL_THIRD_POS = 700 // well inside final third (600–899)
-const FINAL_THIRD_POS_EARLY = 650 // alternative final-third position
-
-// Third indices (0 = first, 1 = middle, 2 = final)
-const THIRD_INDEX_FIRST = 0
-const THIRD_INDEX_MIDDLE = 1
-const THIRD_INDEX_FINAL = 2
-
-const CLARITY_SCORE = 3
+vi.mock('../../../config.js', () => ({
+  config: {
+    get: vi.fn((key) => key === 'bedrock.enforceDistribution')
+  }
+}))
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -75,7 +72,7 @@ const makeReview = (issueStarts = []) => ({
     current: 'old text',
     suggested: 'new text'
   })),
-  scores: { clarity: CLARITY_SCORE }
+  scores: { clarity: SCORE_VALUE }
 })
 
 // ── enforceDistribution — skip conditions ────────────────────────────────────
@@ -88,8 +85,30 @@ describe('BedrockReviewProcessor - enforceDistribution - skip conditions', () =>
     processor = new BedrockReviewProcessor()
   })
 
+  test('skips when distribution enforcement is disabled', async () => {
+    vi.mocked(config.get).mockReturnValueOnce(false)
+
+    const parsedReview = makeReview([FIRST_THIRD_OFFSET, SECOND_THIRD_OFFSET])
+    const text = makeText(STANDARD_DOC_LENGTH)
+
+    await processor.enforceDistribution(
+      'rev-disabled',
+      parsedReview,
+      text,
+      'sys'
+    )
+
+    expect(mockSendMessage).not.toHaveBeenCalled()
+    expect(mockLoggerInfo).toHaveBeenCalledWith(
+      expect.objectContaining({ reviewId: 'rev-disabled' }),
+      expect.stringContaining('disabled')
+    )
+  })
+
   test('skips when document is shorter than 300 chars', async () => {
-    const parsedReview = makeReview([FIRST_THIRD_POS_B, FIRST_THIRD_POS])
+    const parsedReview = makeReview([10, FIRST_THIRD_OFFSET])
+    const shortText = makeText(BELOW_MIN_DOC_LENGTH)
+
     await processor.enforceDistribution(
       'rev-1',
       parsedReview,
@@ -100,22 +119,20 @@ describe('BedrockReviewProcessor - enforceDistribution - skip conditions', () =>
   })
 
   test('skips when parsedReview has no issues', async () => {
-    await processor.enforceDistribution(
-      'rev-2',
-      makeReview([]),
-      makeText(MEDIUM_TEXT_LENGTH),
-      'sys'
-    )
+    const parsedReview = makeReview([])
+    const text = makeText(MEDIUM_DOC_LENGTH)
+
+    await processor.enforceDistribution('rev-2', parsedReview, text, 'sys')
+
     expect(mockSendMessage).not.toHaveBeenCalled()
   })
 
   test('skips when reviewedContent is absent', async () => {
-    await processor.enforceDistribution(
-      'rev-3',
-      { improvements: [], scores: {} },
-      makeText(MEDIUM_TEXT_LENGTH),
-      'sys'
-    )
+    const parsedReview = { improvements: [], scores: {} }
+    const text = makeText(MEDIUM_DOC_LENGTH)
+
+    await processor.enforceDistribution('rev-3', parsedReview, text, 'sys')
+
     expect(mockSendMessage).not.toHaveBeenCalled()
   })
 })
@@ -131,17 +148,14 @@ describe('BedrockReviewProcessor - enforceDistribution - all thirds covered', ()
   })
 
   test('does not fire follow-up calls when all thirds have issues', async () => {
+    const text = makeText(STANDARD_DOC_LENGTH)
     const parsedReview = makeReview([
-      FIRST_THIRD_POS,
-      MIDDLE_THIRD_POS,
-      FINAL_THIRD_POS_EARLY
+      FIRST_THIRD_OFFSET,
+      SECOND_THIRD_OFFSET,
+      THIRD_THIRD_OFFSET
     ])
-    await processor.enforceDistribution(
-      'rev-4',
-      parsedReview,
-      makeText(TEXT_LENGTH),
-      'sys'
-    )
+
+    await processor.enforceDistribution('rev-4', parsedReview, text, 'sys')
 
     expect(mockSendMessage).not.toHaveBeenCalled()
     expect(mockLoggerInfo).toHaveBeenCalledWith(
@@ -151,9 +165,9 @@ describe('BedrockReviewProcessor - enforceDistribution - all thirds covered', ()
   })
 })
 
-// ── performFollowUpForThird — success and blocked ─────────────────────────────
+// ── enforceDistribution — fires follow-up calls ───────────────────────────────
 
-describe('BedrockReviewProcessor - performFollowUpForThird - success and blocked', () => {
+describe('BedrockReviewProcessor - enforceDistribution - fires follow-up calls', () => {
   let processor
 
   beforeEach(() => {
@@ -161,62 +175,82 @@ describe('BedrockReviewProcessor - performFollowUpForThird - success and blocked
     processor = new BedrockReviewProcessor()
   })
 
-  test('returns parsed result on success', async () => {
-    const parsedResult = {
-      reviewedContent: { issues: [{ ref: 1, start: FIRST_THIRD_POS_B }] },
-      improvements: []
+  test('fires follow-up for one missing third and merges result', async () => {
+    const text = makeText(STANDARD_DOC_LENGTH)
+    const parsedReview = makeReview([FIRST_THIRD_OFFSET, SECOND_THIRD_OFFSET])
+    const issuesBefore = parsedReview.reviewedContent.issues.length
+
+    const followUpParsed = {
+      reviewedContent: {
+        issues: [
+          {
+            ref: 1,
+            start: FOLLOW_UP_OFFSET,
+            end: FOLLOW_UP_OFFSET + 10,
+            type: 'style',
+            text: 'x'
+          }
+        ]
+      },
+      improvements: [
+        {
+          ref: 1,
+          severity: 'low',
+          category: 'Style',
+          issue: 'Follow-up issue',
+          why: 'Because',
+          current: 'old',
+          suggested: 'new'
+        }
+      ]
     }
     mockSendMessage.mockResolvedValueOnce({
       success: true,
-      content: 'result content'
+      content: 'follow-up content'
     })
-    mockParseBedrockResponse.mockReturnValueOnce(parsedResult)
+    mockParseBedrockResponse.mockReturnValueOnce(followUpParsed)
 
-    const result = await processor.performFollowUpForThird(
-      'rev-fu-1',
-      makeText(TEXT_LENGTH),
-      THIRD_INDEX_FIRST,
-      TEXT_LENGTH,
-      'sys'
-    )
+    await processor.enforceDistribution('rev-5', parsedReview, text, 'sys')
 
-    expect(result).toEqual(parsedResult)
-    expect(mockSendMessage).toHaveBeenCalledWith(
-      expect.stringContaining('first third'),
-      [],
-      'sys'
-    )
+    expect(mockSendMessage).toHaveBeenCalledTimes(1)
+    const mergedIssues = parsedReview.reviewedContent.issues
+    expect(mergedIssues).toHaveLength(issuesBefore + 1)
+    expect(mergedIssues[issuesBefore].ref).toBe(issuesBefore + 1)
+    expect(mergedIssues[issuesBefore].start).toBe(FOLLOW_UP_OFFSET)
+    expect(parsedReview.improvements).toHaveLength(issuesBefore + 1)
+    expect(parsedReview.improvements[issuesBefore].ref).toBe(issuesBefore + 1)
   })
 
-  test('returns null when Bedrock call is blocked', async () => {
-    mockSendMessage.mockResolvedValueOnce({
-      success: false,
-      blocked: true,
-      content: ''
+  test('fires follow-up calls in parallel for multiple missing thirds', async () => {
+    const text = makeText(STANDARD_DOC_LENGTH)
+    const parsedReview = makeReview([FIRST_THIRD_OFFSET])
+    const issuesBefore = parsedReview.reviewedContent.issues.length
+
+    const makeFollowUpParsed = (start) => ({
+      reviewedContent: {
+        issues: [{ ref: 1, start, end: start + 10, type: 'style', text: 'x' }]
+      },
+      improvements: []
     })
 
-    const result = await processor.performFollowUpForThird(
-      'rev-fu-2',
-      makeText(TEXT_LENGTH),
-      THIRD_INDEX_MIDDLE,
-      TEXT_LENGTH,
-      'sys'
-    )
+    mockSendMessage
+      .mockResolvedValueOnce({ success: true, content: 'fu1' })
+      .mockResolvedValueOnce({ success: true, content: 'fu2' })
 
-    expect(result).toBeNull()
-    expect(mockLoggerWarn).toHaveBeenCalledWith(
-      expect.objectContaining({
-        thirdIndex: THIRD_INDEX_MIDDLE,
-        blocked: true
-      }),
-      expect.stringContaining('second third')
-    )
+    mockParseBedrockResponse
+      .mockReturnValueOnce(makeFollowUpParsed(SECOND_THIRD_OFFSET))
+      .mockReturnValueOnce(makeFollowUpParsed(FOLLOW_UP_OFFSET))
+
+    await processor.enforceDistribution('rev-6', parsedReview, text, 'sys')
+
+    expect(mockSendMessage).toHaveBeenCalledTimes(2)
+    expect(parsedReview.reviewedContent.issues).toHaveLength(issuesBefore + 2)
   })
 })
 
-// ── performFollowUpForThird — third name and ?? 0 fallback ───────────────────
+// ── enforceDistribution — skips when follow-up fails ─────────────────────────
 
-describe('BedrockReviewProcessor - performFollowUpForThird - third name and fallback', () => {
+describe('BedrockReviewProcessor - enforceDistribution - skips when follow-up fails', () => {
   let processor
 
   beforeEach(() => {
@@ -224,46 +258,59 @@ describe('BedrockReviewProcessor - performFollowUpForThird - third name and fall
     processor = new BedrockReviewProcessor()
   })
 
-  test('logs the correct third name for index 2', async () => {
-    const parsedResult = { reviewedContent: { issues: [] }, improvements: [] }
-    mockSendMessage.mockResolvedValueOnce({ success: true, content: 'c' })
-    mockParseBedrockResponse.mockReturnValueOnce(parsedResult)
+  test('skips a third when follow-up Bedrock call fails', async () => {
+    const text = makeText(STANDARD_DOC_LENGTH)
+    const parsedReview = makeReview([FIRST_THIRD_OFFSET, SECOND_THIRD_OFFSET])
 
-    await processor.performFollowUpForThird(
-      'rev-fu-3',
-      makeText(TEXT_LENGTH),
-      THIRD_INDEX_FINAL,
-      TEXT_LENGTH,
-      'sys'
-    )
+    mockSendMessage.mockResolvedValueOnce({
+      success: false,
+      blocked: false,
+      content: ''
+    })
 
-    expect(mockLoggerInfo).toHaveBeenCalledWith(
-      expect.objectContaining({
-        thirdName: 'third',
-        thirdIndex: THIRD_INDEX_FINAL
-      }),
-      expect.stringContaining('third third')
+    const issuesBefore = parsedReview.reviewedContent.issues.length
+
+    await processor.enforceDistribution('rev-7', parsedReview, text, 'sys')
+
+    expect(parsedReview.reviewedContent.issues).toHaveLength(issuesBefore)
+    expect(mockLoggerWarn).toHaveBeenCalledWith(
+      expect.objectContaining({ reviewId: 'rev-7' }),
+      expect.stringContaining('failed or blocked')
     )
   })
 
-  test('uses ?? 0 when parsed result has no reviewedContent', async () => {
-    const parsedNoContent = { improvements: [], scores: {} }
-    mockSendMessage.mockResolvedValueOnce({ success: true, content: 'raw' })
-    mockParseBedrockResponse.mockReturnValueOnce(parsedNoContent)
+  test('skips a third when follow-up call throws', async () => {
+    const text = makeText(STANDARD_DOC_LENGTH)
+    const parsedReview = makeReview([FIRST_THIRD_OFFSET, SECOND_THIRD_OFFSET])
 
-    const result = await processor.performFollowUpForThird(
-      'rev-no-content',
-      makeText(TEXT_LENGTH),
-      THIRD_INDEX_FINAL,
-      TEXT_LENGTH,
-      'sys'
-    )
+    mockSendMessage.mockRejectedValueOnce(new Error('Network error'))
 
-    expect(result).toEqual(parsedNoContent)
-    expect(mockLoggerInfo).toHaveBeenCalledWith(
-      expect.objectContaining({ issueCount: 0 }),
-      expect.any(String)
+    const issuesBefore = parsedReview.reviewedContent.issues.length
+
+    await processor.enforceDistribution('rev-8', parsedReview, text, 'sys')
+
+    expect(parsedReview.reviewedContent.issues).toHaveLength(issuesBefore)
+    expect(mockLoggerError).toHaveBeenCalledWith(
+      expect.objectContaining({ reviewId: 'rev-8', thirdIndex: 2 }),
+      expect.stringContaining('threw unexpectedly')
     )
+  })
+
+  test('skips merging when follow-up returns zero issues', async () => {
+    const text = makeText(STANDARD_DOC_LENGTH)
+    const parsedReview = makeReview([FIRST_THIRD_OFFSET, SECOND_THIRD_OFFSET])
+
+    mockSendMessage.mockResolvedValueOnce({ success: true, content: 'empty' })
+    mockParseBedrockResponse.mockReturnValueOnce({
+      reviewedContent: { issues: [] },
+      improvements: []
+    })
+
+    const issuesBefore = parsedReview.reviewedContent.issues.length
+
+    await processor.enforceDistribution('rev-9', parsedReview, text, 'sys')
+
+    expect(parsedReview.reviewedContent.issues).toHaveLength(issuesBefore)
   })
 })
 
@@ -278,11 +325,13 @@ describe('BedrockReviewProcessor - parseBedrockResponseData with distribution en
   })
 
   test('calls enforceDistribution when originalText and reviewedContent are present', async () => {
+    const originalText = makeText(STANDARD_DOC_LENGTH)
     const parsedReview = makeReview([
-      FIRST_THIRD_POS,
-      MIDDLE_THIRD_POS,
-      FINAL_THIRD_POS
+      FIRST_THIRD_OFFSET,
+      SECOND_THIRD_OFFSET,
+      FOLLOW_UP_OFFSET
     ])
+
     mockParseBedrockResponse.mockReturnValueOnce(parsedReview)
     mockGetSystemPrompt.mockResolvedValueOnce('sys-prompt')
 
@@ -297,14 +346,12 @@ describe('BedrockReviewProcessor - parseBedrockResponseData with distribution en
   })
 
   test('skips enforceDistribution when originalText is empty', async () => {
-    const parsedReview = makeReview([FIRST_THIRD_POS])
+    const parsedReview = makeReview([FIRST_THIRD_OFFSET])
     mockParseBedrockResponse.mockReturnValueOnce(parsedReview)
 
-    await processor.parseBedrockResponseData(
-      'rev-dist-2',
-      { bedrockResponse: { content: 'raw' } },
-      ''
-    )
+    const bedrockResult = { bedrockResponse: { content: 'raw' } }
+
+    await processor.parseBedrockResponseData('rev-dist-2', bedrockResult, '')
 
     expect(mockGetSystemPrompt).not.toHaveBeenCalled()
   })
@@ -317,8 +364,8 @@ describe('BedrockReviewProcessor - parseBedrockResponseData with distribution en
 
     await processor.parseBedrockResponseData(
       'rev-dist-3',
-      { bedrockResponse: { content: 'raw' } },
-      makeText(TEXT_LENGTH)
+      bedrockResult,
+      makeText(STANDARD_DOC_LENGTH)
     )
 
     expect(mockGetSystemPrompt).not.toHaveBeenCalled()

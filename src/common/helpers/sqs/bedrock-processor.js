@@ -2,12 +2,33 @@ import { createLogger } from '../logging/logger.js'
 import { bedrockClient } from '../bedrock-client.js'
 import { promptManager } from '../prompt-manager.js'
 import { parseBedrockResponse } from '../review-parser.js'
+import { config } from '../../../config.js'
 
 const logger = createLogger()
 
 // ─── Distribution helpers ─────────────────────────────────────────────────────
 
 const THIRDS_COUNT = 3
+const MIN_ISSUES_LARGE_DOC = 3
+const MIN_ISSUES_MEDIUM_DOC = 2
+const MIN_ISSUES_SMALL_DOC = 1
+const LARGE_DOC_THRESHOLD = 40000
+const MEDIUM_DOC_THRESHOLD = 10000
+
+/**
+ * Returns the minimum number of issues required per third based on document length.
+ * @param {number} docLength - Total character length of the document
+ * @returns {number}
+ */
+function calcMinIssuesPerThird(docLength) {
+  if (docLength >= LARGE_DOC_THRESHOLD) {
+    return MIN_ISSUES_LARGE_DOC
+  }
+  if (docLength >= MEDIUM_DOC_THRESHOLD) {
+    return MIN_ISSUES_MEDIUM_DOC
+  }
+  return MIN_ISSUES_SMALL_DOC
+}
 
 /**
  * Returns the indices (0=first, 1=middle, 2=final) of thirds that have no
@@ -116,7 +137,7 @@ function mergeFollowUp(parsedReview, followUp) {
   }))
   const renumberedImprovements = (followUp.improvements || []).map((imp) => ({
     ...imp,
-    ref: imp.ref !== undefined ? (refMap.get(imp.ref) ?? imp.ref) : undefined
+    ref: imp.ref === undefined ? undefined : (refMap.get(imp.ref) ?? imp.ref)
   }))
 
   parsedReview.reviewedContent.issues = [...existingIssues, ...renumberedIssues]
@@ -245,6 +266,7 @@ export class BedrockReviewProcessor {
     const middleThirdStart = firstThirdEnd
     const middleThirdEnd = Math.floor((documentLength * 2) / THIRDS_COUNT)
     const finalThirdStart = middleThirdEnd
+    const minIssuesPerThird = calcMinIssuesPerThird(documentLength)
 
     return [
       `Today's date is ${today} (ISO: ${todayISO}). Use this when evaluating any date references in the content.`,
@@ -263,10 +285,10 @@ export class BedrockReviewProcessor {
       `  middle_third_start = ${middleThirdStart}`,
       `  middle_third_end   = ${middleThirdEnd}   (middle third: characters ${middleThirdStart} – ${middleThirdEnd - 1})`,
       `  final_third_start  = ${finalThirdStart}   (final third:  characters ${finalThirdStart} – ${documentLength - 1})`,
+      `  min_issues_per_third = ${minIssuesPerThird}`,
       '',
-      'You MUST include at least one issue whose `start` offset falls in EACH of the three',
-      'thirds above. See the "CRITICAL: DOCUMENT-WIDE ISSUE DISTRIBUTION" section in the',
-      'system prompt for the full self-verification checklist.',
+      `You MUST include at least ${minIssuesPerThird} issue(s) whose \`start\` offset falls in EACH of the three`,
+      'thirds above. See the "ISSUE DISTRIBUTION" section in the system prompt for details.',
       '',
       'QUICK REMINDERS (these rules are most commonly violated — re-read before writing output):',
       '  • Acronyms: if the content contains "Full Name (ACRONYM)" or "ACRONYM (Full Name)", it is already explained — do NOT flag it',
@@ -345,8 +367,16 @@ export class BedrockReviewProcessor {
     const issueCount = parsed.reviewedContent?.issues?.length ?? 0
 
     logger.info(
-      { reviewId, thirdIndex, thirdName, issueCount },
-      `[DISTRIBUTION] Follow-up for ${thirdName} third returned ${issueCount} issue(s)`
+      {
+        reviewId,
+        thirdIndex,
+        thirdName,
+        issueCount,
+        inputTokens: result.usage?.inputTokens,
+        outputTokens: result.usage?.outputTokens,
+        totalTokens: result.usage?.totalTokens
+      },
+      `[DISTRIBUTION] Follow-up for ${thirdName} third returned ${issueCount} issue(s) — input: ${result.usage?.inputTokens} tokens, output: ${result.usage?.outputTokens} tokens`
     )
 
     return parsed
@@ -371,6 +401,14 @@ export class BedrockReviewProcessor {
     canonicalText,
     systemPrompt
   ) {
+    if (!config.get('bedrock.enforceDistribution')) {
+      logger.info(
+        { reviewId },
+        '[DISTRIBUTION] Distribution enforcement disabled — skipping'
+      )
+      return
+    }
+
     const MIN_DOC_LENGTH = 300
     const docLength = canonicalText.length
     const issues = parsedReview.reviewedContent?.issues || []

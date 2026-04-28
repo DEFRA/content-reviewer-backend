@@ -498,7 +498,7 @@ class CanonicalDocumentStore {
         }
         const isBullet = trimmedPara.startsWith('• ')
         if (acc.length > 0 && isBullet) {
-          const lastPara = acc[acc.length - 1]
+          const lastPara = acc.at(-1)
           const lastLine = lastPara.split('\n').findLast((l) => l.trim())
           if (lastLine?.trim().startsWith('• ')) {
             acc[acc.length - 1] = `${lastPara}\n${trimmedPara}`

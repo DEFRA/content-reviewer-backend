@@ -168,14 +168,31 @@ class BedrockClient {
       assessments: response.trace?.guardrail?.assessments || []
     }
 
-    logger.info('Received response from Bedrock', {
-      responseLength: responseText.length,
-      usage,
-      guardrailAction: guardrailAssessment.action
-    })
+    logger.info(
+      {
+        responseLength: responseText.length,
+        inputTokens: usage.inputTokens,
+        outputTokens: usage.outputTokens,
+        totalTokens: usage.totalTokens,
+        guardrailAction: guardrailAssessment.action
+      },
+      `Bedrock response received — input: ${usage.inputTokens} tokens, output: ${usage.outputTokens} tokens, total: ${usage.totalTokens} tokens`
+    )
 
-    if (guardrailAssessment.action === 'BLOCKED') {
-      logger.warn('Content blocked by guardrail', { guardrailAssessment })
+    // Guardrails can block in two ways:
+    //  1. response.trace.guardrail.action === 'BLOCKED'  (explicit block flag)
+    //  2. response.stopReason === 'guardrail_intervened' (guardrail stopped the
+    //     generation; action may still read 'NONE' in the trace but the response
+    //     text is the guardrail's blocked message, not a real review)
+    const guardrailBlocked =
+      guardrailAssessment.action === 'BLOCKED' ||
+      response.stopReason === 'guardrail_intervened'
+
+    if (guardrailBlocked) {
+      logger.warn('Content blocked by guardrail', {
+        guardrailAssessment,
+        stopReason: response.stopReason
+      })
       return {
         success: false,
         blocked: true,
@@ -276,9 +293,9 @@ class BedrockClient {
 
     // Retry up to 4 times on throttling / transient errors with exponential
     // backoff: 30 s → 60 s → 120 s → 120 s (capped).
-    const MAX_RETRIES = 4
-    const BASE_BACKOFF_MS = 30_000
-    const MAX_BACKOFF_MS = 120_000
+    const MAX_RETRIES = 2
+    const BASE_BACKOFF_MS = 90_000
+    const MAX_BACKOFF_MS = 180_000
 
     const messages = this._buildMessages(userMessage, conversationHistory)
     const guardrailConfig = this._buildGuardrailConfig()

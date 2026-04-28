@@ -259,6 +259,37 @@ describe('restoreImmutableFields', () => {
   })
 })
 
+describe('restoreImmutableFields - logger warn on failed restore', () => {
+  beforeEach(() => {
+    mockLogger.warn.mockClear()
+  })
+  test('Should log warning when a field cannot be stored on the review object', () => {
+    // Use a Proxy that silently discards writes to 'id', so review['id']
+    // remains falsy even after the assignment — this triggers the logger.warn
+    // branch on line 65 that guards against a restore failing silently.
+    const review = new Proxy(
+      {},
+      {
+        set(target, key) {
+          if (key === 'id') {
+            return true // discard the write
+          }
+          return Reflect.set(...arguments)
+        }
+      }
+    )
+    const preservedFields = { id: TEST_CONSTANTS.REVIEW_ID }
+    restoreImmutableFields(review, preservedFields, TEST_CONSTANTS.REVIEW_ID)
+    expect(mockLogger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reviewId: TEST_CONSTANTS.REVIEW_ID,
+        preservedId: TEST_CONSTANTS.REVIEW_ID
+      }),
+      'Restored id after merge'
+    )
+  })
+})
+
 describe('updateProcessingTimestamps - Start Timestamps', () => {
   test('Should set processingStartedAt when status is processing', () => {
     const review = {
