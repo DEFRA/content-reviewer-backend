@@ -107,12 +107,11 @@ describe('BedrockReviewProcessor - enforceDistribution - skip conditions', () =>
 
   test('skips when document is shorter than 300 chars', async () => {
     const parsedReview = makeReview([10, FIRST_THIRD_OFFSET])
-    const shortText = makeText(BELOW_MIN_DOC_LENGTH)
 
     await processor.enforceDistribution(
       'rev-1',
       parsedReview,
-      makeText(SHORT_TEXT_LENGTH),
+      makeText(BELOW_MIN_DOC_LENGTH),
       'sys-prompt'
     )
     expect(mockSendMessage).not.toHaveBeenCalled()
@@ -325,7 +324,6 @@ describe('BedrockReviewProcessor - parseBedrockResponseData with distribution en
   })
 
   test('calls enforceDistribution when originalText and reviewedContent are present', async () => {
-    const originalText = makeText(STANDARD_DOC_LENGTH)
     const parsedReview = makeReview([
       FIRST_THIRD_OFFSET,
       SECOND_THIRD_OFFSET,
@@ -338,7 +336,7 @@ describe('BedrockReviewProcessor - parseBedrockResponseData with distribution en
     const result = await processor.parseBedrockResponseData(
       'rev-dist-1',
       { bedrockResponse: { content: 'raw' } },
-      makeText(TEXT_LENGTH)
+      makeText(STANDARD_DOC_LENGTH)
     )
 
     expect(mockGetSystemPrompt).toHaveBeenCalled()
@@ -349,9 +347,11 @@ describe('BedrockReviewProcessor - parseBedrockResponseData with distribution en
     const parsedReview = makeReview([FIRST_THIRD_OFFSET])
     mockParseBedrockResponse.mockReturnValueOnce(parsedReview)
 
-    const bedrockResult = { bedrockResponse: { content: 'raw' } }
-
-    await processor.parseBedrockResponseData('rev-dist-2', bedrockResult, '')
+    await processor.parseBedrockResponseData(
+      'rev-dist-2',
+      { bedrockResponse: { content: 'raw' } },
+      ''
+    )
 
     expect(mockGetSystemPrompt).not.toHaveBeenCalled()
   })
@@ -364,7 +364,7 @@ describe('BedrockReviewProcessor - parseBedrockResponseData with distribution en
 
     await processor.parseBedrockResponseData(
       'rev-dist-3',
-      bedrockResult,
+      { bedrockResponse: { content: 'raw' } },
       makeText(STANDARD_DOC_LENGTH)
     )
 
