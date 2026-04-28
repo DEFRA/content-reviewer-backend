@@ -82,7 +82,6 @@ import { ReviewProcessor } from './review-processor.js'
 const MAX_RECEIVE_COUNT = 3
 const TEST_RECEIVE_COUNT_BELOW = 2
 const TEST_RECEIVE_COUNT_ABOVE = 4
-const TEST_DURATION_MS = 50
 const TEST_FILE_SIZE = 100
 
 describe('ReviewProcessor', () => {

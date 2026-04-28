@@ -8,9 +8,7 @@ const MAX_CHAR_LENGTH = 100000
 
 const SQS_ERROR_MSG = 'SQS failure'
 const FILE_SIZE_MEDIUM = 100
-const FILE_SIZE_SQS = 75
 const PROCESSING_TIME_MS = 500
-const PROCESSING_TIME_SEC = 0.5
 const VALID_CONTENT_PROCESS = 'This is valid content for processing'
 const TIMESTAMP_ISO = '2024-01-01T00:00:00.000Z'
 const TIMESTAMP_ISO_500 = '2024-01-01T00:00:00.500Z'

@@ -4,6 +4,8 @@ const SAMPLE_CONTENT = 'hello world'
 const DEFAULT_LIMIT = 50
 const DEFAULT_SKIP = 0
 const REVIEW_TEXT_PATH = '/api/review/text'
+const REVIEWS_PATH = '/api/reviews'
+const DELETE_REVIEW_PATH = '/api/reviews/{reviewId}'
 const TEST_QUERY_LIMIT = 10
 const TEST_QUERY_SKIP = 5
 vi.mock('../common/helpers/review-repository.js', () => ({
@@ -105,16 +107,14 @@ describe('reviewRoutes plugin', () => {
   it('registers GET /api/reviews', () => {
     const routes = getRegisteredRoutes()
     expect(
-      routes.some((r) => r.method === 'GET' && r.path === '/api/reviews')
+      routes.some((r) => r.method === 'GET' && r.path === REVIEWS_PATH)
     ).toBe(true)
   })
 
   it('registers DELETE /api/reviews/{reviewId}', () => {
     const routes = getRegisteredRoutes()
     expect(
-      routes.some(
-        (r) => r.method === 'DELETE' && r.path === '/api/reviews/{reviewId}'
-      )
+      routes.some((r) => r.method === 'DELETE' && r.path === DELETE_REVIEW_PATH)
     ).toBe(true)
   })
 })
@@ -303,7 +303,7 @@ describe('handleGetAllReviews - query parameters', () => {
   beforeEach(() => {
     vi.resetAllMocks()
     getCorsConfig.mockReturnValue({ origin: ['*'], credentials: true })
-    handler = getHandler('GET', '/api/reviews')
+    handler = getHandler('GET', REVIEWS_PATH)
   })
 
   it('returns 200 with reviews and pagination', async () => {
@@ -383,7 +383,7 @@ describe('handleGetAllReviews - error handling', () => {
   beforeEach(() => {
     vi.resetAllMocks()
     getCorsConfig.mockReturnValue({ origin: ['*'], credentials: true })
-    handler = getHandler('GET', '/api/reviews')
+    handler = getHandler('GET', REVIEWS_PATH)
   })
 
   it('returns 500 when repository throws', async () => {
@@ -409,7 +409,7 @@ describe('handleDeleteReview - success', () => {
   beforeEach(() => {
     vi.resetAllMocks()
     getCorsConfig.mockReturnValue({ origin: ['*'], credentials: true })
-    handler = getHandler('DELETE', '/api/reviews/{reviewId}')
+    handler = getHandler('DELETE', DELETE_REVIEW_PATH)
   })
 
   it('returns 200 with deletion info on success', async () => {
@@ -437,7 +437,7 @@ describe('handleDeleteReview - success', () => {
   it('uses reviewId in message when result has no fileName', async () => {
     reviewRepository.deleteReview.mockResolvedValueOnce({
       reviewId: 'rev-no-name',
-      fileName: undefined,
+      fileName: null,
       deletedKeys: ['key1'],
       deletedCount: 1
     })
@@ -462,7 +462,7 @@ describe('handleDeleteReview - error handling', () => {
   beforeEach(() => {
     vi.resetAllMocks()
     getCorsConfig.mockReturnValue({ origin: ['*'], credentials: true })
-    handler = getHandler('DELETE', '/api/reviews/{reviewId}')
+    handler = getHandler('DELETE', DELETE_REVIEW_PATH)
   })
 
   it('returns 404 when delete throws not-found error', async () => {
