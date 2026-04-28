@@ -9,11 +9,15 @@ import {
   createReviewRecord,
   queueReviewJob
 } from './review-helpers.js'
+import pdfParse from 'pdf-parse'
+import mammoth from 'mammoth'
+import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3'
 
 const ENDPOINT_UPLOAD = '/api/upload'
 const ENDPOINT_CALLBACK = '/upload-callback'
 const MAX_FILE_BYTES = 10 * 1024 * 1024 // 10 MB
 const SOURCE_TYPE_FILE = 'file'
+const MAX_REVIEW_CHARS = 100000
 
 const ACCEPTED_MIME_TYPES = [
   'application/pdf',
@@ -307,51 +311,53 @@ const handleUploadCallback = async (request, h) => {
         .code(HTTP_STATUS.OK)
     }
 
-    // validateUploadCallbackPayload(
-    //   uploadStatus,
-    //   numberOfRejectedFiles,
-    //   fileField
-    // )
-
-    // const userId = metadata?.userId
     const reviewId = metadata?.reviewId
 
-    // const { contentType, s3Key, filename } = fileField
+    const { contentType, s3Key, filename } = fileField
 
-    // request.logger.info(
-    //   { userId, reviewId, contentType, s3Key, filename },
-    //   'Processing uploaded file for review'
-    // )
+    request.logger.info(
+      `Extracted metadata from callback - reviewId: ${reviewId}, s3Key: ${s3Key}, filename: ${filename}, contentType: ${contentType}`
+    )
 
-    // // ✅ Run pipeline ASYNCHRONOUSLY (don't await)
-    // // So we can return quickly to CDP Uploader
-    // runCallbackPipeline(
-    //   s3Key,
-    //   filename,
-    //   contentType,
-    //   reviewId,
-    //   userId,
-    //   request.logger
-    // ).catch((error) => {
-    //   request.logger.error(
-    //     {
-    //       reviewId,
-    //       error: error.message,
-    //       stack: error.stack
-    //     },
-    //     '[CALLBACK] Async pipeline failed'
-    //   )
-    // })
+    const { text, textLength } = await extractTextFromFileField(fileField, {
+      s3Client: new S3Client({ region: config.get('aws.region') }),
+      s3Bucket: config.get('s3.bucket')
+    })
 
-    // const totalDuration = Math.round(performance.now() - requestStartTime)
+    request.logger.info(
+      `Extracted text from file - reviewId: ${reviewId}, charCount: ${textLength}`
+    )
 
-    // request.logger.info(
-    //   {
-    //     reviewId,
-    //     totalDurationMs: totalDuration
-    //   },
-    //   '[CALLBACK] Pipeline started asynchronously'
-    // )
+    // ✅ Run pipeline ASYNCHRONOUSLY (don't await)
+    // So we can return quickly to CDP Uploader
+    runCallbackPipeline(
+      text,
+      s3Key,
+      filename,
+      contentType,
+      reviewId,
+      userId,
+      request.logger
+    ).catch((error) => {
+      request.logger.error(
+        {
+          reviewId,
+          error: error.message,
+          stack: error.stack
+        },
+        '[CALLBACK] Async pipeline failed'
+      )
+    })
+
+    const totalDuration = Math.round(performance.now() - requestStartTime)
+
+    request.logger.info(
+      {
+        reviewId,
+        totalDurationMs: totalDuration
+      },
+      '[CALLBACK] Pipeline started asynchronously'
+    )
 
     request.logger.info(
       `reviewId: ${reviewId} - Callback received from CDP Uploader`
@@ -381,42 +387,73 @@ const handleUploadCallback = async (request, h) => {
   }
 }
 
-// Validate the callback payload structure and values
-function validateUploadCallbackPayload(
-  uploadStatus,
-  numberOfRejectedFiles,
-  fileField
-) {
-  if (uploadStatus !== 'ready') {
-    const error = new Error('Upload not ready yet')
-    error.statusCode = HTTP_STATUS.INTERNAL_SERVER_ERROR
-    error.details = { uploadStatus }
-    throw error
+async function bufferFromS3(s3Client, bucket, key) {
+  const resp = await s3Client.send(
+    new GetObjectCommand({ Bucket: bucket, Key: key })
+  )
+
+  if (!resp.Body) {
+    throw new Error('S3 GetObject returned no Body')
   }
 
-  if (numberOfRejectedFiles > 0) {
-    const error = new Error(
-      `Upload validation failed: ${numberOfRejectedFiles} files rejected`
-    )
-    error.statusCode = HTTP_STATUS.INTERNAL_SERVER_ERROR
-    error.details = { numberOfRejectedFiles }
-    throw error
+  // resp.Body is a Node.js Readable stream in Node environments
+  const chunks = []
+  try {
+    for await (const chunk of resp.Body) {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
+    }
+  } catch (err) {
+    // ensure stream is closed/consumed on error
+    throw new Error(`Failed to read S3 object body: ${err.message}`)
   }
 
-  if (fileField?.fileStatus !== 'complete') {
-    const error = new Error('File not available or incomplete')
-    error.statusCode = HTTP_STATUS.INTERNAL_SERVER_ERROR
-    error.details = { fileStatus: fileField?.fileStatus }
-    throw error
+  return Buffer.concat(chunks)
+}
+
+async function extractTextFromFileField(fileField, options = {}) {
+  // fileField may contain: path (local temp), s3Key, filename, contentType
+  const { s3Client, s3Bucket } = options
+
+  let buf
+  if (fileField.s3Key) {
+    if (!s3Client || !s3Bucket)
+      throw new Error('S3 client/bucket required to fetch s3Key')
+    buf = await bufferFromS3(s3Client, s3Bucket, fileField.s3Key)
+  } else {
+    throw new Error('No file data available on fileField')
   }
 
-  if (fileField?.hasError) {
-    const errorMessage = fileField.errorMessage || 'File validation failed'
-    const error = new Error(errorMessage)
-    error.statusCode = HTTP_STATUS.INTERNAL_SERVER_ERROR
-    error.details = { hasError: true, errorMessage }
-    throw error
+  const contentType = fileField.contentType
+  let text = ''
+
+  if (
+    contentType === 'application/pdf' ||
+    (fileField.filename && fileField.filename.endsWith('.pdf'))
+  ) {
+    try {
+      const parsed = await pdfParse(buf)
+      text = parsed.text || ''
+    } catch (err) {
+      // handle parse error (log + fallback)
+      throw new Error(`PDF parsing failed: ${err.message}`)
+    }
+  } else if (
+    contentType ===
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
+    (fileField.filename && fileField.filename.endsWith('.docx'))
+  ) {
+    try {
+      const result = await mammoth.extractRawText({ buffer: buf })
+      text = result.value || ''
+    } catch (err) {
+      // handle parse error (log + fallback)
+      throw new Error(`docx parsing failed: ${err.message}`)
+    }
   }
+
+  // enforce review char limit
+  if (text.length > MAX_REVIEW_CHARS) text = text.slice(0, MAX_REVIEW_CHARS)
+  return { text, charCount: text.length }
 }
 
 // ─── POST /upload-callback ───────────────────────────────────────────────────
@@ -427,6 +464,7 @@ function validateUploadCallbackPayload(
  * response is sent to CDP Uploader before this work begins.
  */
 async function runCallbackPipeline(
+  text,
   s3Key,
   fileName,
   contentType,
@@ -440,7 +478,7 @@ async function runCallbackPipeline(
   )
 
   const { canonicalResult, canonicalDuration } = await createCanonicalDocument(
-    null,
+    text,
     reviewId,
     fileName,
     logger,
