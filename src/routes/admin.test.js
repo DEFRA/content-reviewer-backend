@@ -5,6 +5,10 @@ const HTTP_OK = 200
 const HTTP_INTERNAL_SERVER_ERROR = 500
 
 // ── Mocks ──────────────────────────────────────────────────────────────────
+vi.mock('../config.js', () => ({
+  config: { get: vi.fn() }
+}))
+
 vi.mock('../common/helpers/prompt-manager.js', () => ({
   promptManager: {
     uploadPrompt: vi.fn(),
@@ -20,6 +24,7 @@ vi.mock('../common/helpers/logging/logger.js', () => ({
   }))
 }))
 
+import { config } from '../config.js'
 import { promptManager } from '../common/helpers/prompt-manager.js'
 import { adminRoutes } from './admin.js'
 
@@ -85,6 +90,7 @@ describe('POST /admin/prompt/upload - success', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    config.get.mockReturnValue(null) // no API key configured → allow all
     handler = getUploadHandler()
     promptManager.uploadPrompt.mockResolvedValue(undefined)
   })
@@ -122,6 +128,7 @@ describe('POST /admin/prompt/upload - error', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    config.get.mockReturnValue(null) // no API key configured → allow all
     handler = getUploadHandler()
     promptManager.uploadPrompt.mockRejectedValue(new Error('S3 unavailable'))
   })
@@ -153,6 +160,7 @@ describe('POST /admin/prompt/cache/clear - success', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    config.get.mockReturnValue(null) // no API key configured → allow all
     handler = getClearCacheHandler()
     promptManager.clearCache.mockReturnValue(undefined)
   })
@@ -181,5 +189,112 @@ describe('POST /admin/prompt/cache/clear - success', () => {
 
     const [payload] = h.response.mock.calls[0]
     expect(typeof payload.timestamp).toBe('string')
+  })
+})
+
+// ── isAuthorised — key configured ─────────────────────────────────────────
+
+const ADMIN_API_KEY = 'secret-admin-key'
+const HTTP_UNAUTHORIZED = 401
+
+describe('POST /admin/prompt/upload - unauthorised', () => {
+  let handler
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    config.get.mockReturnValue(ADMIN_API_KEY)
+    handler = getUploadHandler()
+  })
+
+  it('returns 401 when x-admin-api-key header is missing', async () => {
+    const h = createMockH()
+    await handler({ path: '/admin/prompt/upload', headers: {} }, h)
+
+    expect(h.response).toHaveBeenCalledWith(
+      expect.objectContaining({ error: 'Unauthorized' })
+    )
+    expect(h._responseMock.code).toHaveBeenCalledWith(HTTP_UNAUTHORIZED)
+  })
+
+  it('returns 401 when x-admin-api-key header is wrong', async () => {
+    const h = createMockH()
+    const request = {
+      path: '/admin/prompt/upload',
+      headers: { 'x-admin-api-key': 'wrong-key' }
+    }
+    await handler(request, h)
+
+    expect(h._responseMock.code).toHaveBeenCalledWith(HTTP_UNAUTHORIZED)
+  })
+
+  it('does not call uploadPrompt when request is unauthorised', async () => {
+    const h = createMockH()
+    await handler({ path: '/admin/prompt/upload', headers: {} }, h)
+
+    expect(promptManager.uploadPrompt).not.toHaveBeenCalled()
+  })
+
+  it('allows access when the correct api key is provided', async () => {
+    promptManager.uploadPrompt.mockResolvedValue(undefined)
+    const h = createMockH()
+    const request = {
+      path: '/admin/prompt/upload',
+      headers: { 'x-admin-api-key': ADMIN_API_KEY }
+    }
+    await handler(request, h)
+
+    expect(promptManager.uploadPrompt).toHaveBeenCalledTimes(1)
+    expect(h._responseMock.code).toHaveBeenCalledWith(HTTP_OK)
+  })
+})
+
+describe('POST /admin/prompt/cache/clear - unauthorised', () => {
+  let handler
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    config.get.mockReturnValue(ADMIN_API_KEY)
+    handler = getClearCacheHandler()
+  })
+
+  it('returns 401 when x-admin-api-key header is missing', () => {
+    const h = createMockH()
+    handler({ path: '/admin/prompt/cache/clear', headers: {} }, h)
+
+    expect(h.response).toHaveBeenCalledWith(
+      expect.objectContaining({ error: 'Unauthorized' })
+    )
+    expect(h._responseMock.code).toHaveBeenCalledWith(HTTP_UNAUTHORIZED)
+  })
+
+  it('returns 401 when x-admin-api-key header is wrong', () => {
+    const h = createMockH()
+    const request = {
+      path: '/admin/prompt/cache/clear',
+      headers: { 'x-admin-api-key': 'bad-key' }
+    }
+    handler(request, h)
+
+    expect(h._responseMock.code).toHaveBeenCalledWith(HTTP_UNAUTHORIZED)
+  })
+
+  it('does not call clearCache when request is unauthorised', () => {
+    const h = createMockH()
+    handler({ path: '/admin/prompt/cache/clear', headers: {} }, h)
+
+    expect(promptManager.clearCache).not.toHaveBeenCalled()
+  })
+
+  it('allows access when the correct api key is provided', () => {
+    promptManager.clearCache.mockReturnValue(undefined)
+    const h = createMockH()
+    const request = {
+      path: '/admin/prompt/cache/clear',
+      headers: { 'x-admin-api-key': ADMIN_API_KEY }
+    }
+    handler(request, h)
+
+    expect(promptManager.clearCache).toHaveBeenCalledTimes(1)
+    expect(h._responseMock.code).toHaveBeenCalledWith(HTTP_OK)
   })
 })

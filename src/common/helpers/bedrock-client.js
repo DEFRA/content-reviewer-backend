@@ -172,11 +172,17 @@ class BedrockClient {
       {
         responseLength: responseText.length,
         inputTokens: usage.inputTokens,
-        outputTokens: usage.outputTokens,
-        totalTokens: usage.totalTokens,
         guardrailAction: guardrailAssessment.action
       },
-      `Bedrock response received — input: ${usage.inputTokens} tokens, output: ${usage.outputTokens} tokens, total: ${usage.totalTokens} tokens`
+      `Bedrock response received — ${responseText.length} chars, input: ${usage.inputTokens} tokens`
+    )
+
+    logger.info(
+      {
+        outputTokens: usage.outputTokens,
+        totalTokens: usage.totalTokens
+      },
+      `Bedrock output: ${usage.outputTokens} tokens (total: ${usage.totalTokens})`
     )
 
     // Guardrails can block in two ways:

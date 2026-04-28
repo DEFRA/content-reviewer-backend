@@ -4,7 +4,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 const REVIEW_ID = 'review_test-123'
 const HTTP_BAD_REQUEST = 400
 const HTTP_INTERNAL_SERVER_ERROR = 500
-const HTTP_OK = 200
 
 const STUB_ENVELOPE = {
   documentId: REVIEW_ID,

@@ -36,6 +36,9 @@ jobs:
           npm run lint
           npm test
 
+      - name: Security audit
+        run: npm run security-audit
+
       - name: Build and Publish
         uses: DEFRA/cdp-build-action/build@main
         with:
