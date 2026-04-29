@@ -135,7 +135,7 @@ describe('bedrockClient.sendMessage', () => {
         outputTokens: OUTPUT_TOKENS,
         totalTokens: TOTAL_TOKENS
       },
-      trace: { guardrail: { action: 'NONE', assessments: [] } },
+      trace: { guardrail: {} },
       stopReason: 'end_turn',
       ...overrides
     }
@@ -168,15 +168,25 @@ describe('bedrockClient.sendMessage', () => {
     expect(result.stopReason).toBe('end_turn')
   })
 
-  it('returns blocked response when guardrail action is BLOCKED', async () => {
+  it('returns blocked response when stopReason is guardrail_intervened', async () => {
+    // AWS Bedrock signals a guardrail block via stopReason === 'guardrail_intervened'.
+    // The trace may carry inputAssessment/outputAssessments with policy details.
     MOCK_SEND.mockResolvedValueOnce(
       buildBedrockResponse({
         trace: {
           guardrail: {
-            action: 'BLOCKED',
-            assessments: [{ reason: 'unsafe content' }]
+            inputAssessment: {
+              'assessment-1': {
+                contentPolicy: {
+                  filters: [
+                    { type: 'VIOLENCE', confidence: 'HIGH', action: 'BLOCKED' }
+                  ]
+                }
+              }
+            }
           }
-        }
+        },
+        stopReason: 'guardrail_intervened'
       })
     )
 
@@ -204,7 +214,7 @@ describe('bedrockClient.sendMessage', () => {
             ]
           }
         },
-        trace: { guardrail: { action: 'NONE', assessments: [] } },
+        trace: { guardrail: {} },
         stopReason: 'guardrail_intervened'
       })
     )
@@ -368,7 +378,7 @@ describe('bedrockClient.reviewContent', () => {
         outputTokens: REVIEW_OUTPUT_TOKENS,
         totalTokens: REVIEW_TOTAL_TOKENS
       },
-      trace: { guardrail: { action: 'NONE', assessments: [] } },
+      trace: { guardrail: {} },
       stopReason: 'end_turn'
     }
   }
@@ -411,7 +421,7 @@ describe('bedrockClient.reviewContent', () => {
     MOCK_SEND.mockResolvedValueOnce({
       output: { message: { content: [{ text: '' }] } },
       usage: {},
-      trace: { guardrail: { action: 'BLOCKED', assessments: [] } },
+      trace: { guardrail: {} },
       stopReason: 'guardrail_intervened'
     })
 
@@ -611,7 +621,7 @@ describe('bedrockClient.sendMessage - retry on retryable errors', () => {
         outputTokens: OUTPUT_TOKENS,
         totalTokens: TOTAL_TOKENS
       },
-      trace: { guardrail: { action: 'NONE', assessments: [] } },
+      trace: { guardrail: {} },
       stopReason: 'end_turn'
     }
   }
