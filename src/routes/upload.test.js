@@ -36,16 +36,25 @@ vi.mock('./review-helpers.js', () => ({
   queueReviewJob: vi.fn()
 }))
 
-// PDF / DOCX parser mocks (allow per-test control)
-const pdfParseMock = vi.fn(async (buf) => ({ text: 'parsed-pdf-text' }))
-const mammothMock = {
-  extractRawText: vi.fn(async ({ buffer }) => ({ value: 'parsed-docx-text' }))
-}
-vi.mock('pdf-parse', () => ({
-  default: (buf) => pdfParseMock(buf),
-  __esModule: true
+// text-extractor mock (used by upload.js)
+const extractTextMock = vi.fn(
+  async (buf, contentType, filename) => 'parsed-text'
+)
+vi.mock('../common/helpers/text-extractor.js', () => ({
+  textExtractor: { extractText: extractTextMock }
 }))
-vi.mock('mammoth', () => ({ default: mammothMock, __esModule: true }))
+
+// Ensure pdf-parse and mammoth bindings exist for upload.js (pdfParsePkg / mammothPkg)
+vi.mock('pdf-parse', () => {
+  const fn = vi.fn(async (buf) => ({ text: 'parsed-pdf-text' }))
+  return { default: fn, __esModule: true }
+})
+vi.mock('mammoth', () => {
+  const mammothMock = {
+    extractRawText: vi.fn(async ({ buffer }) => ({ value: 'parsed-docx-text' }))
+  }
+  return { default: mammothMock, __esModule: true }
+})
 
 // ensure aws-sdk client isn't used in tests that don't need it
 vi.mock('@aws-sdk/client-s3', () => {
@@ -368,15 +377,13 @@ it('callback handler returns OK with success:false when fileField.hasError is tr
   })
 })
 
-// New tests to improve coverage: S3 PDF, DOCX, parse failure and missing data
-
 it('callback handler fetches S3 object and parses PDF text', async () => {
   const callbackKey = 'POST /upload-callback'
   const route = storedRoutes[callbackKey]
   const handler = route.handler
 
-  // ensure pdfParseMock returns expected text
-  pdfParseMock.mockResolvedValueOnce({ text: 's3-pdf-extracted-text' })
+  // ensure extractTextMock returns expected text
+  extractTextMock.mockResolvedValueOnce('s3-pdf-extracted-text')
 
   const request = {
     payload: {
@@ -398,16 +405,16 @@ it('callback handler fetches S3 object and parses PDF text', async () => {
 
   expect(res.statusCode).toBe(200)
   expect(res.payload).toMatchObject({ success: true })
-  // pdf parser should have been invoked
-  expect(pdfParseMock).toHaveBeenCalled()
+  // extractor should have been invoked
+  expect(extractTextMock).toHaveBeenCalled()
 })
 
-it('callback handler parses DOCX buffer via mammoth', async () => {
+it('callback handler parses DOCX buffer via text-extractor', async () => {
   const callbackKey = 'POST /upload-callback'
   const route = storedRoutes[callbackKey]
   const handler = route.handler
 
-  mammothMock.extractRawText.mockResolvedValueOnce({ value: 'docx-extracted' })
+  extractTextMock.mockResolvedValueOnce('docx-extracted')
 
   const request = {
     payload: {
@@ -430,7 +437,7 @@ it('callback handler parses DOCX buffer via mammoth', async () => {
 
   expect(res.statusCode).toBe(200)
   expect(res.payload).toMatchObject({ success: true })
-  expect(mammothMock.extractRawText).toHaveBeenCalled()
+  expect(extractTextMock).toHaveBeenCalled()
 })
 
 it('callback handler returns 500 when PDF parsing fails', async () => {
@@ -438,8 +445,8 @@ it('callback handler returns 500 when PDF parsing fails', async () => {
   const route = storedRoutes[callbackKey]
   const handler = route.handler
 
-  // cause parser to throw
-  pdfParseMock.mockRejectedValueOnce(new Error('pdf-bad'))
+  // cause extractor to throw
+  extractTextMock.mockRejectedValueOnce(new Error('pdf-bad'))
 
   const request = {
     payload: {
@@ -473,7 +480,7 @@ it('callback handler reads local file path and processes PDF (no s3Key -> error)
   const tmpFile = path.join(tmpDir, 'temp.pdf')
   await fs.writeFile(tmpFile, 'dummy-pdf-bytes')
 
-  pdfParseMock.mockResolvedValueOnce({ text: 'local-pdf-text' })
+  extractTextMock.mockResolvedValueOnce('local-pdf-text')
 
   const request = {
     payload: {
@@ -508,7 +515,7 @@ it('callback handler returns 500 when payload missing form', async () => {
 
   const request = {
     payload: {
-      metadata: { reviewId: 'missing-form', userId: 'u' } // fixed missing comma
+      metadata: { reviewId: 'missing-form', userId: 'u' }
       // form missing
     },
     logger: { info: vi.fn(), error: vi.fn(), warn: vi.fn(), debug: vi.fn() }
@@ -532,8 +539,8 @@ it('callback handler starts async pipeline and calls createCanonicalDocument', a
   expect(route).toBeDefined()
   const handler = route.handler
 
-  // make pdf parser return predictable text
-  pdfParseMock.mockResolvedValueOnce({ text: 's3-pdf-extracted-text-small' })
+  // make extractor return predictable text
+  extractTextMock.mockResolvedValueOnce('s3-pdf-extracted-text-small')
 
   // ensure createCanonicalDocument is available and resolves
   const reviewHelpers = await import('./review-helpers.js')
@@ -583,7 +590,7 @@ it('truncates extracted text longer than MAX_REVIEW_CHARS before canonicalizatio
 
   // create a very long text > MAX_REVIEW_CHARS (100000)
   const veryLong = 'a'.repeat(150000)
-  pdfParseMock.mockResolvedValueOnce({ text: veryLong })
+  extractTextMock.mockResolvedValueOnce(veryLong)
 
   const reviewHelpers = await import('./review-helpers.js')
   reviewHelpers.createCanonicalDocument.mockResolvedValueOnce({
