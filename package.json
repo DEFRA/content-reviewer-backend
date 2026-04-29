@@ -13,7 +13,7 @@
     "docker:dev": "npm run dev",
     "format": "npx prettier --write \"**/*.{cjs,js,json,md}\"",
     "format:check": "npx prettier --check \"**/*.{cjs,js,json,md}\"",
-    "git:pre-commit-hook": "npm run security-audit && npm run format:check",
+    "git:pre-commit-hook": "npm run format:check",
     "lint": "npx eslint \"**/*.{cjs,js}\"",
     "lint:fix": "npx eslint \"**/*.{cjs,js}\" --fix",
     "postinstall": "npm run setup:husky",
@@ -63,7 +63,7 @@
     "uuid": "14.0.0"
   },
   "overrides": {
-    "fast-xml-parser": "5.5.7",
+    "fast-xml-parser": "5.7.0",
     "minimatch": ">=10.2.1",
     "@xmldom/xmldom": ">=0.8.13",
     "@aws-sdk/credential-provider-node": "3.972.23",

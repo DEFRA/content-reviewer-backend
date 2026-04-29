@@ -4,6 +4,7 @@ import { secureContext } from '@defra/hapi-secure-context'
 
 import { config } from './config.js'
 import { router } from './plugins/router.js'
+import { jwtAuth } from './plugins/jwt-auth.js'
 import { requestLogger } from './common/helpers/logging/request-logger.js'
 import { mongoDb } from './common/helpers/mongodb.js'
 import { failAction } from './common/helpers/fail-action.js'
@@ -83,7 +84,14 @@ async function registerPlugins(server) {
   // pulse          - provides shutdown handlers
   // mongoDb        - sets up mongo connection pool and attaches to `server` and `request` objects
   // router         - routes used in the app
-  const plugins = [requestLogger, requestTracing, secureContext, pulse, router]
+  const plugins = [
+    requestLogger,
+    requestTracing,
+    secureContext,
+    pulse,
+    jwtAuth,
+    router
+  ]
 
   const mongoConfig = config.get('mongo')
   if (mongoConfig.enabled !== false) {

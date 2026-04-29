@@ -115,10 +115,29 @@ describe('#mongoDb plugin – register: indexes', () => {
     expect(mockCreateIndex).toHaveBeenCalledWith({ id: 1 })
   })
 
-  test('Should create index on example-data collection', async () => {
+  test('Should create unique tokenHash index on refresh_tokens collection', async () => {
     await runRegister()
 
-    expect(mockCollection).toHaveBeenCalledWith('example-data')
+    expect(mockCollection).toHaveBeenCalledWith('refresh_tokens')
+    expect(mockCreateIndex).toHaveBeenCalledWith(
+      { tokenHash: 1 },
+      { unique: true }
+    )
+  })
+
+  test('Should create userId index on refresh_tokens collection', async () => {
+    await runRegister()
+
+    expect(mockCreateIndex).toHaveBeenCalledWith({ userId: 1 })
+  })
+
+  test('Should create TTL index on refresh_tokens.expiresAt', async () => {
+    await runRegister()
+
+    expect(mockCreateIndex).toHaveBeenCalledWith(
+      { expiresAt: 1 },
+      { expireAfterSeconds: 0 }
+    )
   })
 })
 
