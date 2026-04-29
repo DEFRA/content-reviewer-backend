@@ -21,6 +21,8 @@ const MAX_REVIEW_CHARS = 100000
 const APPLICATION_PDF = 'application/pdf'
 const STATUS_300 = 300
 const STATUS_400 = 400
+const STATUS_404 = 404
+const STATUS_200 = 200
 
 const ACCEPTED_MIME_TYPES = [
   APPLICATION_PDF,
@@ -618,9 +620,9 @@ function handleUploadStatus(request, h) {
   const { reviewId } = request.params
   const status = uploadStatusStore.get(reviewId)
   if (!status) {
-    return h.response({ found: false }).code(404)
+    return h.response({ found: false }).code(STATUS_404)
   }
-  return h.response({ found: true, ...status }).code(200)
+  return h.response({ found: true, ...status }).code(STATUS_200)
 }
 
 // ─── Route registration ──────────────────────────────────────────────────────
