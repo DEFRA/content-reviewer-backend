@@ -421,6 +421,33 @@ const config = convict({
     default: null,
     sensitive: true,
     env: 'ADMIN_API_KEY'
+  },
+  auth: {
+    enabled: {
+      doc: 'Enable JWT Bearer token authentication on all API routes. Set to false for local development without Azure AD.',
+      format: Boolean,
+      default: true,
+      env: 'AUTH_ENABLED'
+    },
+    jwtSecret: {
+      doc: 'Secret key used to sign and verify JWT access tokens. Must be at least 32 characters in production.',
+      format: String,
+      default: 'dev-jwt-secret-change-in-production-min-32chars',
+      sensitive: true,
+      env: 'JWT_SECRET'
+    },
+    accessTokenExpirySeconds: {
+      doc: 'JWT access token lifetime in seconds (default: 15 minutes).',
+      format: Number,
+      default: 900,
+      env: 'JWT_ACCESS_TOKEN_EXPIRY_SECONDS'
+    },
+    refreshTokenExpirySeconds: {
+      doc: 'Refresh token lifetime in seconds (default: 7 days).',
+      format: Number,
+      default: 604800,
+      env: 'JWT_REFRESH_TOKEN_EXPIRY_SECONDS'
+    }
   }
 })
 
