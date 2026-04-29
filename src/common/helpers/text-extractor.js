@@ -168,8 +168,7 @@ class TextExtractor {
    */
   async extractText(buffer, mimeType, fileName = 'unknown') {
     logger.info(
-      { mimeType, fileName, bufferSize: buffer.length },
-      'Extracting text from file'
+      `Extracting text from file: ${fileName} with MIME type: ${mimeType}`
     )
 
     try {
@@ -238,13 +237,12 @@ class TextExtractor {
       const text = await extractPdfWithLinks(buffer)
 
       logger.info(
-        { length: text.length },
-        'PDF text + hyperlinks extracted via pdfjs-dist'
+        `PDF text + hyperlinks extracted via pdfjs-dist with length: ${text.length}`
       )
 
       return text
     } catch (error) {
-      logger.error({ error: error.message }, 'PDF extraction failed')
+      logger.error(`PDF extraction failed: ${error.message}`)
       throw new Error(`Failed to extract text from PDF: ${error.message}`)
     }
   }
@@ -266,14 +264,13 @@ class TextExtractor {
 
       if (result.messages && result.messages.length > 0) {
         logger.warn(
-          { messages: result.messages },
-          'DOCX extraction had warnings'
+          `DOCX extraction had warnings: ${result.messages.map((m) => m.message).join('; ')}`
         )
       }
 
       return result.value
     } catch (error) {
-      logger.error({ error: error.message }, 'DOCX extraction failed')
+      logger.error(`DOCX extraction failed: ${error.message}`)
       throw new Error(`Failed to extract text from DOCX: ${error.message}`)
     }
   }

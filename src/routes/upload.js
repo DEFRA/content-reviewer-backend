@@ -9,14 +9,10 @@ import {
   createReviewRecord,
   queueReviewJob
 } from './review-helpers.js'
-// ESM interop import
-import * as pdfParsePkg from 'pdf-parse'
-import * as mammothPkg from 'mammoth'
+import { textExtractor } from '../common/helpers/text-extractor.js'
 
 import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3'
 
-const pdfParse = pdfParsePkg?.default ?? pdfParsePkg
-const mammoth = mammothPkg?.default ?? mammothPkg
 const ENDPOINT_UPLOAD = '/api/upload'
 const ENDPOINT_CALLBACK = '/upload-callback'
 const MAX_FILE_BYTES = 10 * 1024 * 1024 // 10 MB
@@ -370,12 +366,7 @@ const handleUploadCallback = async (request, h) => {
     const totalDuration = Math.round(performance.now() - requestStartTime)
 
     request.logger.error(
-      {
-        error: error.message,
-        stack: error.stack,
-        durationMs: totalDuration
-      },
-      '[CALLBACK] Handler failed'
+      `[CALLBACK] Handler failed after ${totalDuration}ms with error: ${error.message}`
     )
 
     return h
@@ -450,9 +441,9 @@ async function extractTextFromFileField(
   let text = ''
 
   if (isPdf(contentType, fileField.filename)) {
-    text = await extractPdfText(buf)
+    text = await extractPdfText(buf, contentType, fileField.filename)
   } else if (isDocx(contentType, fileField.filename)) {
-    text = await extractDocxText(buf)
+    text = await extractDocxText(buf, contentType, fileField.filename)
   } else {
     throw new Error(
       `Unsupported file type for text extraction: ${contentType} with filename: ${fileField.filename}`
@@ -491,19 +482,19 @@ function isDocx(contentType, filename) {
   )
 }
 
-async function extractPdfText(buf) {
+async function extractPdfText(buf, contentType, filename) {
   try {
-    const parsed = await pdfParse(buf)
-    return parsed.text || ''
+    const text = await textExtractor.extractText(buf, contentType, filename)
+    return text || ''
   } catch (err) {
     throw new Error(`PDF parsing failed: ${err.message}`)
   }
 }
 
-async function extractDocxText(buf) {
+async function extractDocxText(buf, contentType, filename) {
   try {
-    const result = await mammoth.extractRawText({ buffer: buf })
-    return result.value || ''
+    const text = await textExtractor.extractText(buf, contentType, filename)
+    return text || ''
   } catch (err) {
     throw new Error(`docx parsing failed: ${err.message}`)
   }
