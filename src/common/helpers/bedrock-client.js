@@ -151,6 +151,76 @@ class BedrockClient {
   }
 
   /**
+   * Extract per-policy detail from a single guardrail assessment object.
+   * PII matched values are deliberately NOT logged — only the entity type
+   * and action are recorded to avoid writing real PII to application logs.
+   * @private
+   */
+  _extractAssessmentDetail(assessment, idx) {
+    const detail = { assessmentIndex: idx }
+
+    const contentFilters = assessment.contentPolicy?.filters ?? []
+    if (contentFilters.length > 0) {
+      detail.contentPolicy = contentFilters.map((f) => ({
+        type: f.type,
+        confidence: f.confidence,
+        action: f.action
+      }))
+    }
+
+    const topics = assessment.topicPolicy?.topics ?? []
+    if (topics.length > 0) {
+      detail.topicPolicy = topics.map((t) => ({
+        name: t.name,
+        type: t.type,
+        action: t.action
+      }))
+    }
+
+    const managedWords = assessment.wordPolicy?.managedWordLists ?? []
+    const customWords = assessment.wordPolicy?.customWords ?? []
+    if (managedWords.length > 0 || customWords.length > 0) {
+      detail.wordPolicy = {
+        managedWordLists: managedWords.map((w) => ({
+          match: w.match,
+          action: w.action
+        })),
+        customWords: customWords.map((w) => ({
+          match: w.match,
+          action: w.action
+        }))
+      }
+    }
+
+    const piiEntities = assessment.sensitiveInformationPolicy?.piiEntities ?? []
+    const regexMatches = assessment.sensitiveInformationPolicy?.regexes ?? []
+    if (piiEntities.length > 0 || regexMatches.length > 0) {
+      detail.sensitiveInformationPolicy = {
+        piiEntityTypes: piiEntities.map((e) => ({
+          type: e.type,
+          action: e.action
+        })),
+        regexMatches: regexMatches.map((r) => ({
+          name: r.name,
+          action: r.action
+        }))
+      }
+    }
+
+    const groundingFilters = assessment.contextualGroundingPolicy?.filters ?? []
+    if (groundingFilters.length > 0) {
+      detail.contextualGroundingPolicy = groundingFilters.map((f) => ({
+        type: f.type,
+        threshold: f.threshold,
+        score: f.score,
+        action: f.action
+      }))
+    }
+
+    return detail
+  }
+
+  /**
    * Process Bedrock API response
    * @private
    */
@@ -193,83 +263,10 @@ class BedrockClient {
 
     // Guardrail blocking is signalled by stopReason === 'guardrail_intervened'.
     // The trace.guardrail object has no top-level action field in the Converse API.
-    const guardrailBlocked = response.stopReason === 'guardrail_intervened'
-
-    if (guardrailBlocked) {
-      // Build a per-assessment breakdown so the logs show exactly which policy
-      // fired and what it matched. PII matched values are NOT logged — only the
-      // entity type is recorded to avoid writing real PII to application logs.
-      const policyBreakdown = allAssessments.map((assessment, idx) => {
-        const detail = { assessmentIndex: idx }
-
-        // Content policy — hate, insults, sexual, violence, misconduct
-        const contentFilters = assessment.contentPolicy?.filters ?? []
-        if (contentFilters.length > 0) {
-          detail.contentPolicy = contentFilters.map((f) => ({
-            type: f.type,
-            confidence: f.confidence,
-            action: f.action
-          }))
-        }
-
-        // Topic policy — custom topics configured on the guardrail
-        const topics = assessment.topicPolicy?.topics ?? []
-        if (topics.length > 0) {
-          detail.topicPolicy = topics.map((t) => ({
-            name: t.name,
-            type: t.type,
-            action: t.action
-          }))
-        }
-
-        // Word policy — managed profanity lists and custom words
-        const managedWords = assessment.wordPolicy?.managedWordLists ?? []
-        const customWords = assessment.wordPolicy?.customWords ?? []
-        if (managedWords.length > 0 || customWords.length > 0) {
-          detail.wordPolicy = {
-            managedWordLists: managedWords.map((w) => ({
-              match: w.match,
-              action: w.action
-            })),
-            customWords: customWords.map((w) => ({
-              match: w.match,
-              action: w.action
-            }))
-          }
-        }
-
-        // PII — log entity TYPE and action only, never the matched value
-        const piiEntities =
-          assessment.sensitiveInformationPolicy?.piiEntities ?? []
-        const regexMatches =
-          assessment.sensitiveInformationPolicy?.regexes ?? []
-        if (piiEntities.length > 0 || regexMatches.length > 0) {
-          detail.sensitiveInformationPolicy = {
-            piiEntityTypes: piiEntities.map((e) => ({
-              type: e.type,
-              action: e.action
-            })),
-            regexMatches: regexMatches.map((r) => ({
-              name: r.name,
-              action: r.action
-            }))
-          }
-        }
-
-        // Contextual grounding — factual accuracy / relevance checks
-        const groundingFilters =
-          assessment.contextualGroundingPolicy?.filters ?? []
-        if (groundingFilters.length > 0) {
-          detail.contextualGroundingPolicy = groundingFilters.map((f) => ({
-            type: f.type,
-            threshold: f.threshold,
-            score: f.score,
-            action: f.action
-          }))
-        }
-
-        return detail
-      })
+    if (response.stopReason === 'guardrail_intervened') {
+      const policyBreakdown = allAssessments.map((a, idx) =>
+        this._extractAssessmentDetail(a, idx)
+      )
 
       logger.warn(
         {
