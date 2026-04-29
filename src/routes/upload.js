@@ -9,10 +9,14 @@ import {
   createReviewRecord,
   queueReviewJob
 } from './review-helpers.js'
-import pdfParse from 'pdf-parse'
-import mammoth from 'mammoth'
+// ESM interop import
+import * as pdfParsePkg from 'pdf-parse'
+import * as mammothPkg from 'mammoth'
+
 import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3'
 
+const pdfParse = pdfParsePkg?.default ?? pdfParsePkg
+const mammoth = mammothPkg?.default ?? mammothPkg
 const ENDPOINT_UPLOAD = '/api/upload'
 const ENDPOINT_CALLBACK = '/upload-callback'
 const MAX_FILE_BYTES = 10 * 1024 * 1024 // 10 MB
