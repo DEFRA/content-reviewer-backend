@@ -297,9 +297,8 @@ class BedrockClient {
       throw new Error('Bedrock AI is not enabled')
     }
 
-    // Retry up to 4 times on throttling / transient errors with exponential
-    // backoff: 30 s → 60 s → 120 s → 120 s (capped).
-    const MAX_RETRIES = 2
+    // No Bedrock-level retries — SQS re-delivery handles retries.
+    const MAX_RETRIES = 0
     const BASE_BACKOFF_MS = 90_000
     const MAX_BACKOFF_MS = 180_000
 
