@@ -10,11 +10,20 @@ const { MOCK_HOST, MOCK_PORT, MOCK_ORIGIN, MOCK_MONGO } = vi.hoisted(() => ({
   MOCK_MONGO: { enabled: true, uri: 'mongodb://localhost:27017/test' }
 }))
 
+// Rate-limiting test constants
+const RATE_LIMIT_WINDOW_MS = 60_000
+const RATE_LIMIT_MAX_LOW = 2 // low threshold so tests can exceed it easily
+const TEST_IP_HEALTH = '1.1.1.1'
+const TEST_IP_UNDER = '2.2.2.2'
+const TEST_IP_OVER = '3.3.3.3'
+const TEST_IP_RESET = '4.4.4.4'
+
 // ── Hapi server mock ───────────────────────────────────────────────────────
-const mockServerLogger = { info: vi.fn(), error: vi.fn() }
+const mockServerLogger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() }
 const mockServerEvents = { on: vi.fn() }
 const mockServer = {
   register: vi.fn().mockResolvedValue(undefined),
+  ext: vi.fn(),
   logger: mockServerLogger,
   events: mockServerEvents
 }
@@ -245,5 +254,217 @@ describe('createServer - MongoDB disabled', () => {
       (p) => p && p.plugin && p.plugin === 'mongoDb'
     )
     expect(hasMongoDb).toBe(false)
+  })
+})
+
+// ── Helpers for rate-limit and security-header tests ───────────────────────
+
+function makeRateLimitGetConfig(maxRequests = 100) {
+  return (key) => {
+    const vals = {
+      host: MOCK_HOST,
+      port: MOCK_PORT,
+      'cors.origin': MOCK_ORIGIN,
+      'cors.credentials': true,
+      mongo: MOCK_MONGO,
+      'mockMode.skipSqsWorker': true,
+      'rateLimit.enabled': true,
+      'rateLimit.windowMs': RATE_LIMIT_WINDOW_MS,
+      'rateLimit.maxRequests': maxRequests
+    }
+    return vals[key] ?? null
+  }
+}
+
+async function setupWithRateLimit(maxRequests = 100) {
+  vi.clearAllMocks()
+  // Re-attach vi.fn() to warn after clearAllMocks wipes implementations
+  mockServerLogger.warn = vi.fn()
+  mockServer.register.mockResolvedValue(undefined)
+  config.get.mockImplementation(makeRateLimitGetConfig(maxRequests))
+  await createServer()
+  const [[, handler]] = mockServer.ext.mock.calls.filter(
+    ([event]) => event === 'onRequest'
+  )
+  return handler
+}
+
+// ── Rate limiting tests ────────────────────────────────────────────────────
+
+describe('createServer - rate limiting', () => {
+  const hContinue = Symbol('hapi-continue')
+
+  it('bypasses rate limiting for the /health path', async () => {
+    const handler = await setupWithRateLimit()
+    const h = { continue: hContinue }
+    const request = { path: '/health', info: { remoteAddress: TEST_IP_HEALTH } }
+    expect(handler(request, h)).toBe(hContinue)
+    expect(mockServerLogger.warn).not.toHaveBeenCalled()
+  })
+
+  it('allows requests that are within the rate limit', async () => {
+    const handler = await setupWithRateLimit(RATE_LIMIT_MAX_LOW)
+    const mockResp = {
+      code: vi.fn().mockReturnThis(),
+      takeover: vi.fn().mockReturnThis()
+    }
+    const h = {
+      continue: hContinue,
+      response: vi.fn().mockReturnValue(mockResp)
+    }
+    const request = {
+      path: '/api/review',
+      info: { remoteAddress: TEST_IP_UNDER }
+    }
+    // First request (count 1) is within limit of 2
+    expect(handler(request, h)).toBe(hContinue)
+    expect(mockServerLogger.warn).not.toHaveBeenCalled()
+  })
+
+  it('returns 429 JSON and logs warn when rate limit is exceeded', async () => {
+    const handler = await setupWithRateLimit(RATE_LIMIT_MAX_LOW)
+    const mockResp = {
+      code: vi.fn().mockReturnThis(),
+      takeover: vi.fn().mockReturnThis()
+    }
+    const h = {
+      continue: hContinue,
+      response: vi.fn().mockReturnValue(mockResp)
+    }
+    const request = { path: '/api/data', info: { remoteAddress: TEST_IP_OVER } }
+    handler(request, h) // count 1
+    handler(request, h) // count 2 — at limit
+    handler(request, h) // count 3 — over limit
+    expect(mockServerLogger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ ip: TEST_IP_OVER, limit: RATE_LIMIT_MAX_LOW }),
+      'Rate limit exceeded'
+    )
+    expect(h.response).toHaveBeenCalledWith(
+      expect.objectContaining({ error: expect.any(String) })
+    )
+    expect(mockResp.code).toHaveBeenCalledWith(429)
+    expect(mockResp.takeover).toHaveBeenCalled()
+  })
+
+  it('resets the request count after the time window expires', async () => {
+    vi.useFakeTimers()
+    try {
+      const handler = await setupWithRateLimit(RATE_LIMIT_MAX_LOW)
+      const mockResp = {
+        code: vi.fn().mockReturnThis(),
+        takeover: vi.fn().mockReturnThis()
+      }
+      const h = {
+        continue: hContinue,
+        response: vi.fn().mockReturnValue(mockResp)
+      }
+      const request = {
+        path: '/api/data',
+        info: { remoteAddress: TEST_IP_RESET }
+      }
+      // Exceed the limit within the current window
+      handler(request, h) // 1
+      handler(request, h) // 2
+      handler(request, h) // 3 — over limit
+
+      // Advance past the window so the entry resets
+      vi.advanceTimersByTime(RATE_LIMIT_WINDOW_MS + 1000)
+
+      // After reset, the first request in the new window should be allowed
+      expect(handler(request, h)).toBe(hContinue)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
+// ── Security headers (onPreResponse) tests ────────────────────────────────
+
+describe('createServer - security headers (onPreResponse)', () => {
+  const hContinue = Symbol('hapi-continue')
+  const h = { continue: hContinue }
+  let securityHeadersHandler
+
+  beforeEach(async () => {
+    vi.clearAllMocks()
+    mockServer.register.mockResolvedValue(undefined)
+    config.get.mockImplementation((key) => {
+      const vals = {
+        host: MOCK_HOST,
+        port: MOCK_PORT,
+        'cors.origin': MOCK_ORIGIN,
+        'cors.credentials': true,
+        mongo: MOCK_MONGO,
+        'mockMode.skipSqsWorker': true
+      }
+      return vals[key] ?? null
+    })
+    await createServer()
+    const [[, handler]] = mockServer.ext.mock.calls.filter(
+      ([event]) => event === 'onPreResponse'
+    )
+    securityHeadersHandler = handler
+  })
+
+  it('sets CSP, Referrer-Policy and Permissions-Policy on a normal response', () => {
+    const mockHeader = vi.fn()
+    const request = { response: { isBoom: false, header: mockHeader } }
+    const result = securityHeadersHandler(request, h)
+    expect(result).toBe(hContinue)
+    expect(mockHeader).toHaveBeenCalledWith(
+      'Content-Security-Policy',
+      expect.stringContaining("default-src 'none'")
+    )
+    expect(mockHeader).toHaveBeenCalledWith('Referrer-Policy', 'no-referrer')
+    expect(mockHeader).toHaveBeenCalledWith(
+      'Permissions-Policy',
+      expect.stringContaining('geolocation=()')
+    )
+  })
+
+  it('assigns security headers to Boom error output headers', () => {
+    const boomHeaders = {}
+    const request = {
+      response: { isBoom: true, output: { headers: boomHeaders } }
+    }
+    const result = securityHeadersHandler(request, h)
+    expect(result).toBe(hContinue)
+    expect(boomHeaders['Content-Security-Policy']).toContain(
+      "default-src 'none'"
+    )
+    expect(boomHeaders['Referrer-Policy']).toBe('no-referrer')
+    expect(boomHeaders['Permissions-Policy']).toContain('geolocation=()')
+  })
+})
+
+// ── SQS worker error logging ───────────────────────────────────────────────
+
+describe('createServer - SQS worker error logging', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockServer.register.mockResolvedValue(undefined)
+    config.get.mockImplementation((key) => {
+      const vals = {
+        host: MOCK_HOST,
+        port: MOCK_PORT,
+        'cors.origin': MOCK_ORIGIN,
+        'cors.credentials': true,
+        mongo: MOCK_MONGO,
+        'mockMode.skipSqsWorker': false
+      }
+      return vals[key] ?? null
+    })
+  })
+
+  it('calls server.logger.error when SQS worker.start() rejects', async () => {
+    sqsWorker.start.mockReturnValue(
+      Promise.reject(new Error('SQS connection failed'))
+    )
+    await createServer()
+    await Promise.resolve() // flush microtasks so the .catch() handler runs
+    expect(mockServerLogger.error).toHaveBeenCalledWith(
+      { error: 'SQS connection failed' },
+      'Failed to start SQS worker - will continue without it'
+    )
   })
 })

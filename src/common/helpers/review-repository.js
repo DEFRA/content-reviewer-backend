@@ -29,8 +29,6 @@ const logger = createLogger()
  * S3-based repository for content reviews
  * Stores review data as JSON files in S3
  */
-const DEFAULT_REVIEW_RETENTION_DAYS = 5
-
 class ReviewRepositoryS3 {
   constructor() {
     const s3Config = {

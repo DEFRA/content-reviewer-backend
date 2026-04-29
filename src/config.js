@@ -79,7 +79,12 @@ const config = convict({
       doc: 'Log paths to redact',
       format: Array,
       default: isProduction
-        ? ['req.headers.authorization', 'req.headers.cookie', 'res.headers']
+        ? [
+            'req.headers.authorization',
+            'req.headers.cookie',
+            'req.headers["x-admin-api-key"]',
+            'res.headers'
+          ]
         : ['req', 'res', 'responseTime']
     }
   },
@@ -339,6 +344,12 @@ const config = convict({
       format: Number,
       default: 1,
       env: 'BEDROCK_TOP_P'
+    },
+    enforceDistribution: {
+      doc: 'Fire follow-up Bedrock calls for any document third that has no issues. Disable to reduce Bedrock usage during testing.',
+      format: Boolean,
+      default: false,
+      env: 'BEDROCK_ENFORCE_DISTRIBUTION'
     }
   },
   mockMode: {
@@ -383,12 +394,33 @@ const config = convict({
       env: 'CONTENT_REVIEW_MAX_CHAR_LEN'
     }
   },
-  backendServiceToken: {
-    doc: 'Shared secret for HMAC-based service authentication with frontend',
+  rateLimit: {
+    enabled: {
+      doc: 'Enable per-IP rate limiting on HTTP endpoints',
+      format: Boolean,
+      default: true,
+      env: 'RATE_LIMIT_ENABLED'
+    },
+    windowMs: {
+      doc: 'Rate limit sliding window in milliseconds',
+      format: Number,
+      default: 60000,
+      env: 'RATE_LIMIT_WINDOW_MS'
+    },
+    maxRequests: {
+      doc: 'Maximum requests per IP per window',
+      format: Number,
+      default: 100,
+      env: 'RATE_LIMIT_MAX_REQUESTS'
+    }
+  },
+  adminApiKey: {
+    doc: 'API key required to access /admin/* endpoints. Set this secret in production — leave unset to disable auth (local/dev only).',
     format: String,
+    nullable: true,
+    default: null,
     sensitive: true,
-    default: '',
-    env: 'BACKEND_SERVICE_TOKEN'
+    env: 'ADMIN_API_KEY'
   }
 })
 
