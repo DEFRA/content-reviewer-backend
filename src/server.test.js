@@ -58,8 +58,8 @@ vi.mock('./plugins/router.js', () => ({
   router: { plugin: { name: 'router', register: vi.fn() } }
 }))
 
-vi.mock('./plugins/service-token-auth.js', () => ({
-  serviceTokenAuth: { plugin: { name: 'serviceTokenAuth', register: vi.fn() } }
+vi.mock('./plugins/jwt-auth.js', () => ({
+  jwtAuth: { plugin: { name: 'jwtAuth', register: vi.fn() } }
 }))
 
 vi.mock('./common/helpers/logging/request-logger.js', () => ({
