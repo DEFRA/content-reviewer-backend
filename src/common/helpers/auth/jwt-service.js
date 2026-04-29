@@ -14,6 +14,8 @@ function base64UrlDecode(input) {
   return Buffer.from(input, 'base64url').toString('utf8')
 }
 
+const JWT_PARTS_COUNT = 3
+
 const JWT_HEADER = base64UrlEncode(JSON.stringify({ alg: 'HS256', typ: 'JWT' }))
 
 /**
@@ -54,7 +56,7 @@ export function verifyAccessToken(token) {
   const secret = config.get('auth.jwtSecret')
 
   const parts = token?.split('.')
-  if (!parts || parts.length !== 3) {
+  if (parts?.length !== JWT_PARTS_COUNT) {
     throw new Error('Invalid token format')
   }
 

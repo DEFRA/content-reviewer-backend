@@ -5,6 +5,7 @@ import { createLogger } from '../common/helpers/logging/logger.js'
 const logger = createLogger()
 
 const HTTP_UNAUTHORIZED = 401
+const BEARER_PREFIX_LENGTH = 7 // 'Bearer '.length
 
 // Paths that do not require a Bearer token
 const PUBLIC_PATHS = [
@@ -58,7 +59,7 @@ export const jwtAuth = {
             .takeover()
         }
 
-        const token = authHeader.slice(7)
+        const token = authHeader.slice(BEARER_PREFIX_LENGTH)
         try {
           const claims = verifyAccessToken(token)
           request.app.jwtUser = claims

@@ -38,7 +38,9 @@ function dbUnavailable(h) {
  * plus a long-lived refresh token.
  */
 async function handleLogin(request, h) {
-  if (!request.db) return dbUnavailable(h)
+  if (!request.db) {
+    return dbUnavailable(h)
+  }
   try {
     const { userId, email, name } = request.payload ?? {}
 
@@ -82,7 +84,9 @@ async function handleLogin(request, h) {
  * The refresh token itself is not rotated — only the access token is renewed.
  */
 async function handleRefresh(request, h) {
-  if (!request.db) return dbUnavailable(h)
+  if (!request.db) {
+    return dbUnavailable(h)
+  }
   try {
     const { refreshToken } = request.payload ?? {}
 
@@ -128,7 +132,9 @@ async function handleRefresh(request, h) {
  * new access tokens.
  */
 async function handleLogout(request, h) {
-  if (!request.db) return h.response({ success: true }).code(HTTP_STATUS.OK) // nothing to revoke
+  if (!request.db) {
+    return h.response({ success: true }).code(HTTP_STATUS.OK) // nothing to revoke
+  }
   try {
     const { refreshToken } = request.payload ?? {}
 
