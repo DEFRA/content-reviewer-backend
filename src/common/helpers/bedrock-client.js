@@ -163,16 +163,22 @@ class BedrockClient {
       totalTokens: response.usage?.totalTokens || 0
     }
 
-    const guardrailAssessment = {
-      action: response.trace?.guardrail?.action || 'NONE',
-      assessments: response.trace?.guardrail?.assessments || []
-    }
+    // Bedrock Converse API trace structure:
+    //   response.trace.guardrail.inputAssessment  → Record<id, GuardrailAssessment>
+    //   response.trace.guardrail.outputAssessments → Record<id, GuardrailAssessment[]>
+    // There is NO top-level .action or .assessments array on the guardrail object.
+    const guardrailTrace = response.trace?.guardrail ?? {}
+    const inputAssessments = Object.values(guardrailTrace.inputAssessment ?? {})
+    const outputAssessments = Object.values(
+      guardrailTrace.outputAssessments ?? {}
+    ).flat()
+    const allAssessments = [...inputAssessments, ...outputAssessments]
 
     logger.info(
       {
         responseLength: responseText.length,
         inputTokens: usage.inputTokens,
-        guardrailAction: guardrailAssessment.action
+        stopReason: response.stopReason
       },
       `Bedrock response received — ${responseText.length} chars, input: ${usage.inputTokens} tokens`
     )
@@ -185,25 +191,103 @@ class BedrockClient {
       `Bedrock output: ${usage.outputTokens} tokens (total: ${usage.totalTokens})`
     )
 
-    // Guardrails can block in two ways:
-    //  1. response.trace.guardrail.action === 'BLOCKED'  (explicit block flag)
-    //  2. response.stopReason === 'guardrail_intervened' (guardrail stopped the
-    //     generation; action may still read 'NONE' in the trace but the response
-    //     text is the guardrail's blocked message, not a real review)
-    const guardrailBlocked =
-      guardrailAssessment.action === 'BLOCKED' ||
-      response.stopReason === 'guardrail_intervened'
+    // Guardrail blocking is signalled by stopReason === 'guardrail_intervened'.
+    // The trace.guardrail object has no top-level action field in the Converse API.
+    const guardrailBlocked = response.stopReason === 'guardrail_intervened'
 
     if (guardrailBlocked) {
-      logger.warn('Content blocked by guardrail', {
-        guardrailAssessment,
-        stopReason: response.stopReason
+      // Build a per-assessment breakdown so the logs show exactly which policy
+      // fired and what it matched. PII matched values are NOT logged — only the
+      // entity type is recorded to avoid writing real PII to application logs.
+      const policyBreakdown = allAssessments.map((assessment, idx) => {
+        const detail = { assessmentIndex: idx }
+
+        // Content policy — hate, insults, sexual, violence, misconduct
+        const contentFilters = assessment.contentPolicy?.filters ?? []
+        if (contentFilters.length > 0) {
+          detail.contentPolicy = contentFilters.map((f) => ({
+            type: f.type,
+            confidence: f.confidence,
+            action: f.action
+          }))
+        }
+
+        // Topic policy — custom topics configured on the guardrail
+        const topics = assessment.topicPolicy?.topics ?? []
+        if (topics.length > 0) {
+          detail.topicPolicy = topics.map((t) => ({
+            name: t.name,
+            type: t.type,
+            action: t.action
+          }))
+        }
+
+        // Word policy — managed profanity lists and custom words
+        const managedWords = assessment.wordPolicy?.managedWordLists ?? []
+        const customWords = assessment.wordPolicy?.customWords ?? []
+        if (managedWords.length > 0 || customWords.length > 0) {
+          detail.wordPolicy = {
+            managedWordLists: managedWords.map((w) => ({
+              match: w.match,
+              action: w.action
+            })),
+            customWords: customWords.map((w) => ({
+              match: w.match,
+              action: w.action
+            }))
+          }
+        }
+
+        // PII — log entity TYPE and action only, never the matched value
+        const piiEntities =
+          assessment.sensitiveInformationPolicy?.piiEntities ?? []
+        const regexMatches =
+          assessment.sensitiveInformationPolicy?.regexes ?? []
+        if (piiEntities.length > 0 || regexMatches.length > 0) {
+          detail.sensitiveInformationPolicy = {
+            piiEntityTypes: piiEntities.map((e) => ({
+              type: e.type,
+              action: e.action
+            })),
+            regexMatches: regexMatches.map((r) => ({
+              name: r.name,
+              action: r.action
+            }))
+          }
+        }
+
+        // Contextual grounding — factual accuracy / relevance checks
+        const groundingFilters =
+          assessment.contextualGroundingPolicy?.filters ?? []
+        if (groundingFilters.length > 0) {
+          detail.contextualGroundingPolicy = groundingFilters.map((f) => ({
+            type: f.type,
+            threshold: f.threshold,
+            score: f.score,
+            action: f.action
+          }))
+        }
+
+        return detail
       })
+
+      logger.warn(
+        {
+          stopReason: response.stopReason,
+          guardrailArn: this.guardrailArn,
+          guardrailVersion: this.guardrailVersion,
+          inputAssessmentCount: inputAssessments.length,
+          outputAssessmentCount: outputAssessments.length,
+          policyBreakdown
+        },
+        'Content blocked by guardrail — see policyBreakdown for triggered policies'
+      )
+
       return {
         success: false,
         blocked: true,
         reason: 'Content was blocked by content safety guardrails',
-        guardrailAssessment
+        guardrailAssessment: { allAssessments }
       }
     }
 
@@ -212,7 +296,7 @@ class BedrockClient {
       blocked: false,
       content: responseText,
       usage,
-      guardrailAssessment,
+      guardrailAssessment: { allAssessments },
       stopReason: response.stopReason
     }
   }
