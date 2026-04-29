@@ -9,10 +9,14 @@ import {
   createReviewRecord,
   queueReviewJob
 } from './review-helpers.js'
-import pdfParse from 'pdf-parse'
-import mammoth from 'mammoth'
+// ESM interop import
+import * as pdfParsePkg from 'pdf-parse'
+import * as mammothPkg from 'mammoth'
+
 import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3'
 
+const pdfParse = pdfParsePkg?.default ?? pdfParsePkg
+const mammoth = mammothPkg?.default ?? mammothPkg
 const ENDPOINT_UPLOAD = '/api/upload'
 const ENDPOINT_CALLBACK = '/upload-callback'
 const MAX_FILE_BYTES = 10 * 1024 * 1024 // 10 MB
@@ -332,9 +336,7 @@ const handleUploadCallback = async (request, h) => {
       `Extracted text from file - reviewId: ${reviewId}, charCount: ${textLength}`
     )
 
-    // ✅ Run pipeline ASYNCHRONOUSLY (don't await)
-    // So we can return quickly to CDP Uploader
-    runCallbackPipeline(
+    launchAsyncPipeline(
       text,
       s3Key,
       filename,
@@ -342,16 +344,7 @@ const handleUploadCallback = async (request, h) => {
       reviewId,
       userId,
       request.logger
-    ).catch((error) => {
-      request.logger.error(
-        {
-          reviewId,
-          error: error.message,
-          stack: error.stack
-        },
-        '[CALLBACK] Async pipeline failed'
-      )
-    })
+    )
 
     const totalDuration = Math.round(performance.now() - requestStartTime)
 
@@ -389,6 +382,38 @@ const handleUploadCallback = async (request, h) => {
       .response({ success: false, message: error.message })
       .code(HTTP_STATUS.INTERNAL_SERVER_ERROR)
   }
+}
+
+/**
+ * Start the asynchronous pipeline and ensure errors are logged.
+ */
+function launchAsyncPipeline(
+  text,
+  s3Key,
+  filename,
+  contentType,
+  reviewId,
+  userId,
+  logger
+) {
+  runCallbackPipeline(
+    text,
+    s3Key,
+    filename,
+    contentType,
+    reviewId,
+    userId,
+    logger
+  ).catch((error) => {
+    logger.error(
+      {
+        reviewId,
+        error: error.message,
+        stack: error.stack
+      },
+      '[CALLBACK] Async pipeline failed'
+    )
+  })
 }
 
 async function bufferFromS3(s3Client, bucket, key) {
