@@ -259,8 +259,12 @@ class TextExtractor {
    */
   async extractFromDocx(buffer) {
     try {
+      const arrayBuffer = buffer.buffer.slice(
+        buffer.byteOffset,
+        buffer.byteOffset + buffer.byteLength
+      )
       // convertToMarkdown preserves: headings, bullets, bold, links
-      const result = await mammoth.convertToMarkdown({ buffer })
+      const result = await mammoth.convertToMarkdown({ arrayBuffer })
 
       if (result.messages && result.messages.length > 0) {
         logger.warn(
