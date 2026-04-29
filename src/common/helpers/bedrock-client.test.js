@@ -620,32 +620,33 @@ describe('bedrockClient.sendMessage - retry on retryable errors', () => {
     vi.spyOn(bedrockClient, '_sleep').mockResolvedValue(undefined)
   })
 
-  it('retries and succeeds after a ThrottlingException on first attempt', async () => {
+  it('throws immediately on ThrottlingException without retrying', async () => {
     const throttleError = new Error('throttled')
     throttleError.name = 'ThrottlingException'
     MOCK_SEND.mockRejectedValueOnce(throttleError)
-    MOCK_SEND.mockResolvedValueOnce(buildBedrockResponse())
 
-    const result = await bedrockClient.sendMessage(SAMPLE_USER_MESSAGE)
+    await expect(
+      bedrockClient.sendMessage(SAMPLE_USER_MESSAGE)
+    ).rejects.toThrow('token quota exceeded')
 
-    expect(result.success).toBe(true)
-    expect(result.content).toBe(SAMPLE_RESPONSE_TEXT)
-    expect(bedrockClient._sleep).toHaveBeenCalledOnce()
+    expect(bedrockClient._sleep).not.toHaveBeenCalled()
+    expect(MOCK_SEND).toHaveBeenCalledOnce()
   })
 
-  it('retries and succeeds after a ServiceUnavailableException', async () => {
+  it('throws immediately on ServiceUnavailableException without retrying', async () => {
     const serviceError = new Error('unavailable')
     serviceError.name = 'ServiceUnavailableException'
     MOCK_SEND.mockRejectedValueOnce(serviceError)
-    MOCK_SEND.mockResolvedValueOnce(buildBedrockResponse())
 
-    const result = await bedrockClient.sendMessage(SAMPLE_USER_MESSAGE)
+    await expect(
+      bedrockClient.sendMessage(SAMPLE_USER_MESSAGE)
+    ).rejects.toThrow('temporarily unavailable')
 
-    expect(result.success).toBe(true)
-    expect(bedrockClient._sleep).toHaveBeenCalledOnce()
+    expect(bedrockClient._sleep).not.toHaveBeenCalled()
+    expect(MOCK_SEND).toHaveBeenCalledOnce()
   })
 
-  it('throws after exhausting all retries on repeated ThrottlingException', async () => {
+  it('throws immediately on repeated ThrottlingException without retrying', async () => {
     const throttleError = new Error('throttled')
     throttleError.name = 'ThrottlingException'
     MOCK_SEND.mockRejectedValue(throttleError)
@@ -653,6 +654,8 @@ describe('bedrockClient.sendMessage - retry on retryable errors', () => {
     await expect(
       bedrockClient.sendMessage(SAMPLE_USER_MESSAGE)
     ).rejects.toThrow('token quota exceeded')
+
+    expect(bedrockClient._sleep).not.toHaveBeenCalled()
   })
 
   it('includes system prompt in command input when provided', async () => {

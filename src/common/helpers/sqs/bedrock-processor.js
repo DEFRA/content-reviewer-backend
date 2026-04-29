@@ -9,6 +9,7 @@ const logger = createLogger()
 // ─── Distribution helpers ─────────────────────────────────────────────────────
 
 const THIRDS_COUNT = 3
+const CHARS_PER_TOKEN = 4
 const MIN_ISSUES_LARGE_DOC = 3
 const MIN_ISSUES_MEDIUM_DOC = 2
 const MIN_ISSUES_SMALL_DOC = 1
@@ -163,13 +164,15 @@ export class BedrockReviewProcessor {
       performance.now() - promptLoadStartTime
     )
 
+    const systemPromptTokens = Math.round(systemPrompt.length / CHARS_PER_TOKEN)
     logger.info(
       {
         reviewId,
         systemPromptLength: systemPrompt.length,
+        systemPromptTokens,
         durationMs: promptLoadDuration
       },
-      `System prompt loaded from S3 in ${promptLoadDuration}ms | ReviewId: ${reviewId} | Length: ${systemPrompt.length} chars`
+      `System prompt loaded from S3 in ${promptLoadDuration}ms | ReviewId: ${reviewId} | Length: ${systemPrompt.length} chars (~${systemPromptTokens} tokens)`
     )
 
     return { systemPrompt, promptLoadDuration }
@@ -312,13 +315,15 @@ export class BedrockReviewProcessor {
   async performBedrockReview(reviewId, textContent) {
     const userPrompt = this.buildUserPrompt(textContent)
 
+    const userPromptTokens = Math.round(userPrompt.length / CHARS_PER_TOKEN)
     logger.info(
       {
         reviewId,
         promptLength: userPrompt.length,
+        promptTokens: userPromptTokens,
         textContentLength: textContent.length
       },
-      `User prompt prepared for Bedrock AI review | ReviewId: ${reviewId} | Length: ${userPrompt.length} chars`
+      `User prompt prepared for Bedrock AI review | ReviewId: ${reviewId} | Length: ${userPrompt.length} chars (~${userPromptTokens} tokens)`
     )
 
     const { systemPrompt } = await this.loadSystemPrompt(reviewId)

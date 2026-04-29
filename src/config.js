@@ -277,9 +277,9 @@ const config = convict({
       env: 'SQS_WAIT_TIME_SECONDS'
     },
     visibilityTimeout: {
-      doc: 'Message visibility timeout in seconds. Must exceed the Bedrock client timeout (360s) plus processing overhead — set to 900s (15 min) so a large 100k-char document cannot become visible again mid-processing.',
+      doc: 'Message visibility timeout in seconds. Set to 300s (5 min) — after a failed processing attempt the message becomes visible again for SQS retry.',
       format: Number,
-      default: 900,
+      default: 300,
       env: 'SQS_VISIBILITY_TIMEOUT'
     },
     maxConcurrentRequests: {
