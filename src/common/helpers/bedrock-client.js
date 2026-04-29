@@ -150,6 +150,113 @@ class BedrockClient {
     throw new Error(`Bedrock API error: ${error.message}`)
   }
 
+  /** @private */
+  _extractContentPolicyDetail(assessment) {
+    const filters = assessment.contentPolicy?.filters ?? []
+    if (filters.length === 0) {
+      return null
+    }
+    return filters.map((f) => ({
+      type: f.type,
+      confidence: f.confidence,
+      action: f.action
+    }))
+  }
+
+  /** @private */
+  _extractTopicPolicyDetail(assessment) {
+    const topics = assessment.topicPolicy?.topics ?? []
+    if (topics.length === 0) {
+      return null
+    }
+    return topics.map((t) => ({ name: t.name, type: t.type, action: t.action }))
+  }
+
+  /** @private */
+  _extractWordPolicyDetail(assessment) {
+    const managedWords = assessment.wordPolicy?.managedWordLists ?? []
+    const customWords = assessment.wordPolicy?.customWords ?? []
+    if (managedWords.length === 0 && customWords.length === 0) {
+      return null
+    }
+    return {
+      managedWordLists: managedWords.map((w) => ({
+        match: w.match,
+        action: w.action
+      })),
+      customWords: customWords.map((w) => ({
+        match: w.match,
+        action: w.action
+      }))
+    }
+  }
+
+  /**
+   * PII matched values are deliberately NOT logged — only the entity type
+   * and action are recorded to avoid writing real PII to application logs.
+   * @private
+   */
+  _extractSensitiveInfoPolicyDetail(assessment) {
+    const piiEntities = assessment.sensitiveInformationPolicy?.piiEntities ?? []
+    const regexMatches = assessment.sensitiveInformationPolicy?.regexes ?? []
+    if (piiEntities.length === 0 && regexMatches.length === 0) {
+      return null
+    }
+    return {
+      piiEntityTypes: piiEntities.map((e) => ({
+        type: e.type,
+        action: e.action
+      })),
+      regexMatches: regexMatches.map((r) => ({
+        name: r.name,
+        action: r.action
+      }))
+    }
+  }
+
+  /** @private */
+  _extractGroundingPolicyDetail(assessment) {
+    const filters = assessment.contextualGroundingPolicy?.filters ?? []
+    if (filters.length === 0) {
+      return null
+    }
+    return filters.map((f) => ({
+      type: f.type,
+      threshold: f.threshold,
+      score: f.score,
+      action: f.action
+    }))
+  }
+
+  /**
+   * Build a per-assessment policy breakdown for guardrail block logging.
+   * @private
+   */
+  _extractAssessmentDetail(assessment, idx) {
+    const detail = { assessmentIndex: idx }
+    const contentPolicy = this._extractContentPolicyDetail(assessment)
+    if (contentPolicy) {
+      detail.contentPolicy = contentPolicy
+    }
+    const topicPolicy = this._extractTopicPolicyDetail(assessment)
+    if (topicPolicy) {
+      detail.topicPolicy = topicPolicy
+    }
+    const wordPolicy = this._extractWordPolicyDetail(assessment)
+    if (wordPolicy) {
+      detail.wordPolicy = wordPolicy
+    }
+    const sensitiveInfo = this._extractSensitiveInfoPolicyDetail(assessment)
+    if (sensitiveInfo) {
+      detail.sensitiveInformationPolicy = sensitiveInfo
+    }
+    const grounding = this._extractGroundingPolicyDetail(assessment)
+    if (grounding) {
+      detail.contextualGroundingPolicy = grounding
+    }
+    return detail
+  }
+
   /**
    * Process Bedrock API response
    * @private
@@ -163,16 +270,22 @@ class BedrockClient {
       totalTokens: response.usage?.totalTokens || 0
     }
 
-    const guardrailAssessment = {
-      action: response.trace?.guardrail?.action || 'NONE',
-      assessments: response.trace?.guardrail?.assessments || []
-    }
+    // Bedrock Converse API trace structure:
+    //   response.trace.guardrail.inputAssessment  → Record<id, GuardrailAssessment>
+    //   response.trace.guardrail.outputAssessments → Record<id, GuardrailAssessment[]>
+    // There is NO top-level .action or .assessments array on the guardrail object.
+    const guardrailTrace = response.trace?.guardrail ?? {}
+    const inputAssessments = Object.values(guardrailTrace.inputAssessment ?? {})
+    const outputAssessments = Object.values(
+      guardrailTrace.outputAssessments ?? {}
+    ).flat()
+    const allAssessments = [...inputAssessments, ...outputAssessments]
 
     logger.info(
       {
         responseLength: responseText.length,
         inputTokens: usage.inputTokens,
-        guardrailAction: guardrailAssessment.action
+        stopReason: response.stopReason
       },
       `Bedrock response received — ${responseText.length} chars, input: ${usage.inputTokens} tokens`
     )
@@ -185,25 +298,30 @@ class BedrockClient {
       `Bedrock output: ${usage.outputTokens} tokens (total: ${usage.totalTokens})`
     )
 
-    // Guardrails can block in two ways:
-    //  1. response.trace.guardrail.action === 'BLOCKED'  (explicit block flag)
-    //  2. response.stopReason === 'guardrail_intervened' (guardrail stopped the
-    //     generation; action may still read 'NONE' in the trace but the response
-    //     text is the guardrail's blocked message, not a real review)
-    const guardrailBlocked =
-      guardrailAssessment.action === 'BLOCKED' ||
-      response.stopReason === 'guardrail_intervened'
+    // Guardrail blocking is signalled by stopReason === 'guardrail_intervened'.
+    // The trace.guardrail object has no top-level action field in the Converse API.
+    if (response.stopReason === 'guardrail_intervened') {
+      const policyBreakdown = allAssessments.map((a, idx) =>
+        this._extractAssessmentDetail(a, idx)
+      )
 
-    if (guardrailBlocked) {
-      logger.warn('Content blocked by guardrail', {
-        guardrailAssessment,
-        stopReason: response.stopReason
-      })
+      logger.warn(
+        {
+          stopReason: response.stopReason,
+          guardrailArn: this.guardrailArn,
+          guardrailVersion: this.guardrailVersion,
+          inputAssessmentCount: inputAssessments.length,
+          outputAssessmentCount: outputAssessments.length,
+          policyBreakdown
+        },
+        'Content blocked by guardrail — see policyBreakdown for triggered policies'
+      )
+
       return {
         success: false,
         blocked: true,
         reason: 'Content was blocked by content safety guardrails',
-        guardrailAssessment
+        guardrailAssessment: { allAssessments }
       }
     }
 
@@ -212,7 +330,7 @@ class BedrockClient {
       blocked: false,
       content: responseText,
       usage,
-      guardrailAssessment,
+      guardrailAssessment: { allAssessments },
       stopReason: response.stopReason
     }
   }
