@@ -5,7 +5,6 @@ import { results } from '../routes/results.js'
 import { sqsWorkerStatus } from '../routes/sqs-worker-status.js'
 import { resultEnvelope } from '../routes/result-envelope.js'
 import { adminRoutes } from '../routes/admin.js'
-import { authRoutes } from '../routes/auth.js'
 
 const router = {
   plugin: {
@@ -13,7 +12,6 @@ const router = {
     register: async (server, _options) => {
       server.route([health, sqsWorkerStatus])
       await server.register([
-        authRoutes,
         reviewRoutes,
         uploadRoutes,
         results,
