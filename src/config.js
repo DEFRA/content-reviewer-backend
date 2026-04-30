@@ -227,6 +227,12 @@ const config = convict({
       format: String,
       default: 'content-uploads',
       env: 'RAW_S3_PATH'
+    },
+    requestTimeoutMs: {
+      doc: 'S3 client request timeout in milliseconds. Applied to PutObject calls (text-content upload). 30 s is generous for a text payload over a VPC-internal connection; prevents silent hangs when S3 is degraded.',
+      format: Number,
+      default: 30000,
+      env: 'S3_REQUEST_TIMEOUT_MS'
     }
   },
   aws: {
@@ -277,9 +283,9 @@ const config = convict({
       env: 'SQS_WAIT_TIME_SECONDS'
     },
     visibilityTimeout: {
-      doc: 'Message visibility timeout in seconds. Set to 300s (5 min) — after a failed processing attempt the message becomes visible again for SQS retry.',
+      doc: 'Message visibility timeout in seconds. Must exceed BEDROCK_TIMEOUT_MS (360 s). Set to 420 s (7 min) — gives Bedrock its full 6-min window plus a 60 s safety margin before SQS considers the message failed and re-delivers it.',
       format: Number,
-      default: 300,
+      default: 420,
       env: 'SQS_VISIBILITY_TIMEOUT'
     },
     maxConcurrentRequests: {
