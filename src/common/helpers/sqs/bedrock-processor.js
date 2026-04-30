@@ -220,11 +220,14 @@ export class BedrockReviewProcessor {
         `[BEDROCK] AI review FAILED after ${bedrockDuration}ms`
       )
 
-      throw new Error(
+      const err = new Error(
         bedrockResponse.blocked
           ? 'Content blocked by guardrails'
           : 'Bedrock review failed'
       )
+      err.guardrailAssessment = bedrockResponse.guardrailAssessment ?? null
+      err.policyBreakdown = bedrockResponse.policyBreakdown ?? null
+      throw err
     }
 
     logger.info(
