@@ -305,7 +305,7 @@ class BedrockClient {
         this._extractAssessmentDetail(a, idx)
       )
 
-      logger.warn(
+      logger.error(
         {
           stopReason: response.stopReason,
           guardrailArn: this.guardrailArn,
@@ -321,6 +321,7 @@ class BedrockClient {
         success: false,
         blocked: true,
         reason: 'Content was blocked by content safety guardrails',
+        policyBreakdown,
         guardrailAssessment: { allAssessments }
       }
     }
