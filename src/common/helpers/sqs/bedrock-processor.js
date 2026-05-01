@@ -215,6 +215,7 @@ export class BedrockReviewProcessor {
           reviewId,
           blocked: bedrockResponse.blocked,
           reason: bedrockResponse.reason,
+          policyBreakdown: bedrockResponse.policyBreakdown ?? null,
           durationMs: bedrockDuration
         },
         `[BEDROCK] AI review FAILED after ${bedrockDuration}ms`
