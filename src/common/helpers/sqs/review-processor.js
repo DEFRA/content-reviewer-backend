@@ -151,16 +151,21 @@ export class ReviewProcessor {
 
   /**
    * Process a single message.
-   * Runs a visibility-timeout heartbeat every 4 minutes so a long-running
-   * Bedrock call (100k-char documents can take 3-5 min) cannot cause the
+   * Runs a visibility-timeout heartbeat every 90 s so any unexpected delay
+   * before or during the Bedrock call (capped at 120 s) cannot cause the
    * message to become visible again and trigger duplicate processing.
+   * On failure, visibility is explicitly reset to 180 s (3 min) from the
+   * moment of failure so the retry always waits the full backoff window.
    */
   async processMessage(message, messageHandler) {
     const startTime = performance.now()
 
-    // Heartbeat: extend visibility every 4 minutes while processing.
-    const HEARTBEAT_INTERVAL_MS = 4 * 60 * 1000
-    const HEARTBEAT_VISIBILITY_SECONDS = 900
+    // Heartbeat: extend visibility every 90 s while processing.
+    // Fires once as a safety net in case pre-Bedrock steps take longer than
+    // expected; Bedrock itself is capped at 120 s so processing always
+    // completes before the second heartbeat would fire at 180 s.
+    const HEARTBEAT_INTERVAL_MS = 90_000
+    const HEARTBEAT_VISIBILITY_SECONDS = 180
     const heartbeat = setInterval(() => {
       messageHandler
         .extendVisibility(message.ReceiptHandle, HEARTBEAT_VISIBILITY_SECONDS)
@@ -211,6 +216,15 @@ export class ReviewProcessor {
           durationMs: duration
         },
         `Failed to process SQS message after ${duration}ms: ${error.message}`
+      )
+
+      // Explicitly reset the visibility window to 3 minutes from now.
+      // Without this, the remaining window could be as short as
+      // (180 s − durationMs) which would cause an earlier-than-expected retry.
+      // extendVisibility handles its own errors internally and never throws.
+      await messageHandler.extendVisibility(
+        message.ReceiptHandle,
+        HEARTBEAT_VISIBILITY_SECONDS
       )
     }
   }

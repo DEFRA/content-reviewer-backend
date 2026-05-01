@@ -12,8 +12,8 @@ on:
       - ready_for_review
 
 permissions:
-  contents: read        # checkout
-  pull-requests: read   # SonarCloud PR decoration
+  contents: read # checkout
+  pull-requests: read # SonarCloud PR decoration
 
 jobs:
   pr-validator:

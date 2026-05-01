@@ -210,7 +210,7 @@ describe('ReviewProcessor - processMessage - error handling', () => {
 describe('ReviewProcessor - processMessage - heartbeat', () => {
   let processor
   let messageHandler
-  const FOUR_MINUTES_MS = 4 * 60 * 1000
+  const NINETY_SECONDS_MS = 90_000
 
   beforeEach(() => {
     vi.clearAllMocks()
@@ -227,7 +227,7 @@ describe('ReviewProcessor - processMessage - heartbeat', () => {
     vi.useRealTimers()
   })
 
-  test('calls extendVisibility after 4 minutes during long-running processing', async () => {
+  test('calls extendVisibility with 180 s after 90 s during long-running processing', async () => {
     const message = {
       MessageId: TEST_MESSAGE_ID,
       Body: JSON.stringify({ uploadId: TEST_UPLOAD_ID }),
@@ -243,10 +243,10 @@ describe('ReviewProcessor - processMessage - heartbeat', () => {
 
     const processingPromise = processor.processMessage(message, messageHandler)
 
-    await vi.advanceTimersByTimeAsync(FOUR_MINUTES_MS)
+    await vi.advanceTimersByTimeAsync(NINETY_SECONDS_MS)
     expect(messageHandler.extendVisibility).toHaveBeenCalledWith(
       TEST_RECEIPT_HANDLE,
-      900
+      180
     )
 
     // Resolve the pending promise with the correct { canonicalText, displayText } shape
@@ -268,6 +268,42 @@ describe('ReviewProcessor - processMessage - heartbeat', () => {
     mockSaveReviewResult.mockResolvedValue()
 
     await processingPromise
+  })
+})
+
+describe('ReviewProcessor - processMessage - failure retry visibility', () => {
+  let processor
+  let messageHandler
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    processor = new ReviewProcessor()
+    messageHandler = {
+      deleteMessage: mockDeleteMessage,
+      getReceiveCount: vi.fn().mockReturnValue(1),
+      extendVisibility: vi.fn().mockResolvedValue(undefined)
+    }
+  })
+
+  test('resets visibility to 180 s on processing failure so retry waits the full 3-min window', async () => {
+    const message = {
+      MessageId: TEST_MESSAGE_ID,
+      Body: JSON.stringify({ uploadId: TEST_UPLOAD_ID }),
+      ReceiptHandle: TEST_RECEIPT_HANDLE
+    }
+
+    mockExtractTextContent.mockRejectedValue(new Error(TEST_PROCESSING_FAILED))
+
+    await processor.processMessage(message, messageHandler)
+
+    // extendVisibility must be called with exactly 180 s so the message is
+    // hidden for the full 3-minute window from the moment of failure.
+    expect(messageHandler.extendVisibility).toHaveBeenCalledWith(
+      TEST_RECEIPT_HANDLE,
+      180
+    )
+    // Message must NOT be deleted — it must be retried via SQS redelivery.
+    expect(mockDeleteMessage).not.toHaveBeenCalled()
   })
 })
 

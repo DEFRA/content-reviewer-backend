@@ -27,7 +27,12 @@ class S3Uploader {
       this.s3Client = null
     } else {
       const s3Config = {
-        region: config.get('aws.region')
+        region: config.get('aws.region'),
+        // Hard timeout on all S3 API calls — prevents silent hangs when S3 is
+        // degraded. Value is sourced from config so it can be tuned per environment.
+        requestHandler: {
+          requestTimeout: config.get('s3.requestTimeoutMs')
+        }
       }
 
       // Add endpoint for LocalStack if configured
