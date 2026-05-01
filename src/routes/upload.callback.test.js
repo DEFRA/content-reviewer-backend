@@ -15,7 +15,6 @@ const CONTENT_TYPE_DOCX =
 const CONTENT_TYPE_TEXT = 'text/plain'
 const S3_KEY_DEFAULT = 'some/key.pdf'
 const FILENAME_PDF = 'document.pdf'
-const FILENAME_DOC = 'doc.pdf'
 const USER_ID = 'user1'
 const MAX_REVIEW_CHARS = 100000
 
