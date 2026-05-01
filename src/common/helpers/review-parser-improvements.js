@@ -92,8 +92,8 @@ function parseImprovementBlock(block, originalText = '') {
 
   const rawStart = extractField(block, 'START')
   const rawEnd = extractField(block, 'END')
-  const start = rawStart !== '' ? Number(rawStart) : undefined
-  const end = rawEnd !== '' ? Number(rawEnd) : undefined
+  const start = rawStart === '' ? undefined : Number(rawStart)
+  const end = rawEnd === '' ? undefined : Number(rawEnd)
 
   const current = extractCurrentField(block)
   const suggested = extractSuggestedField(block)
