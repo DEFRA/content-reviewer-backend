@@ -307,22 +307,9 @@ const handleUploadCallback = async (request, h) => {
     const fileField = form.file
 
     if (fileField.hasError) {
-      request.logger.error(
-        { errorMessage: fileField.errorMessage },
-        'File rejected with error in callback'
-      )
-      uploadStatusStore.set(reviewId, {
-        status: 'rejected',
-        message: `upload failed with error: ${fileField.errorMessage}`,
-        updatedAt: Date.now()
-      })
-      return h
-        .response({
-          success: false,
-          message: fileField.errorMessage || 'File validation failed'
-        })
-        .code(HTTP_STATUS.OK)
+      return handleRejectedFile(fileField, reviewId, request, h)
     }
+
     const userId = metadata?.userId || 'content-reviewer-frontend'
 
     const { contentType, s3Key, filename } = fileField
@@ -390,6 +377,24 @@ const handleUploadCallback = async (request, h) => {
       .response({ success: false, message: error.message })
       .code(HTTP_STATUS.INTERNAL_SERVER_ERROR)
   }
+}
+
+function handleRejectedFile(fileField, reviewId, request, h) {
+  request.logger.error(
+    { errorMessage: fileField.errorMessage },
+    'File rejected with error in callback'
+  )
+  uploadStatusStore.set(reviewId, {
+    status: 'rejected',
+    message: `upload failed with error: ${fileField.errorMessage}`,
+    updatedAt: Date.now()
+  })
+  return h
+    .response({
+      success: false,
+      message: fileField.errorMessage || 'File validation failed'
+    })
+    .code(HTTP_STATUS.OK)
 }
 
 /**
