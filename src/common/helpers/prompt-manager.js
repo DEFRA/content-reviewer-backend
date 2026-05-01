@@ -75,7 +75,7 @@ The input is **plain text only** — no formatting is preserved. You cannot see 
 
 **Issue distribution:**
 - The user prompt provides character offsets dividing the document into thirds ("first_third_end", "middle_third_start", "middle_third_end", "final_third_start") and a "min_issues_per_third" value scaled to document length.
-- You MUST include at least min_issues_per_third issues in each third (default: 1 if not provided). If a third contains fewer than ~50 characters of reviewable content, the requirement is waived for that third only. Otherwise, if any third falls short, re-read it and find genuine issues there before writing [ISSUE_POSITIONS]
+- You MUST include at least min_issues_per_third issues in each third (default: 1 if not provided). If a third contains fewer than ~50 characters of reviewable content, the requirement is waived for that third only. Otherwise, if any third falls short, re-read it and find genuine issues there before writing [IMPROVEMENTS]
 - Exception: if every category scores 5, return \`{"issues":[]}\`
 
 **Issue span rules:**
@@ -117,7 +117,7 @@ The input is **plain text only** — no formatting is preserved. You cannot see 
 
 ## OUTPUT FORMAT & STRUCTURE
 
-Return structured plain text only. Response must start with \`[SCORES]\` and end with \`[/IMPROVEMENTS]\`. Three sections:
+Return structured plain text only. Response must start with \`[SCORES]\` and end with \`[/IMPROVEMENTS]\`. Two sections:
 
 **[SCORES]** — the five review categories detailed in the REVIEW CATEGORIES section, each scored 1–5 with a brief generic note (never quote specific content from the document):
 - Plain English: X/5 - note
@@ -127,19 +127,14 @@ Return structured plain text only. Response must start with \`[SCORES]\` and end
 - Content Completeness: X/5 – note
 - 5=Excellent (no issues), 4=Good (minor), 3=Acceptable (several), 2=Needs Work (major), 1=Poor (blocks publication)
 
-**[ISSUE_POSITIONS]** — single-line JSON: \`{"issues":[...]}\`. Each issue has exactly:
-- \`ref\` (integer): 1-based, matches REF: in [IMPROVEMENTS]
-- \`start\` (integer): 0-based char offset from start of text inside \`<content_to_review>\`
-- \`end\` (integer): exclusive end offset — \`inputText.slice(start, end)\` must yield the exact span
-- \`type\` (string): one of \`plain-english\`, \`clarity\`, \`accessibility\`, \`govuk-style\`, \`completeness\`
-- \`text\` (string): exact result of \`inputText.slice(start, end)\` — copy character-for-character; if you cannot locate the exact span, omit the issue entirely
-
 **[IMPROVEMENTS]** — one \`[PRIORITY: severity]\` block per issue (critical/high/medium/low), ordered most critical first:
-- \`REF:\` — matches ref in [ISSUE_POSITIONS]
+- \`REF:\` — 1-based integer, unique per issue
 - \`CATEGORY:\` — one of the five categories
+- \`START:\` — 0-based char offset from start of text inside \`<content_to_review>\`
+- \`END:\` — exclusive end offset — \`inputText.slice(START, END)\` must yield the exact span
 - \`ISSUE:\` — specific descriptive title, never "Issue identified"
 - \`WHY:\` — impact and GOV.UK compliance reason; for short spans, quote the full surrounding sentence for context
-- \`CURRENT:\` — exact verbatim copy of the \`text\` field from [ISSUE_POSITIONS], on a single line
+- \`CURRENT:\` — exact verbatim copy of \`inputText.slice(START, END)\`, on a single line; if you cannot locate the exact span, omit the issue entirely
 - \`SUGGESTED:\` — concrete rewrite that differs from CURRENT; no placeholders like "[insert term]"
 
 **Example:**
@@ -152,14 +147,12 @@ GOV.UK Style Compliance: 3/5 - Several banned phrases used
 Content Completeness: 5/5 - All necessary information present
 [/SCORES]
 
-[ISSUE_POSITIONS]
-{"issues":[{"ref":1,"start":22,"end":29,"type":"plain-english","text":"utilise"},{"ref":2,"start":54,"end":67,"type":"govuk-style","text":"going forward"}]}
-[/ISSUE_POSITIONS]
-
 [IMPROVEMENTS]
 [PRIORITY: high]
 REF: 1
 CATEGORY: Plain English
+START: 22
+END: 29
 ISSUE: Jargon word — simpler alternative exists
 WHY: "utilise" is on the GOV.UK words-to-avoid list. In context: "The department should utilise all available resources."
 CURRENT: utilise
@@ -169,6 +162,8 @@ SUGGESTED: The department should use all available resources.
 [PRIORITY: medium]
 REF: 2
 CATEGORY: GOV.UK Style Compliance
+START: 54
+END: 67
 ISSUE: Banned phrase — "going forward"
 WHY: "going forward" should be replaced with "in future". In context: "going forward, we will review all cases."
 CURRENT: going forward

@@ -10,6 +10,18 @@ const REVIEWED_CONTENT_TAG = '[REVIEWED_CONTENT]'
 const ISSUE_POSITIONS_TAG = '[ISSUE_POSITIONS]'
 const ISSUE_POSITIONS_CLOSE_TAG = '[/ISSUE_POSITIONS]'
 const IMPROVEMENTS_TAG = '[IMPROVEMENTS]'
+const TYPE_PLAIN_ENGLISH = 'plain-english'
+
+const CATEGORY_TO_TYPE = {
+  'plain english': TYPE_PLAIN_ENGLISH,
+  clarity: 'clarity',
+  'clarity & structure': 'clarity',
+  accessibility: 'accessibility',
+  'govuk style compliance': 'govuk-style',
+  'gov.uk style compliance': 'govuk-style',
+  'content completeness': 'completeness',
+  completeness: 'completeness'
+}
 
 /**
  * Parse the [ISSUE_POSITIONS] section.
@@ -68,7 +80,7 @@ function locateTextInDocument(text, ref, originalText) {
 function mapRawIssue(raw, originalText) {
   const start = Number(raw.start)
   const end = Number(raw.end)
-  const type = raw.type || 'plain-english'
+  const type = raw.type || TYPE_PLAIN_ENGLISH
 
   // Reject entries with non-numeric or out-of-order offsets
   if (Number.isNaN(start) || Number.isNaN(end) || end <= start || start < 0) {
@@ -461,6 +473,12 @@ function parseImprovementBlock(block, originalText = '') {
   const rawRef = extractField(block, 'REF')
   const ref = rawRef ? Number(rawRef) : undefined
 
+  // Extract START:/END: fields — present in the new inline-positions format.
+  const rawStart = extractField(block, 'START')
+  const rawEnd = extractField(block, 'END')
+  const start = rawStart !== '' ? Number(rawStart) : undefined
+  const end = rawEnd !== '' ? Number(rawEnd) : undefined
+
   const current = extractCurrentField(block)
   const suggested = extractSuggestedField(block)
 
@@ -488,7 +506,9 @@ function parseImprovementBlock(block, originalText = '') {
     why,
     current,
     suggested,
-    ref
+    ref,
+    start,
+    end
   }
 }
 
@@ -662,12 +682,48 @@ function extractImprovements(bedrockResponse, originalText = '') {
 }
 
 /**
+ * Build the issues array from parsed improvements when the response uses the
+ * new inline START:/END: format (no [ISSUE_POSITIONS] section).
+ * Uses locateTextInDocument to correct any hallucinated offsets via indexOf.
+ */
+function buildIssuesFromImprovements(improvements, originalText) {
+  return improvements
+    .filter((imp) => imp.current)
+    .map((imp) => {
+      const type =
+        CATEGORY_TO_TYPE[imp.category.toLowerCase()] || TYPE_PLAIN_ENGLISH
+      const located = locateTextInDocument(imp.current, imp.ref, originalText)
+      if (!located) {
+        return null
+      }
+      return {
+        start: located.start,
+        end: located.end,
+        type,
+        text: imp.current,
+        ref: imp.ref
+      }
+    })
+    .filter(Boolean)
+}
+
+/**
  * Parse marker-based review format
  */
 function parseMarkerBasedReview(bedrockResponse, originalText = '') {
   const scores = extractScores(bedrockResponse)
-  const reviewedContent = extractReviewedContent(bedrockResponse, originalText)
   const improvements = extractImprovements(bedrockResponse, originalText)
+
+  let reviewedContent
+  if (
+    bedrockResponse.includes(ISSUE_POSITIONS_TAG) ||
+    bedrockResponse.includes(REVIEWED_CONTENT_TAG)
+  ) {
+    reviewedContent = extractReviewedContent(bedrockResponse, originalText)
+  } else {
+    const issues = buildIssuesFromImprovements(improvements, originalText)
+    reviewedContent = { plainText: originalText, issues }
+  }
 
   logger.info(
     {
