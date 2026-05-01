@@ -466,8 +466,20 @@ export class ReviewProcessor {
 
     const errorMessage = this.errorHandler.formatErrorForUI(error)
 
+    const guardrailData =
+      error.guardrailAssessment || error.policyBreakdown
+        ? {
+            guardrailAssessment: error.guardrailAssessment ?? null,
+            policyBreakdown: error.policyBreakdown ?? null
+          }
+        : {}
+
     try {
-      await reviewRepository.saveReviewError(reviewId, errorMessage)
+      await reviewRepository.saveReviewError(
+        reviewId,
+        errorMessage,
+        guardrailData
+      )
       logger.info(
         {
           reviewId,
