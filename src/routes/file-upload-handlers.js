@@ -16,6 +16,10 @@ const MAX_FILE_BYTES = 10 * 1024 * 1024 // 10 MB
 const SOURCE_TYPE_FILE = 'file'
 const MAX_REVIEW_CHARS = 100000
 const APPLICATION_PDF = 'application/pdf'
+const HTTP_STATUS_300 = 300
+const HTTP_STATUS_400 = 400
+const HTTP_STATUS_404 = 404
+const HTTP_STATUS_200 = 200
 
 const ACCEPTED_MIME_TYPES = [
   APPLICATION_PDF,
@@ -102,7 +106,10 @@ async function performUpload(
       redirect: 'manual'
     })
 
-    if (uploadRes.status >= 300 && uploadRes.status < 400) {
+    if (
+      uploadRes.status >= HTTP_STATUS_300 &&
+      uploadRes.status < HTTP_STATUS_400
+    ) {
       const location = uploadRes.headers.get('location')
       logger.info(
         `cdp-uploader redirected after upload with Location: ${location} and status: ${uploadRes.status}`
@@ -120,79 +127,94 @@ async function performUpload(
   }
 }
 
-// POST /api/upload handler
-export const handleFileUpload = async (request, h) => {
-  const requestStartTime = performance.now()
-
+/**
+ * Extract metadata from request headers/payload.
+ */
+function getRequestMeta(request) {
   const userId = request.headers['x-user-id'] || 'content-reviewer-frontend'
   const fileName = request.headers['x-file-name']
     ? decodeURIComponent(request.headers['x-file-name'])
     : `upload-${Date.now()}`
-
   const mimeType = request.headers['x-file-content-type']
+  const fileStream = request.payload
+  const reviewId = randomUUID()
+
+  return { userId, fileName, mimeType, fileStream, reviewId }
+}
+
+/**
+ * Perform the main upload flow. Throws on error.
+ */
+async function processUploadFlow(
+  { userId, fileName, mimeType, fileStream, reviewId },
+  request
+) {
+  if (!fileStream) {
+    throw new Error('No file provided')
+  }
+
+  const CDP_UPLOADER = (config.get('cdpUploader.url') || '').replace(/\/$/, '')
+  request.logger.info(`CDP Uploader URL from config: ${CDP_UPLOADER}`)
+
+  const S3_BUCKET = config.get('s3.bucket')
+
+  if (!CDP_UPLOADER) {
+    throw new Error('CDP Uploader URL not configured (CDP_UPLOADER_URL)')
+  }
+
+  const { uploadId, uploadUrl } = await initiateUpload(
+    CDP_UPLOADER,
+    S3_BUCKET,
+    reviewId,
+    userId,
+    request.logger
+  )
+  const uploadAndScanUrl = new URL(uploadUrl, CDP_UPLOADER).href
 
   request.logger.info(
-    `[UPLOAD] Received upload request from userId: ${userId} with filename: ${fileName} and content-type: ${mimeType}`
+    `[UPLOAD] Upload URL resolved for CDP Uploader: ${uploadAndScanUrl}`
   )
 
-  const fileStream = request.payload
+  const fileBuffer = await streamToBuffer(fileStream)
 
+  await performUpload(
+    uploadAndScanUrl,
+    fileBuffer,
+    fileName,
+    mimeType,
+    request.logger
+  )
+
+  // seed status store for FE polling
+  uploadStatusStore.set(reviewId, {
+    status: 'initiated',
+    message: 'upload started',
+    updatedAt: Date.now()
+  })
+
+  return { reviewId, uploadId }
+}
+
+// POST /api/upload handler
+export const handleFileUpload = async (request, h) => {
+  const requestStartTime = performance.now()
+
+  const meta = getRequestMeta(request)
+
+  request.logger.info(
+    `[UPLOAD] Received upload request from userId: ${meta.userId} with filename: ${meta.fileName} and content-type: ${meta.mimeType}`
+  )
   request.logger.info(
     `[UPLOAD] Received upload request with content-type: ${request.headers['content-type']}`
   )
 
-  const reviewId = randomUUID()
-
   try {
-    if (!fileStream) {
-      throw new Error('No file provided')
-    }
-    const CDP_UPLOADER = (config.get('cdpUploader.url') || '').replace(
-      /\/$/,
-      ''
-    )
-    request.logger.info(`CDP Uploader URL from config: ${CDP_UPLOADER}`)
-
-    const S3_BUCKET = config.get('s3.bucket')
-
-    if (!CDP_UPLOADER) {
-      throw new Error('CDP Uploader URL not configured (CDP_UPLOADER_URL)')
-    }
-
-    const { uploadId, uploadUrl } = await initiateUpload(
-      CDP_UPLOADER,
-      S3_BUCKET,
-      reviewId,
-      userId,
-      request.logger
-    )
-    const uploadAndScanUrl = new URL(uploadUrl, CDP_UPLOADER).href
-
-    request.logger.info(
-      `[UPLOAD] Upload URL resolved for CDP Uploader: ${uploadAndScanUrl}`
-    )
-
-    const fileBuffer = await streamToBuffer(fileStream)
-
-    await performUpload(
-      uploadAndScanUrl,
-      fileBuffer,
-      fileName,
-      mimeType,
-      request.logger
-    )
+    const { reviewId, uploadId } = await processUploadFlow(meta, request)
 
     const totalDuration = Math.round(performance.now() - requestStartTime)
     request.logger.info(
       `[UPLOAD] File sent to CDP Uploader — awaiting callback to complete pipeline with reviewId: ${reviewId}, uploadId: ${uploadId} and totalDurationMs: ${totalDuration}`
     )
-
-    // seed status store for FE polling
-    uploadStatusStore.set(reviewId, {
-      status: 'initiated',
-      message: 'upload started',
-      updatedAt: Date.now()
-    })
 
     return h
       .response({
@@ -204,16 +226,7 @@ export const handleFileUpload = async (request, h) => {
       })
       .code(HTTP_STATUS.ACCEPTED)
   } catch (error) {
-    const totalDuration = Math.round(performance.now() - requestStartTime)
-    request.logger.error(
-      {
-        reviewId,
-        error: error.message,
-        stack: error.stack,
-        durationMs: totalDuration
-      },
-      '[UPLOAD] Upload failed'
-    )
+    request.logger.error('[UPLOAD] Upload failed')
     return h
       .response({ success: false, message: error.message })
       .code(HTTP_STATUS.INTERNAL_SERVER_ERROR)
@@ -224,7 +237,7 @@ async function streamToBuffer(file) {
   return new Promise((resolve, reject) => {
     const chunks = []
 
-    if (!file || !file.on) {
+    if (!file?.on) {
       resolve(file)
       return
     }
@@ -556,7 +569,7 @@ export const handleUploadStatus = (request, h) => {
   const { reviewId } = request.params
   const status = uploadStatusStore.get(reviewId)
   if (!status) {
-    return h.response({ found: false }).code(404)
+    return h.response({ found: false }).code(HTTP_STATUS_404)
   }
-  return h.response({ found: true, ...status }).code(200)
+  return h.response({ found: true, ...status }).code(HTTP_STATUS_200)
 }
