@@ -377,3 +377,132 @@ it('returns 500 when S3 body stream throws during iteration', async () => {
     'Failed to read S3 object body: stream-read-error'
   )
 })
+
+it('handles S3 body stream yielding non-Buffer chunks (Uint8Array)', async () => {
+  // Covers line 440: Buffer.from(chunk) branch when chunk is not already a Buffer
+  const { S3Client } = await import('@aws-sdk/client-s3')
+  vi.spyOn(S3Client.prototype, 'send').mockResolvedValueOnce({
+    Body: (async function* () {
+      yield new Uint8Array([104, 101, 108, 108, 111])
+    })()
+  })
+  extractTextMock.mockResolvedValueOnce('text-from-uint8')
+
+  const res = await storedRoutes[ROUTE_CALLBACK].handler(
+    makeCallbackRequest('uint8-review'),
+    makeH()
+  )
+  vi.restoreAllMocks()
+
+  expect(res.statusCode).toBe(HTTP_OK)
+  expect(extractTextMock).toHaveBeenCalled()
+})
+
+it('returns 500 when DOCX parsing throws an error', async () => {
+  // Covers lines 515-517: extractDocxText catch block
+  extractTextMock.mockRejectedValueOnce(new Error('docx-parse-error'))
+  const req = makeCallbackRequest('review-docx-err', {
+    filename: 'bad.docx',
+    contentType: CONTENT_TYPE_DOCX
+  })
+  const res = await storedRoutes[ROUTE_CALLBACK].handler(req, makeH())
+
+  expect(res.statusCode).toBe(HTTP_INTERNAL_SERVER_ERROR)
+  expect(String(res.payload.message)).toContain(
+    'docx parsing failed: docx-parse-error'
+  )
+})
+
+it('recognises PDF by filename extension when content-type is generic octet-stream', async () => {
+  // Covers line 490: isPdf filename fallback (second OR condition)
+  extractTextMock.mockResolvedValueOnce('pdf-text-by-ext')
+  const req = makeCallbackRequest('review-pdf-ext', {
+    contentType: 'application/octet-stream',
+    filename: 'report.pdf'
+  })
+  const res = await storedRoutes[ROUTE_CALLBACK].handler(req, makeH())
+
+  expect(res.statusCode).toBe(HTTP_OK)
+  expect(extractTextMock).toHaveBeenCalled()
+})
+
+it('recognises DOCX by filename extension when content-type is generic octet-stream', async () => {
+  // Covers line 498: isDocx filename fallback (second OR condition)
+  extractTextMock.mockResolvedValueOnce('docx-text-by-ext')
+  const req = makeCallbackRequest('review-docx-ext', {
+    contentType: 'application/octet-stream',
+    filename: 'report.docx'
+  })
+  const res = await storedRoutes[ROUTE_CALLBACK].handler(req, makeH())
+
+  expect(res.statusCode).toBe(HTTP_OK)
+  expect(extractTextMock).toHaveBeenCalled()
+})
+
+it('returns 200 when extractText returns null (empty string fallback for PDF)', async () => {
+  // Covers line 505: `return text || ''` in extractPdfText when extractor returns null
+  extractTextMock.mockResolvedValueOnce(null)
+  const res = await storedRoutes[ROUTE_CALLBACK].handler(
+    makeCallbackRequest('review-null-pdf'),
+    makeH()
+  )
+
+  expect(res.statusCode).toBe(HTTP_OK)
+  expect(res.payload).toMatchObject({ success: true })
+})
+
+it('returns 200 when extractText returns null (empty string fallback for DOCX)', async () => {
+  // Covers line 513: `return text || ''` in extractDocxText when extractor returns null
+  extractTextMock.mockResolvedValueOnce(null)
+  const req = makeCallbackRequest('review-null-docx', {
+    filename: 'empty.docx',
+    contentType: CONTENT_TYPE_DOCX
+  })
+  const res = await storedRoutes[ROUTE_CALLBACK].handler(req, makeH())
+
+  expect(res.statusCode).toBe(HTTP_OK)
+  expect(res.payload).toMatchObject({ success: true })
+})
+
+it('returns 500 when S3 bucket is not configured (covers missing s3Bucket guard)', async () => {
+  // Covers line 480: `throw new Error('S3 client/bucket required to fetch s3Key')`
+  const { config } = await import('../config.js')
+  vi.spyOn(config, 'get').mockImplementation((key) => {
+    if (key === 's3.bucket') {
+      return null
+    }
+    if (key === 'aws.region') {
+      return 'eu-west-1'
+    }
+    return null
+  })
+
+  const res = await storedRoutes[ROUTE_CALLBACK].handler(
+    makeCallbackRequest('no-bucket-review'),
+    makeH()
+  )
+  vi.restoreAllMocks()
+
+  expect(res.statusCode).toBe(HTTP_INTERNAL_SERVER_ERROR)
+  expect(String(res.payload.message)).toContain('S3 client/bucket required')
+})
+
+it('GET /api/upload-status/{reviewId} returns 200 with status when found in store', async () => {
+  // Covers line 625: handleUploadStatus found path (STATUS_200)
+  // Populate the store by running a successful callback
+  extractTextMock.mockResolvedValueOnce('some text for status check')
+  await storedRoutes[ROUTE_CALLBACK].handler(
+    makeCallbackRequest('review-status-found'),
+    makeH()
+  )
+
+  const statusHandler =
+    storedRoutes['GET /api/upload-status/{reviewId}'].handler
+  const res = await statusHandler(
+    { params: { reviewId: 'review-status-found' } },
+    makeH()
+  )
+
+  expect(res.statusCode).toBe(200)
+  expect(res.payload).toMatchObject({ found: true, status: 'completed' })
+})
