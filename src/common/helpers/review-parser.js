@@ -10,9 +10,10 @@ const REVIEWED_CONTENT_TAG = '[REVIEWED_CONTENT]'
 const ISSUE_POSITIONS_TAG = '[ISSUE_POSITIONS]'
 const ISSUE_POSITIONS_CLOSE_TAG = '[/ISSUE_POSITIONS]'
 const IMPROVEMENTS_TAG = '[IMPROVEMENTS]'
+const TYPE_PLAIN_ENGLISH = 'plain-english'
 
 const CATEGORY_TO_TYPE = {
-  'plain english': 'plain-english',
+  'plain english': TYPE_PLAIN_ENGLISH,
   clarity: 'clarity',
   'clarity & structure': 'clarity',
   accessibility: 'accessibility',
@@ -79,7 +80,7 @@ function locateTextInDocument(text, ref, originalText) {
 function mapRawIssue(raw, originalText) {
   const start = Number(raw.start)
   const end = Number(raw.end)
-  const type = raw.type || 'plain-english'
+  const type = raw.type || TYPE_PLAIN_ENGLISH
 
   // Reject entries with non-numeric or out-of-order offsets
   if (Number.isNaN(start) || Number.isNaN(end) || end <= start || start < 0) {
@@ -690,7 +691,7 @@ function buildIssuesFromImprovements(improvements, originalText) {
     .filter((imp) => imp.current)
     .map((imp) => {
       const type =
-        CATEGORY_TO_TYPE[imp.category.toLowerCase()] || 'plain-english'
+        CATEGORY_TO_TYPE[imp.category.toLowerCase()] || TYPE_PLAIN_ENGLISH
       const located = locateTextInDocument(imp.current, imp.ref, originalText)
       if (!located) {
         return null
