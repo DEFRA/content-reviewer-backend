@@ -417,6 +417,28 @@ describe('reviewRepository.saveReviewError', () => {
     )
   })
 
+  it('merges extraData into the failed status update', async () => {
+    const stored = buildStoredReview()
+    MOCK_S3_SEND.mockResolvedValueOnce(makeS3GetResponse(stored))
+    MOCK_S3_SEND.mockResolvedValueOnce({})
+    const guardrailData = {
+      guardrailAssessment: { allAssessments: [] },
+      policyBreakdown: []
+    }
+
+    await reviewRepository.saveReviewError(REVIEW_ID, 'Blocked', guardrailData)
+
+    expect(sanitizeAdditionalData).toHaveBeenCalledWith(
+      expect.objectContaining({
+        error: expect.objectContaining({ message: 'Blocked' }),
+        guardrailAssessment: guardrailData.guardrailAssessment,
+        policyBreakdown: guardrailData.policyBreakdown
+      }),
+      expect.any(String),
+      expect.any(Object)
+    )
+  })
+
   it('rethrows when updateReviewStatus fails', async () => {
     const noSuchKey = new Error('NoSuchKey')
     noSuchKey.name = 'NoSuchKey'

@@ -388,7 +388,7 @@ class ReviewRepositoryS3 {
    * @param {string|Error} error - Error message or Error object
    * @returns {Promise<void>}
    */
-  async saveReviewError(reviewId, error) {
+  async saveReviewError(reviewId, error, extraData = {}) {
     const errorMessage = typeof error === 'string' ? error : error.message
     const errorStack = typeof error === 'string' ? null : error.stack
 
@@ -406,7 +406,8 @@ class ReviewRepositoryS3 {
         error: {
           message: errorMessage,
           stack: errorStack
-        }
+        },
+        ...extraData
       })
 
       logger.info(
