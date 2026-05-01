@@ -313,7 +313,8 @@ describe('ReviewProcessor - handleReviewProcessingError', () => {
       expect(mockFormatErrorForUI).toHaveBeenCalledWith(error)
       expect(mockSaveReviewError).toHaveBeenCalledWith(
         TEST_REVIEW_ID,
-        TEST_USER_FRIENDLY_ERROR
+        TEST_USER_FRIENDLY_ERROR,
+        {}
       )
       expect(mockLoggerInfo).toHaveBeenCalledWith(
         {
