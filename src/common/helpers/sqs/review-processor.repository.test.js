@@ -326,6 +326,56 @@ describe('ReviewProcessor - handleReviewProcessingError', () => {
       )
     })
 
+    test('Should pass populated guardrailData when error has guardrailAssessment', async () => {
+      const error = new Error(TEST_PROCESSING_FAILED)
+      error.stack = 'Error stack trace'
+      error.guardrailAssessment = { allAssessments: [{ pii: true }] }
+      error.policyBreakdown = [{ assessmentIndex: 0 }]
+      const processingStartTime = performance.now() - PROCESSING_TIME_2000
+
+      mockFormatErrorForUI.mockReturnValue(TEST_USER_FRIENDLY_ERROR)
+      mockSaveReviewError.mockResolvedValue()
+
+      await processor.handleReviewProcessingError(
+        TEST_REVIEW_ID,
+        error,
+        processingStartTime
+      )
+
+      expect(mockSaveReviewError).toHaveBeenCalledWith(
+        TEST_REVIEW_ID,
+        TEST_USER_FRIENDLY_ERROR,
+        {
+          guardrailAssessment: error.guardrailAssessment,
+          policyBreakdown: error.policyBreakdown
+        }
+      )
+    })
+
+    test('Should pass populated guardrailData when error has only policyBreakdown', async () => {
+      const error = new Error(TEST_PROCESSING_FAILED)
+      error.policyBreakdown = [{ assessmentIndex: 0 }]
+      const processingStartTime = performance.now() - PROCESSING_TIME_2000
+
+      mockFormatErrorForUI.mockReturnValue(TEST_USER_FRIENDLY_ERROR)
+      mockSaveReviewError.mockResolvedValue()
+
+      await processor.handleReviewProcessingError(
+        TEST_REVIEW_ID,
+        error,
+        processingStartTime
+      )
+
+      expect(mockSaveReviewError).toHaveBeenCalledWith(
+        TEST_REVIEW_ID,
+        TEST_USER_FRIENDLY_ERROR,
+        {
+          guardrailAssessment: null,
+          policyBreakdown: error.policyBreakdown
+        }
+      )
+    })
+
     test('Should handle failure when saving error to repository', async () => {
       const error = new Error(TEST_PROCESSING_FAILED)
       const saveError = new Error('Database save failed')

@@ -629,3 +629,121 @@ it('truncates extracted text longer than MAX_REVIEW_CHARS before canonicalizatio
   // MAX_REVIEW_CHARS constant in source is 100000
   expect(passedText.length).toBe(100000)
 })
+
+it('returns 500 when /initiate returns a non-OK response', async () => {
+  const handler = storedRoutes['POST /api/upload'].handler
+
+  vi.stubGlobal(
+    'fetch',
+    vi.fn((url) => {
+      if (String(url).endsWith('/initiate')) {
+        return Promise.resolve({
+          ok: false,
+          status: 503,
+          text: async () => 'Service unavailable'
+        })
+      }
+      return Promise.resolve({ ok: true, status: 200, text: async () => '' })
+    })
+  )
+
+  const request = {
+    headers: {
+      'content-type': 'application/octet-stream',
+      'x-file-name': encodeURIComponent('doc.pdf'),
+      'x-user-id': 'tester'
+    },
+    payload: Buffer.from('dummy-bytes'),
+    logger: { info: vi.fn(), error: vi.fn(), warn: vi.fn(), debug: vi.fn() }
+  }
+
+  const res = await handler(request, makeH())
+
+  expect(res.statusCode).toBe(500)
+  expect(res.payload).toMatchObject({ success: false })
+  expect(String(res.payload.message)).toContain(
+    'cdp-uploader /initiate failed: 503'
+  )
+})
+
+it('returns 500 when /initiate response contains no uploadUrl', async () => {
+  const handler = storedRoutes['POST /api/upload'].handler
+
+  vi.stubGlobal(
+    'fetch',
+    vi.fn((url) => {
+      if (String(url).endsWith('/initiate')) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => ({ uploadId: 'uid-no-url' }) // no uploadUrl
+        })
+      }
+      return Promise.resolve({ ok: true, status: 200, text: async () => '' })
+    })
+  )
+
+  const request = {
+    headers: {
+      'content-type': 'application/octet-stream',
+      'x-file-name': encodeURIComponent('doc.pdf'),
+      'x-user-id': 'tester'
+    },
+    payload: Buffer.from('dummy-bytes'),
+    logger: { info: vi.fn(), error: vi.fn(), warn: vi.fn(), debug: vi.fn() }
+  }
+
+  const res = await handler(request, makeH())
+
+  expect(res.statusCode).toBe(500)
+  expect(String(res.payload.message)).toContain('did not return an uploadUrl')
+})
+
+it('launchAsyncPipeline logs error when runCallbackPipeline rejects', async () => {
+  const handler = storedRoutes['POST /upload-callback'].handler
+
+  extractTextMock.mockResolvedValueOnce('some-text')
+
+  const reviewHelpers = await import('./review-helpers.js')
+  reviewHelpers.createCanonicalDocument.mockRejectedValueOnce(
+    new Error('pipeline-failure')
+  )
+
+  const logger = {
+    info: vi.fn(),
+    error: vi.fn(),
+    warn: vi.fn(),
+    debug: vi.fn()
+  }
+  const request = {
+    payload: {
+      metadata: { reviewId: 'pipeline-fail-review', userId: 'u1' },
+      form: {
+        file: {
+          s3Key: 'some/key.pdf',
+          filename: 'doc.pdf',
+          contentType: 'application/pdf',
+          hasError: false
+        }
+      }
+    },
+    logger
+  }
+
+  const res = await handler(request, makeH())
+
+  // handler returns 200 immediately — pipeline runs async
+  expect(res.statusCode).toBe(200)
+
+  // flush microtask/IO queue so the .catch() fires
+  await new Promise((r) => setImmediate(r))
+
+  expect(logger.error).toHaveBeenCalledWith(
+    expect.objectContaining({
+      reviewId: 'pipeline-fail-review',
+      error: 'pipeline-failure',
+      stack: expect.any(String)
+    }),
+    '[CALLBACK] Async pipeline failed'
+  )
+})
