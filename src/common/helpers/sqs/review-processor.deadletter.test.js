@@ -192,7 +192,7 @@ describe('ReviewProcessor - saveReviewToRepository', () => {
     )
     expect(mockSaveReviewResult).toHaveBeenCalledWith(
       'review_123',
-      expect.objectContaining({ reviewData: parseResult.parsedReview }),
+      expect.objectContaining({ completedAt: expect.any(Date) }),
       bedrockResult.bedrockResponse.usage,
       expect.objectContaining({ status: 'completed' })
     )
@@ -239,11 +239,11 @@ describe('ReviewProcessor - saveReviewToRepository', () => {
     )
   })
 
-  test('skips savePositions when reviewedContent is null', async () => {
+  test('always calls savePositions with rawResponse and improvements', async () => {
     const { reviewRepository } = await import('../review-repository.js')
 
     const parseResult = {
-      parsedReview: { reviewedContent: null },
+      parsedReview: { reviewedContent: null, improvements: [] },
       finalReviewContent: 'text',
       parseDuration: 50
     }
@@ -263,7 +263,14 @@ describe('ReviewProcessor - saveReviewToRepository', () => {
       'text'
     )
     await new Promise((r) => setTimeout(r, 10))
-    expect(reviewRepository.savePositions).not.toHaveBeenCalled()
+    expect(reviewRepository.savePositions).toHaveBeenCalledWith(
+      'review_789',
+      expect.objectContaining({
+        rawResponse: 'text',
+        guardrailAssessment: null,
+        improvements: []
+      })
+    )
   })
 
   test('throws when saveReviewResult fails', async () => {

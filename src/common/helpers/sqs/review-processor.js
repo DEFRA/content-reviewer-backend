@@ -390,13 +390,7 @@ export class ReviewProcessor {
     const saveStart = performance.now()
     await reviewRepository.saveReviewResult(
       reviewId,
-      {
-        reviewData: parseResult.parsedReview,
-        rawResponse: parseResult.finalReviewContent,
-        guardrailAssessment: bedrockResult.bedrockResponse.guardrailAssessment,
-        stopReason: bedrockResult.bedrockResponse.stopReason,
-        completedAt: new Date()
-      },
+      { completedAt: new Date() },
       bedrockResult.bedrockResponse.usage,
       envelope
     )
@@ -407,18 +401,21 @@ export class ReviewProcessor {
       `Review result saved to S3 in ${saveDuration}ms`
     )
 
-    // Save raw position data (character offsets from Bedrock) as a separate debug
-    // artefact at reviews/positions/{reviewId}.json.  Non-critical — never blocks
+    // Save raw Bedrock response, guardrail assessment, and parsed improvements as a
+    // debug artefact at positions/{reviewId}.json.  Non-critical — never blocks
     // the main result.
-    const reviewedContent = parseResult.parsedReview?.reviewedContent
-    if (reviewedContent) {
-      reviewRepository.savePositions(reviewId, reviewedContent).catch((err) => {
+    reviewRepository
+      .savePositions(reviewId, {
+        rawResponse: parseResult.finalReviewContent,
+        guardrailAssessment: bedrockResult.bedrockResponse.guardrailAssessment,
+        improvements: parseResult.parsedReview?.improvements || []
+      })
+      .catch((err) => {
         logger.error(
           { reviewId, error: err.message },
           'Failed to save positions file - review result still saved successfully'
         )
       })
-    }
   }
 
   /**
@@ -466,8 +463,20 @@ export class ReviewProcessor {
 
     const errorMessage = this.errorHandler.formatErrorForUI(error)
 
+    const guardrailData =
+      error.guardrailAssessment || error.policyBreakdown
+        ? {
+            guardrailAssessment: error.guardrailAssessment ?? null,
+            policyBreakdown: error.policyBreakdown ?? null
+          }
+        : {}
+
     try {
-      await reviewRepository.saveReviewError(reviewId, errorMessage)
+      await reviewRepository.saveReviewError(
+        reviewId,
+        errorMessage,
+        guardrailData
+      )
       logger.info(
         {
           reviewId,

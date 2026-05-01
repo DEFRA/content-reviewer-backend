@@ -234,7 +234,8 @@ describe('ReviewProcessor - processContentReview - error handling', () => {
       expect(mockFormatErrorForUI).toHaveBeenCalledWith(error)
       expect(mockSaveReviewError).toHaveBeenCalledWith(
         TEST_UPLOAD_ID,
-        TEST_USER_FRIENDLY_ERROR
+        TEST_USER_FRIENDLY_ERROR,
+        {}
       )
     })
   })
