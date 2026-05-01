@@ -44,18 +44,6 @@ vi.mock('../common/helpers/text-extractor.js', () => ({
   textExtractor: { extractText: extractTextMock }
 }))
 
-// Ensure pdf-parse and mammoth bindings exist for upload.js (pdfParsePkg / mammothPkg)
-vi.mock('pdf-parse', () => {
-  const fn = vi.fn(async (buf) => ({ text: 'parsed-pdf-text' }))
-  return { default: fn, __esModule: true }
-})
-vi.mock('mammoth', () => {
-  const mammothMock = {
-    extractRawText: vi.fn(async ({ buffer }) => ({ value: 'parsed-docx-text' }))
-  }
-  return { default: mammothMock, __esModule: true }
-})
-
 // ensure aws-sdk client isn't used in tests that don't need it
 vi.mock('@aws-sdk/client-s3', () => {
   class S3Client {
@@ -531,6 +519,7 @@ it('callback handler returns 500 when payload missing form', async () => {
 it('plugin registered upload and callback routes', () => {
   expect(storedRoutes['POST /api/upload']).toBeDefined()
   expect(storedRoutes['POST /upload-callback']).toBeDefined()
+  expect(storedRoutes['GET /api/upload-status/{reviewId}']).toBeDefined()
 })
 
 it('callback handler starts async pipeline and calls createCanonicalDocument', async () => {
