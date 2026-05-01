@@ -21,11 +21,15 @@ const MAX_REVIEW_CHARS = 100000
 const APPLICATION_PDF = 'application/pdf'
 const STATUS_300 = 300
 const STATUS_400 = 400
+const STATUS_404 = 404
+const STATUS_200 = 200
 
 const ACCEPTED_MIME_TYPES = [
   APPLICATION_PDF,
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
 ]
+
+const uploadStatusStore = new Map()
 
 // ─── Step 1: /initiate ───────────────────────────────────────────────────────
 
@@ -289,6 +293,7 @@ async function streamToBuffer(file) {
  */
 const handleUploadCallback = async (request, h) => {
   const requestStartTime = performance.now()
+  const reviewId = request.payload?.metadata?.reviewId
 
   try {
     const { metadata, form } = request.payload
@@ -306,6 +311,11 @@ const handleUploadCallback = async (request, h) => {
         { errorMessage: fileField.errorMessage },
         'File rejected with error in callback'
       )
+      uploadStatusStore.set(reviewId, {
+        status: 'rejected',
+        message: `upload failed with error: ${fileField.errorMessage}`,
+        updatedAt: Date.now()
+      })
       return h
         .response({
           success: false,
@@ -313,8 +323,6 @@ const handleUploadCallback = async (request, h) => {
         })
         .code(HTTP_STATUS.OK)
     }
-
-    const reviewId = metadata?.reviewId
     const userId = metadata?.userId || 'content-reviewer-frontend'
 
     const { contentType, s3Key, filename } = fileField
@@ -355,6 +363,11 @@ const handleUploadCallback = async (request, h) => {
     request.logger.info(
       `reviewId: ${reviewId} - Callback received from CDP Uploader`
     )
+    uploadStatusStore.set(reviewId, {
+      status: 'completed',
+      message: 'review completed for the uploaded file',
+      updatedAt: Date.now()
+    })
     // ✅ Return 200 OK to CDP Uploader immediately
     return h
       .response({
@@ -368,7 +381,11 @@ const handleUploadCallback = async (request, h) => {
     request.logger.error(
       `[CALLBACK] Handler failed after ${totalDuration}ms with error: ${error.message}`
     )
-
+    uploadStatusStore.set(reviewId, {
+      status: 'error',
+      message: error.message,
+      updatedAt: Date.now()
+    })
     return h
       .response({ success: false, message: error.message })
       .code(HTTP_STATUS.INTERNAL_SERVER_ERROR)
@@ -599,6 +616,15 @@ const handleUploadSuccess = async (request, h) => {
   }
 }
 
+function handleUploadStatus(request, h) {
+  const { reviewId } = request.params
+  const status = uploadStatusStore.get(reviewId)
+  if (!status) {
+    return h.response({ found: false }).code(STATUS_404)
+  }
+  return h.response({ found: true, ...status }).code(STATUS_200)
+}
+
 // ─── Route registration ──────────────────────────────────────────────────────
 
 export const uploadRoutes = {
@@ -635,6 +661,12 @@ export const uploadRoutes = {
           cors: getCorsConfig()
         },
         handler: handleUploadSuccess
+      })
+      server.route({
+        method: 'GET',
+        path: '/api/upload-status/{reviewId}',
+        options: { cors: getCorsConfig() },
+        handler: handleUploadStatus
       })
     }
   }
