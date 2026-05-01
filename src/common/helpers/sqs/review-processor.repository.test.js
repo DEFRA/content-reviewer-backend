@@ -28,6 +28,7 @@ const mockLoggerError = vi.fn()
 const mockUpdateReviewStatus = vi.fn()
 const mockSaveReviewResult = vi.fn()
 const mockSaveReviewError = vi.fn()
+const mockSavePositions = vi.fn().mockResolvedValue()
 const mockFormatErrorForUI = vi.fn()
 const mockHandleSaveErrorFailure = vi.fn()
 const mockTruncateReceiptHandle = vi.fn()
@@ -45,7 +46,7 @@ vi.mock('../review-repository.js', () => ({
     updateReviewStatus: (...args) => mockUpdateReviewStatus(...args),
     saveReviewResult: (...args) => mockSaveReviewResult(...args),
     saveReviewError: (...args) => mockSaveReviewError(...args),
-    savePositions: vi.fn().mockResolvedValue()
+    savePositions: (...args) => mockSavePositions(...args)
   }
 }))
 
@@ -217,18 +218,24 @@ describe('ReviewProcessor - saveReviewToRepository', () => {
         parseResult,
         bedrockResult
       )
+      // Flush microtasks so the fire-and-forget savePositions promise resolves
+      await Promise.resolve()
 
       expect(mockSaveReviewResult).toHaveBeenCalledWith(
         TEST_REVIEW_ID,
         expect.objectContaining({
-          reviewData: { score: 90 },
-          rawResponse: TEST_REVIEW_CONTENT,
-          guardrailAssessment: null,
-          stopReason: 'end_turn',
           completedAt: expect.any(Date)
         }),
         { inputTokens: 100, outputTokens: 50 },
         expect.objectContaining({ status: 'completed' })
+      )
+      expect(mockSavePositions).toHaveBeenCalledWith(
+        TEST_REVIEW_ID,
+        expect.objectContaining({
+          rawResponse: TEST_REVIEW_CONTENT,
+          guardrailAssessment: null,
+          improvements: []
+        })
       )
       expect(mockLoggerInfo).toHaveBeenCalledWith(
         expect.objectContaining({

@@ -330,28 +330,28 @@ class ReviewRepositoryS3 {
   }
 
   /**
-   * Save the position-based review data (issue positions) as a separate S3 object.
+   * Save the position-based debug artefact to S3.
    * Stored at: positions/{reviewId}.json
    * @param {string} reviewId - Review ID
-   * @param {Object} reviewedContent - The reviewedContent object from the parsed Bedrock response
-   *   e.g. { plainText: string, issues: Array<{start, end, type, text}> }
+   * @param {Object} positionsData - { rawResponse, guardrailAssessment, improvements }
    * @returns {Promise<void>}
    */
-  async savePositions(reviewId, reviewedContent) {
+  async savePositions(reviewId, positionsData) {
     const key = `positions/${reviewId}.json`
 
     const payload = {
       reviewId,
       savedAt: new Date().toISOString(),
-      plainText: reviewedContent.plainText || '',
-      issues: reviewedContent.issues || []
+      rawResponse: positionsData.rawResponse || '',
+      guardrailAssessment: positionsData.guardrailAssessment || null,
+      improvements: positionsData.improvements || []
     }
 
     logger.info(
       {
         reviewId,
         s3Key: key,
-        issueCount: payload.issues.length
+        improvementCount: payload.improvements.length
       },
       `Saving position-based review data to S3 at ${key}`
     )
@@ -363,7 +363,7 @@ class ReviewRepositoryS3 {
       ContentType: 'application/json',
       Metadata: {
         reviewId,
-        issueCount: String(payload.issues.length)
+        improvementCount: String(payload.improvements.length)
       }
     })
 
