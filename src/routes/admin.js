@@ -29,6 +29,8 @@ const adminRoutes = {
         {
           method: 'POST',
           path: '/admin/prompt/upload',
+          // Admin routes use their own x-admin-api-key mechanism, not JWT
+          options: { auth: false },
           handler: async (request, h) => {
             if (!isAuthorised(request)) {
               logger.warn(
@@ -65,6 +67,7 @@ const adminRoutes = {
         {
           method: 'POST',
           path: '/admin/prompt/cache/clear',
+          options: { auth: false },
           handler: (request, h) => {
             if (!isAuthorised(request)) {
               logger.warn(

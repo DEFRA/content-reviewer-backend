@@ -1,9 +1,11 @@
 import Hapi from '@hapi/hapi'
+import Boom from '@hapi/boom'
 
 import { secureContext } from '@defra/hapi-secure-context'
 
 import { config } from './config.js'
 import { router } from './plugins/router.js'
+import { verifyJwt } from './common/helpers/jwt.js'
 import { requestLogger } from './common/helpers/logging/request-logger.js'
 import { mongoDb } from './common/helpers/mongodb.js'
 import { failAction } from './common/helpers/fail-action.js'
@@ -74,6 +76,35 @@ function buildServerConfig() {
       stripTrailingSlash: true
     }
   }
+}
+
+/**
+ * Register a custom Hapi bearer-JWT auth scheme and set it as the default
+ * strategy for all routes. Routes that do not need authentication (health,
+ * sqs-worker-status, auth endpoints, admin) explicitly opt out with
+ * `options: { auth: false }` in their route definitions.
+ */
+function configureJwtAuth(server) {
+  server.auth.scheme('bearer-jwt', () => ({
+    authenticate: async (request, h) => {
+      const authHeader = request.headers.authorization
+      if (!authHeader?.startsWith('Bearer ')) {
+        return h.unauthenticated(
+          Boom.unauthorized('Missing or invalid Authorization header')
+        )
+      }
+      const token = authHeader.slice(7)
+      try {
+        const credentials = verifyJwt(token)
+        return h.authenticated({ credentials })
+      } catch {
+        return h.unauthenticated(Boom.unauthorized('Invalid or expired token'))
+      }
+    }
+  }))
+
+  server.auth.strategy('jwt', 'bearer-jwt')
+  server.auth.default({ strategy: 'jwt', mode: 'required' })
 }
 
 async function registerPlugins(server) {
@@ -182,6 +213,9 @@ function setupCleanupScheduler(server) {
 async function createServer() {
   setupProxy()
   const server = Hapi.server(buildServerConfig())
+  // JWT auth must be configured before plugins (routes) are registered so that
+  // the default strategy is already in place when route options are evaluated.
+  configureJwtAuth(server)
   await registerPlugins(server)
   setupRateLimiting(server)
   setupSecurityHeaders(server)

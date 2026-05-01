@@ -421,6 +421,27 @@ const config = convict({
     default: null,
     sensitive: true,
     env: 'ADMIN_API_KEY'
+  },
+  jwt: {
+    secret: {
+      doc: 'HMAC-SHA256 secret used to sign/verify JWT access and refresh tokens. Must be at least 32 characters. Set JWT_SECRET in CDP platform secrets.',
+      format: String,
+      default: 'change-me-jwt-secret-must-be-32-chars-min',
+      sensitive: true,
+      env: 'JWT_SECRET'
+    },
+    accessTokenExpirySeconds: {
+      doc: 'JWT access token lifetime in seconds (default: 3600 = 1 hour).',
+      format: Number,
+      default: 3600,
+      env: 'JWT_ACCESS_TOKEN_EXPIRY_SECONDS'
+    },
+    refreshTokenExpirySeconds: {
+      doc: 'JWT refresh token lifetime in seconds (default: 604800 = 7 days).',
+      format: Number,
+      default: 604800,
+      env: 'JWT_REFRESH_TOKEN_EXPIRY_SECONDS'
+    }
   }
 })
 
