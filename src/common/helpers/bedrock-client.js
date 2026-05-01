@@ -11,8 +11,9 @@ const ERROR_MESSAGES = {
   SERIALIZE_ERROR: 'Could not serialize full error'
 }
 
-// 360 seconds — large documents (100k chars) can take 3-5 min
-const BEDROCK_TIMEOUT_MS = 360_000
+// 120 seconds (2 minutes) — Bedrock responses should arrive within 30 s under
+// normal load; 120 s is the hard upper limit before we surface a timeout error.
+const BEDROCK_TIMEOUT_MS = 120_000
 
 /**
  * CDP-Compliant Bedrock Client

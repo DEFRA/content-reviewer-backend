@@ -283,9 +283,9 @@ const config = convict({
       env: 'SQS_WAIT_TIME_SECONDS'
     },
     visibilityTimeout: {
-      doc: 'Message visibility timeout in seconds. Must exceed BEDROCK_TIMEOUT_MS (360 s). Set to 420 s (7 min) — gives Bedrock its full 6-min window plus a 60 s safety margin before SQS considers the message failed and re-delivers it.',
+      doc: 'Message visibility timeout in seconds. Must exceed BEDROCK_TIMEOUT_MS (120 s). Set to 180 s (3 min) — gives Bedrock its full 2-min window plus a 60 s safety margin. On failure the processor explicitly resets this window to 180 s from failure time so the retry is always delayed by the full 3 minutes.',
       format: Number,
-      default: 420,
+      default: 180,
       env: 'SQS_VISIBILITY_TIMEOUT'
     },
     maxConcurrentRequests: {
