@@ -259,53 +259,74 @@ class TextExtractor {
    */
   async extractFromDocx(buffer) {
     try {
-      const arrayBuffer = buffer.buffer.slice(
-        buffer.byteOffset,
-        buffer.byteOffset + buffer.byteLength
-      )
-
-      let result = null
-      const attempts = [{ arrayBuffer }, { buffer: arrayBuffer }]
-
-      // Try convertToMarkdown with a couple of option shapes
-      for (const opts of attempts) {
-        try {
-          // convertToMarkdown preserves: headings, bullets, bold, links
-          // some mammoth builds accept { arrayBuffer }, others expect { buffer }
-          // so attempt both shapes
-          // eslint-disable-next-line no-await-in-loop
-          result = await mammoth.convertToMarkdown(opts)
-          break
-        } catch (err) {
-          // continue to next attempt
-          logger.debug(
-            `DOCX convertToMarkdown attempt failed with options keys: ${Object.keys(opts).join(', ')} - ${err.message}`
+      // Helper: normalise incoming buffer to an ArrayBuffer
+      const toArrayBuffer = (buf) => {
+        if (buf instanceof ArrayBuffer) {
+          return buf
+        }
+        if (ArrayBuffer.isView(buf)) {
+          // TypedArray / DataView
+          return buf.buffer.slice(
+            buf.byteOffset,
+            buf.byteOffset + buf.byteLength
           )
         }
+        if (Buffer.isBuffer(buf)) {
+          // Create a copied ArrayBuffer from the Buffer
+          return Uint8Array.from(buf).buffer
+        }
+        throw new Error('Unsupported input type for DOCX extraction')
       }
 
-      // If convertToMarkdown didn't work, fall back to extractRawText (plain text)
-      if (!result) {
-        try {
-          // eslint-disable-next-line no-await-in-loop
-          result = await mammoth.extractRawText({ arrayBuffer })
-        } catch (err) {
-          // last-ditch: try extractRawText with buffer key
-          logger.debug(
-            `DOCX extractRawText fallback: failed with arrayBuffer shape - ${err.message}`
-          )
-          // eslint-disable-next-line no-await-in-loop
-          result = await mammoth.extractRawText({ buffer: arrayBuffer })
+      const arrayBuffer = toArrayBuffer(buffer)
+
+      // Create a Node Buffer for mammoth builds that expect { buffer }
+      const nodeBuffer = Buffer.from(arrayBuffer)
+
+      // Try a sequence of mammoth functions with given option shapes.
+      // Returns the first successful result or null.
+      const tryMammoth = async (fnNames, optsList) => {
+        for (const opts of optsList) {
+          for (const fn of fnNames) {
+            try {
+              // eslint-disable-next-line no-await-in-loop
+              const res = await mammoth[fn](opts)
+              if (res) return res
+            } catch (err) {
+              logger.debug(
+                `DOCX ${fn} attempt failed with options keys: ${Object.keys(
+                  opts
+                ).join(', ')} - ${err.message}`
+              )
+            }
+          }
         }
+        return null
+      }
+
+      const attempts = [{ arrayBuffer }, { buffer: nodeBuffer }]
+
+      // Prefer convertToMarkdown, fall back to extractRawText
+      let result = await tryMammoth(['convertToMarkdown'], attempts)
+      if (!result) {
+        result = await tryMammoth(['extractRawText'], attempts)
+      }
+
+      if (!result) {
+        throw new Error(
+          'mammoth failed to parse DOCX with any supported input shape'
+        )
       }
 
       if (result.messages && result.messages.length > 0) {
         logger.warn(
-          `DOCX extraction had warnings: ${result.messages.map((m) => m.message).join('; ')}`
+          `DOCX extraction had warnings: ${result.messages
+            .map((m) => m.message)
+            .join('; ')}`
         )
       }
 
-      return result.value
+      return result.value || ''
     } catch (error) {
       logger.error(`DOCX extraction failed: ${error.message}`)
       throw new Error(`Failed to extract text from DOCX: ${error.message}`)
