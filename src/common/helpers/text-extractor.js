@@ -263,8 +263,44 @@ class TextExtractor {
         buffer.byteOffset,
         buffer.byteOffset + buffer.byteLength
       )
-      // convertToMarkdown preserves: headings, bullets, bold, links
-      const result = await mammoth.convertToMarkdown({ arrayBuffer })
+
+      let result = null
+      const attempts = [
+        { arrayBuffer }, // preferred shape per recent mammoth docs
+        { buffer: arrayBuffer } // older/alternate shape
+      ]
+
+      // Try convertToMarkdown with a couple of option shapes
+      for (const opts of attempts) {
+        try {
+          // convertToMarkdown preserves: headings, bullets, bold, links
+          // some mammoth builds accept { arrayBuffer }, others expect { buffer }
+          // so attempt both shapes
+          // eslint-disable-next-line no-await-in-loop
+          result = await mammoth.convertToMarkdown(opts)
+          break
+        } catch (err) {
+          // continue to next attempt
+          logger.debug(
+            `DOCX convertToMarkdown attempt failed with options keys: ${Object.keys(opts).join(', ')} - ${err.message}`
+          )
+        }
+      }
+
+      // If convertToMarkdown didn't work, fall back to extractRawText (plain text)
+      if (!result) {
+        try {
+          // eslint-disable-next-line no-await-in-loop
+          result = await mammoth.extractRawText({ arrayBuffer })
+        } catch (err) {
+          // last-ditch: try extractRawText with buffer key
+          logger.debug(
+            `DOCX extractRawText fallback: failed with arrayBuffer shape - ${err.message}`
+          )
+          // eslint-disable-next-line no-await-in-loop
+          result = await mammoth.extractRawText({ buffer: arrayBuffer })
+        }
+      }
 
       if (result.messages && result.messages.length > 0) {
         logger.warn(
