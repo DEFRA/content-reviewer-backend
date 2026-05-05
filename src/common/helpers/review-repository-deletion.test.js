@@ -331,6 +331,20 @@ describe('deleteOldReviews - partial failure', () => {
 // deleteOldPositionsFiles
 // ─────────────────────────────────────────────────────────────────────────────
 describe('deleteOldPositionsFiles - default behaviour', () => {
+  it('returns 0 when the list response has no Contents field', async () => {
+    const s3Client = makeMockS3()
+    s3Client.send.mockResolvedValueOnce({ IsTruncated: false })
+
+    const deleted = await deleteOldPositionsFiles(
+      s3Client,
+      BUCKET,
+      RETENTION_DAYS
+    )
+
+    expect(deleted).toBe(0)
+    expect(s3Client.send).toHaveBeenCalledTimes(1)
+  })
+
   it('returns 0 when there are no files in the prefix', async () => {
     const s3Client = makeMockS3()
     s3Client.send.mockResolvedValueOnce({ Contents: [], IsTruncated: false })
