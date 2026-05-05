@@ -7,13 +7,17 @@ const DELETED_COUNT_SEVEN = 7
 const S3_CONNECTION_ERROR = 'S3 connection failed'
 
 const mockDeleteOldReviews = vi.fn()
+const mockDeleteOldPositionsFiles = vi.fn()
+const mockDeleteOldContentUploads = vi.fn()
 const mockLoggerInfo = vi.fn()
 const mockLoggerWarn = vi.fn()
 const mockLoggerError = vi.fn()
 
 vi.mock('./review-repository.js', () => ({
   reviewRepository: {
-    deleteOldReviews: mockDeleteOldReviews
+    deleteOldReviews: mockDeleteOldReviews,
+    deleteOldPositionsFiles: mockDeleteOldPositionsFiles,
+    deleteOldContentUploads: mockDeleteOldContentUploads
   }
 }))
 
@@ -66,6 +70,8 @@ describe('cleanupScheduler.start - when enabled', () => {
     config.set(CONFIG_INTERVAL_HOURS, DEFAULT_INTERVAL_HOURS)
     config.set(CONFIG_RETENTION_DAYS, DEFAULT_RETENTION_DAYS)
     mockDeleteOldReviews.mockResolvedValue(0)
+    mockDeleteOldPositionsFiles.mockResolvedValue(0)
+    mockDeleteOldContentUploads.mockResolvedValue(0)
   })
 
   afterEach(async () => {
@@ -135,6 +141,8 @@ describe('cleanupScheduler.start - error handling', () => {
     config.set(CONFIG_ENABLED, true)
     config.set(CONFIG_INTERVAL_HOURS, DEFAULT_INTERVAL_HOURS)
     config.set(CONFIG_RETENTION_DAYS, DEFAULT_RETENTION_DAYS)
+    mockDeleteOldPositionsFiles.mockResolvedValue(0)
+    mockDeleteOldContentUploads.mockResolvedValue(0)
   })
 
   afterEach(async () => {
@@ -178,6 +186,8 @@ describe('cleanupScheduler.stop - when running', () => {
     config.set(CONFIG_INTERVAL_HOURS, DEFAULT_INTERVAL_HOURS)
     config.set(CONFIG_RETENTION_DAYS, DEFAULT_RETENTION_DAYS)
     mockDeleteOldReviews.mockResolvedValue(0)
+    mockDeleteOldPositionsFiles.mockResolvedValue(0)
+    mockDeleteOldContentUploads.mockResolvedValue(0)
   })
 
   afterEach(() => {
@@ -251,6 +261,8 @@ describe('cleanupScheduler.stop - when not running', () => {
 describe('cleanupScheduler.runCleanup - success', () => {
   beforeEach(() => {
     config.set(CONFIG_RETENTION_DAYS, DEFAULT_RETENTION_DAYS)
+    mockDeleteOldPositionsFiles.mockResolvedValue(0)
+    mockDeleteOldContentUploads.mockResolvedValue(0)
   })
 
   test('should call deleteOldReviews with retention days from config', async () => {
@@ -309,6 +321,8 @@ describe('cleanupScheduler.runCleanup - success', () => {
 describe('cleanupScheduler.runCleanup - failure', () => {
   beforeEach(() => {
     config.set(CONFIG_RETENTION_DAYS, DEFAULT_RETENTION_DAYS)
+    mockDeleteOldPositionsFiles.mockResolvedValue(0)
+    mockDeleteOldContentUploads.mockResolvedValue(0)
   })
 
   test('should throw when deleteOldReviews fails', async () => {
@@ -350,6 +364,8 @@ describe('cleanupScheduler.getStatus', () => {
     config.set(CONFIG_ENABLED, true)
     config.set(CONFIG_INTERVAL_HOURS, DEFAULT_INTERVAL_HOURS)
     config.set(CONFIG_RETENTION_DAYS, DEFAULT_RETENTION_DAYS)
+    mockDeleteOldPositionsFiles.mockResolvedValue(0)
+    mockDeleteOldContentUploads.mockResolvedValue(0)
   })
 
   test('should return correct status when not running', async () => {
@@ -397,5 +413,32 @@ describe('cleanupScheduler.getStatus', () => {
     const { cleanupScheduler } = await import('./cleanup-scheduler.js')
     const status = cleanupScheduler.getStatus()
     expect(status.enabled).toBe(false)
+  })
+})
+
+// ============ cleanupScheduler.runCleanup - associated file cleanup ============
+
+describe('cleanupScheduler.runCleanup - associated file cleanup', () => {
+  beforeEach(() => {
+    config.set(CONFIG_RETENTION_DAYS, DEFAULT_RETENTION_DAYS)
+    mockDeleteOldReviews.mockResolvedValue(0)
+    mockDeleteOldPositionsFiles.mockResolvedValue(0)
+    mockDeleteOldContentUploads.mockResolvedValue(0)
+  })
+
+  test('should call deleteOldPositionsFiles with retention days', async () => {
+    const { cleanupScheduler } = await import('./cleanup-scheduler.js')
+    await cleanupScheduler.runCleanup()
+    expect(mockDeleteOldPositionsFiles).toHaveBeenCalledWith(
+      DEFAULT_RETENTION_DAYS
+    )
+  })
+
+  test('should call deleteOldContentUploads with retention days', async () => {
+    const { cleanupScheduler } = await import('./cleanup-scheduler.js')
+    await cleanupScheduler.runCleanup()
+    expect(mockDeleteOldContentUploads).toHaveBeenCalledWith(
+      DEFAULT_RETENTION_DAYS
+    )
   })
 })
