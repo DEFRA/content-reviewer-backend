@@ -285,7 +285,9 @@ class TextExtractor {
    * Normalise various buffer-like inputs into an ArrayBuffer.
    */
   normalizeToArrayBuffer(buf) {
-    if (buf instanceof ArrayBuffer) return buf
+    if (buf instanceof ArrayBuffer) {
+return buf
+    } 
     if (ArrayBuffer.isView(buf)) {
       return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength)
     }
@@ -329,7 +331,8 @@ class TextExtractor {
     const combos = this.buildCombos(fnNames, optsList)
     for (const { opts, fn } of combos) {
       const res = await this.attemptMammothCall(opts, fn)
-      if (res) return res
+      if (res)  {
+        return res
     }
     return null
   }
