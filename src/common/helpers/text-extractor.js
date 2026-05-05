@@ -265,10 +265,7 @@ class TextExtractor {
       )
 
       let result = null
-      const attempts = [
-        { arrayBuffer }, // preferred shape per recent mammoth docs
-        { buffer: arrayBuffer } // older/alternate shape
-      ]
+      const attempts = [{ arrayBuffer }, { buffer: arrayBuffer }]
 
       // Try convertToMarkdown with a couple of option shapes
       for (const opts of attempts) {
