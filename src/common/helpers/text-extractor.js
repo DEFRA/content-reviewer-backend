@@ -268,7 +268,9 @@ class TextExtractor {
 
       // normalize incoming buffer-like to ArrayBuffer (prefer zero-copy)
       const normalizeToArrayBuffer = (buf) => {
-        if (buf instanceof ArrayBuffer) return buf
+        if (buf instanceof ArrayBuffer) {
+          return buf
+        }
         if (ArrayBuffer.isView(buf)) {
           return buf.buffer.slice(
             buf.byteOffset,
@@ -299,17 +301,30 @@ class TextExtractor {
 
       const tryMammoth = async (fnNames, optsList) => {
         const combos = buildCombos(fnNames, optsList)
-        for (const { opts, fn } of combos) {
+
+        // single-attempt helper keeps control-flow shallow
+        const attempt = async ({ opts, fn }) => {
           try {
             // eslint-disable-next-line no-await-in-loop
             const res = await mammoth[fn](opts)
-            if (res) return res
+            if (res) {
+              return res
+            }
           } catch (err) {
             logger.info(
               `DOCX ${fn} attempt failed with options keys: ${Object.keys(opts).join(', ')} - ${err.message}`
             )
           }
+          return null
         }
+
+        for (const combo of combos) {
+          const res = await attempt(combo)
+          if (res) {
+            return res
+          }
+        }
+
         return null
       }
 
@@ -317,7 +332,9 @@ class TextExtractor {
 
       // preferred: convertToMarkdown, fallback: extractRawText
       let result = await tryMammoth(['convertToMarkdown'], attempts)
-      if (!result) result = await tryMammoth(['extractRawText'], attempts)
+      if (!result) {
+        result = await tryMammoth(['extractRawText'], attempts)
+      }
 
       if (!result) {
         throw new Error(
