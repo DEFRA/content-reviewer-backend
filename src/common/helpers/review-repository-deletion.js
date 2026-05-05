@@ -1,7 +1,97 @@
-import { DeleteObjectCommand } from '@aws-sdk/client-s3'
+import { DeleteObjectCommand, ListObjectsV2Command } from '@aws-sdk/client-s3'
 import { createLogger } from './logging/logger.js'
 
 const logger = createLogger()
+
+function buildCutoffDate(maxAgeInDays) {
+  const cutoffDate = new Date()
+  cutoffDate.setUTCDate(cutoffDate.getUTCDate() - maxAgeInDays)
+  cutoffDate.setUTCHours(0, 0, 0, 0)
+  return cutoffDate
+}
+
+async function deleteFileIfOld(
+  s3Client,
+  bucket,
+  object,
+  cutoffTimestamp,
+  label
+) {
+  if (
+    !object.LastModified ||
+    object.LastModified.getTime() >= cutoffTimestamp
+  ) {
+    return false
+  }
+  try {
+    await s3Client.send(
+      new DeleteObjectCommand({ Bucket: bucket, Key: object.Key })
+    )
+    logger.info({ key: object.Key }, `Deleted old ${label} file from S3`)
+    return true
+  } catch (deleteError) {
+    logger.error(
+      { key: object.Key, error: deleteError.message },
+      `Failed to delete old ${label} file`
+    )
+    return false
+  }
+}
+
+async function deleteOrphanedFilesInPrefix(
+  s3Client,
+  bucket,
+  prefix,
+  cutoffTimestamp,
+  label
+) {
+  let deletedCount = 0
+  let continuationToken
+
+  logger.info(
+    { prefix, cutoffDate: new Date(cutoffTimestamp).toISOString() },
+    `Checking for old ${label} files to delete`
+  )
+
+  try {
+    do {
+      const listResponse = await s3Client.send(
+        new ListObjectsV2Command({
+          Bucket: bucket,
+          Prefix: prefix,
+          ...(continuationToken && { ContinuationToken: continuationToken })
+        })
+      )
+
+      for (const object of listResponse.Contents ?? []) {
+        const wasDeleted = await deleteFileIfOld(
+          s3Client,
+          bucket,
+          object,
+          cutoffTimestamp,
+          label
+        )
+        deletedCount += wasDeleted ? 1 : 0
+      }
+
+      continuationToken = listResponse.IsTruncated
+        ? listResponse.NextContinuationToken
+        : undefined
+    } while (continuationToken)
+  } catch (error) {
+    logger.error(
+      { prefix, error: error.message },
+      `Failed to list ${label} files for cleanup`
+    )
+    return 0
+  }
+
+  logger.info(
+    { prefix, deletedCount },
+    `Completed cleanup of old ${label} files`
+  )
+  return deletedCount
+}
 
 /**
  * Delete uploaded content file from S3
@@ -96,21 +186,15 @@ export async function deleteSingleOldReview(s3Client, bucket, prefix, review) {
 
     // Delete the review JSON file directly using its known flat key
     const reviewKey = `${prefix}${reviewId}.json`
-    const deleteCommand = new DeleteObjectCommand({
-      Bucket: bucket,
-      Key: reviewKey
-    })
-
-    await s3Client.send(deleteCommand)
+    await s3Client.send(
+      new DeleteObjectCommand({ Bucket: bucket, Key: reviewKey })
+    )
 
     logger.info(
-      {
-        reviewId,
-        reviewKey,
-        createdAt: review.createdAt
-      },
+      { reviewId, reviewKey, createdAt: review.createdAt },
       'Deleted old review'
     )
+
     return true
   } catch (deleteError) {
     logger.error(
@@ -152,9 +236,7 @@ export async function deleteOldReviews(
     // Without truncation, sub-millisecond drift between new Date() calls in
     // the implementation and the test helper causes a boundary review's
     // timestamp to fall fractionally before the cutoff, triggering deletion.
-    const cutoffDate = new Date()
-    cutoffDate.setUTCDate(cutoffDate.getUTCDate() - maxAgeInDays)
-    cutoffDate.setUTCHours(0, 0, 0, 0)
+    const cutoffDate = buildCutoffDate(maxAgeInDays)
     const cutoffTimestamp = cutoffDate.getTime()
 
     logger.info(
@@ -217,4 +299,42 @@ export async function deleteOldReviews(
     logger.error({ error: error.message }, 'Failed to delete old reviews')
     throw error
   }
+}
+
+/**
+ * Delete positions files older than a specified age by listing the S3 prefix directly.
+ * Handles orphaned files whose parent review has already been deleted.
+ * @param {Object} s3Client - S3 client instance
+ * @param {string} bucket - S3 bucket name
+ * @param {number} maxAgeInDays - Maximum age of files to keep
+ * @returns {Promise<number>} Number of files deleted
+ */
+export async function deleteOldPositionsFiles(s3Client, bucket, maxAgeInDays) {
+  const cutoffDate = buildCutoffDate(maxAgeInDays)
+  return deleteOrphanedFilesInPrefix(
+    s3Client,
+    bucket,
+    'positions/',
+    cutoffDate.getTime(),
+    'positions'
+  )
+}
+
+/**
+ * Delete content-uploads files older than a specified age by listing the S3 prefix directly.
+ * Handles orphaned files whose parent review has already been deleted.
+ * @param {Object} s3Client - S3 client instance
+ * @param {string} bucket - S3 bucket name
+ * @param {number} maxAgeInDays - Maximum age of files to keep
+ * @returns {Promise<number>} Number of files deleted
+ */
+export async function deleteOldContentUploads(s3Client, bucket, maxAgeInDays) {
+  const cutoffDate = buildCutoffDate(maxAgeInDays)
+  return deleteOrphanedFilesInPrefix(
+    s3Client,
+    bucket,
+    'content-uploads/',
+    cutoffDate.getTime(),
+    'content-uploads'
+  )
 }

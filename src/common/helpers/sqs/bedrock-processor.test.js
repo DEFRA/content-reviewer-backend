@@ -154,21 +154,36 @@ describe('BedrockReviewProcessor - sendBedrockRequest - Failure Cases', () => {
   })
 
   test('Should handle blocked content by guardrails', async () => {
+    const mockGuardrailAssessment = { allAssessments: [{ pii: true }] }
+    const mockPolicyBreakdown = [
+      {
+        assessmentIndex: 0,
+        sensitiveInformationPolicy: {
+          piiEntityTypes: [{ type: 'NAME', action: 'BLOCKED' }]
+        }
+      }
+    ]
     const mockResponse = {
       success: false,
       blocked: true,
       reason: 'Content contains inappropriate material',
-      content: ''
+      content: '',
+      guardrailAssessment: mockGuardrailAssessment,
+      policyBreakdown: mockPolicyBreakdown
     }
     mockSendMessage.mockResolvedValueOnce(mockResponse)
 
-    await expect(
-      processor.sendBedrockRequest(
+    const err = await processor
+      .sendBedrockRequest(
         'review-blocked',
         'Inappropriate content',
         TEST_SYSTEM_PROMPT
       )
-    ).rejects.toThrow('Content blocked by guardrails')
+      .catch((e) => e)
+
+    expect(err.message).toBe('Content blocked by guardrails')
+    expect(err.guardrailAssessment).toEqual(mockGuardrailAssessment)
+    expect(err.policyBreakdown).toEqual(mockPolicyBreakdown)
 
     expect(mockLoggerError).toHaveBeenCalledWith(
       expect.objectContaining({

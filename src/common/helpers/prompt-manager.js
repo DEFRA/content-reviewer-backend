@@ -131,8 +131,11 @@ Return structured plain text only. Two sections, in order:
 - \`CATEGORY:\` — one of the five categories
 - \`START:\` — 0-based char offset from start of text inside \`<content_to_review>\`
 - \`END:\` — exclusive end offset — \`inputText.slice(START, END)\` must yield the exact span
+- \`START:\` — 0-based char offset from start of text inside \`<content_to_review>\`
+- \`END:\` — exclusive end offset — \`inputText.slice(START, END)\` must yield the exact span
 - \`ISSUE:\` — specific descriptive title, never "Issue identified"
 - \`WHY:\` — impact and GOV.UK compliance reason; for short spans, quote the full surrounding sentence for context
+- \`CURRENT:\` — exact verbatim copy of \`inputText.slice(START, END)\`, on a single line; if you cannot locate the exact span, omit the issue entirely
 - \`CURRENT:\` — exact verbatim copy of \`inputText.slice(START, END)\`, on a single line; if you cannot locate the exact span, omit the issue entirely
 - \`SUGGESTED:\` — concrete rewrite that differs from CURRENT; no placeholders like "[insert term]"
 
@@ -154,6 +157,8 @@ Content Completeness: 5/5 - All necessary information present
 [PRIORITY: high]
 REF: 1
 CATEGORY: Plain English
+START: 22
+END: 29
 START: 22
 END: 29
 ISSUE: Jargon word — simpler alternative exists

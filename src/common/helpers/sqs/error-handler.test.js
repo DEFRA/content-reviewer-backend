@@ -172,6 +172,27 @@ describe('ErrorHandler - formatErrorForUI - Pattern-based errors', () => {
   })
 })
 
+describe('ErrorHandler - formatErrorForUI - Guardrail errors', () => {
+  let handler
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    handler = new ErrorHandler()
+  })
+
+  test('Should return PII message for guardrail block', () => {
+    const error = new Error('Content blocked by guardrails')
+    const result = handler.formatErrorForUI(error)
+    expect(result).toBe('Content blocked due to sensitive PII content')
+  })
+
+  test('Should return PII message for partial guardrail keyword match', () => {
+    const error = new Error('blocked by guardrail intervention')
+    const result = handler.formatErrorForUI(error)
+    expect(result).toBe('Content blocked due to sensitive PII content')
+  })
+})
+
 describe('ErrorHandler - formatErrorForUI - Bedrock errors', () => {
   let handler
 

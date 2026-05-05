@@ -3,17 +3,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 const REVIEW_ID = 'review_test-123'
 const S3_BUCKET = 'test-bucket'
 const S3_KEY = `reviews/${REVIEW_ID}.json`
-const AWS_REGION = 'eu-west-2'
-const AWS_ENDPOINT = 'http://localhost:4566'
 const STATUS_PENDING = 'pending'
 const STATUS_COMPLETED = 'completed'
 const ERROR_REVIEW_NOT_FOUND = 'Review not found'
-const REVIEW_LIMIT = 50
-const PAGE_LIMIT = 3
-const PAGE_SKIP = 2
-const REVIEW_COUNT = 42
-const DELETED_COUNT = 5
-const RETENTION_DAYS = 30
 
 const { MOCK_S3_SEND } = vi.hoisted(() => ({ MOCK_S3_SEND: vi.fn() }))
 
@@ -54,7 +46,9 @@ vi.mock('./review-repository-pii.js', () => ({
 vi.mock('./review-repository-deletion.js', () => ({
   deleteUploadedContent: vi.fn(),
   deleteReviewMetadataFile: vi.fn(),
-  deleteOldReviews: vi.fn().mockResolvedValue(0)
+  deleteOldReviews: vi.fn().mockResolvedValue(0),
+  deleteOldPositionsFiles: vi.fn().mockResolvedValue(0),
+  deleteOldContentUploads: vi.fn().mockResolvedValue(0)
 }))
 
 vi.mock('./review-repository-helpers.js', () => ({
@@ -79,15 +73,7 @@ vi.mock('./review-repository-search.js', () => ({
 
 import { reviewRepository } from './review-repository.js'
 import { redactPIIFromReview } from './review-repository-pii.js'
-import {
-  deleteUploadedContent,
-  deleteReviewMetadataFile,
-  deleteOldReviews as deleteOldReviewsHelper
-} from './review-repository-deletion.js'
-import {
-  getRecentReviews as getRecentReviewsHelper,
-  getReviewCount as getReviewCountHelper
-} from './review-repository-queries.js'
+import { getRecentReviews as getRecentReviewsHelper } from './review-repository-queries.js'
 import { searchReview as searchReviewHelper } from './review-repository-search.js'
 import {
   preserveImmutableFields,
@@ -411,6 +397,28 @@ describe('reviewRepository.saveReviewError', () => {
     expect(sanitizeAdditionalData).toHaveBeenCalledWith(
       expect.objectContaining({
         error: expect.objectContaining({ message: 'Error object failure' })
+      }),
+      expect.any(String),
+      expect.any(Object)
+    )
+  })
+
+  it('merges extraData into the failed status update', async () => {
+    const stored = buildStoredReview()
+    MOCK_S3_SEND.mockResolvedValueOnce(makeS3GetResponse(stored))
+    MOCK_S3_SEND.mockResolvedValueOnce({})
+    const guardrailData = {
+      guardrailAssessment: { allAssessments: [] },
+      policyBreakdown: []
+    }
+
+    await reviewRepository.saveReviewError(REVIEW_ID, 'Blocked', guardrailData)
+
+    expect(sanitizeAdditionalData).toHaveBeenCalledWith(
+      expect.objectContaining({
+        error: expect.objectContaining({ message: 'Blocked' }),
+        guardrailAssessment: guardrailData.guardrailAssessment,
+        policyBreakdown: guardrailData.policyBreakdown
       }),
       expect.any(String),
       expect.any(Object)

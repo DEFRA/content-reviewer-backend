@@ -9,7 +9,9 @@ import { redactPIIFromReview } from './review-repository-pii.js'
 import {
   deleteUploadedContent,
   deleteReviewMetadataFile,
-  deleteOldReviews as deleteOldReviewsHelper
+  deleteOldReviews as deleteOldReviewsHelper,
+  deleteOldPositionsFiles as deleteOldPositionsFilesHelper,
+  deleteOldContentUploads as deleteOldContentUploadsHelper
 } from './review-repository-deletion.js'
 import {
   preserveImmutableFields,
@@ -384,7 +386,7 @@ class ReviewRepositoryS3 {
    * @param {string|Error} error - Error message or Error object
    * @returns {Promise<void>}
    */
-  async saveReviewError(reviewId, error) {
+  async saveReviewError(reviewId, error, extraData = {}) {
     const errorMessage = typeof error === 'string' ? error : error.message
     const errorStack = typeof error === 'string' ? null : error.stack
 
@@ -402,7 +404,8 @@ class ReviewRepositoryS3 {
         error: {
           message: errorMessage,
           stack: errorStack
-        }
+        },
+        ...extraData
       })
 
       logger.info(
@@ -578,6 +581,34 @@ class ReviewRepositoryS3 {
       this.bucket,
       this.prefix,
       this.getRecentReviews.bind(this),
+      maxAgeInDays
+    )
+  }
+
+  /**
+   * Delete positions files older than specified number of days by listing S3 directly.
+   * Cleans up orphaned files whose parent review has already been deleted.
+   * @param {number} maxAgeInDays - Maximum age of files to keep (default 5 days)
+   * @returns {Promise<number>} Number of files deleted
+   */
+  async deleteOldPositionsFiles(maxAgeInDays = 5) {
+    return deleteOldPositionsFilesHelper(
+      this.s3Client,
+      this.bucket,
+      maxAgeInDays
+    )
+  }
+
+  /**
+   * Delete content-uploads files older than specified number of days by listing S3 directly.
+   * Cleans up orphaned files whose parent review has already been deleted.
+   * @param {number} maxAgeInDays - Maximum age of files to keep (default 5 days)
+   * @returns {Promise<number>} Number of files deleted
+   */
+  async deleteOldContentUploads(maxAgeInDays = 5) {
+    return deleteOldContentUploadsHelper(
+      this.s3Client,
+      this.bucket,
       maxAgeInDays
     )
   }
