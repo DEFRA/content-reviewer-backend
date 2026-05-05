@@ -259,46 +259,55 @@ class TextExtractor {
    */
   async extractFromDocx(buffer) {
     try {
-      // Helper: normalise incoming buffer to an ArrayBuffer
-      const toArrayBuffer = (buf) => {
-        if (buf instanceof ArrayBuffer) {
-          return buf
-        }
+      // light debug info
+      logger.debug({
+        isBuffer: Buffer.isBuffer(buffer),
+        ctor: buffer?.constructor?.name,
+        length: buffer?.length ?? buffer?.byteLength
+      })
+
+      // normalize incoming buffer-like to ArrayBuffer (prefer zero-copy)
+      const normalizeToArrayBuffer = (buf) => {
+        if (buf instanceof ArrayBuffer) return buf
         if (ArrayBuffer.isView(buf)) {
-          // TypedArray / DataView
           return buf.buffer.slice(
             buf.byteOffset,
             buf.byteOffset + buf.byteLength
           )
         }
         if (Buffer.isBuffer(buf)) {
-          // Create a copied ArrayBuffer from the Buffer
+          if (
+            buf.buffer &&
+            typeof buf.byteOffset === 'number' &&
+            typeof buf.byteLength === 'number'
+          ) {
+            return buf.buffer.slice(
+              buf.byteOffset,
+              buf.byteOffset + buf.byteLength
+            )
+          }
           return Uint8Array.from(buf).buffer
         }
         throw new Error('Unsupported input type for DOCX extraction')
       }
 
-      const arrayBuffer = toArrayBuffer(buffer)
-
-      // Create a Node Buffer for mammoth builds that expect { buffer }
+      const arrayBuffer = normalizeToArrayBuffer(buffer)
       const nodeBuffer = Buffer.from(arrayBuffer)
 
-      // Try a sequence of mammoth functions with given option shapes.
-      // Returns the first successful result or null.
+      const buildCombos = (fnNames, optsList) =>
+        optsList.flatMap((opts) => fnNames.map((fn) => ({ opts, fn })))
+
       const tryMammoth = async (fnNames, optsList) => {
-        for (const opts of optsList) {
-          for (const fn of fnNames) {
-            try {
-              // eslint-disable-next-line no-await-in-loop
-              const res = await mammoth[fn](opts)
-              if (res) return res
-            } catch (err) {
-              logger.debug(
-                `DOCX ${fn} attempt failed with options keys: ${Object.keys(
-                  opts
-                ).join(', ')} - ${err.message}`
-              )
-            }
+        const combos = buildCombos(fnNames, optsList)
+        for (const { opts, fn } of combos) {
+          try {
+            // eslint-disable-next-line no-await-in-loop
+            const res = await mammoth[fn](opts)
+            if (res) return res
+          } catch (err) {
+            logger.debug(
+              `DOCX ${fn} attempt failed with options keys: ${Object.keys(opts).join(', ')} - ${err.message}`
+            )
           }
         }
         return null
@@ -306,11 +315,9 @@ class TextExtractor {
 
       const attempts = [{ arrayBuffer }, { buffer: nodeBuffer }]
 
-      // Prefer convertToMarkdown, fall back to extractRawText
+      // preferred: convertToMarkdown, fallback: extractRawText
       let result = await tryMammoth(['convertToMarkdown'], attempts)
-      if (!result) {
-        result = await tryMammoth(['extractRawText'], attempts)
-      }
+      if (!result) result = await tryMammoth(['extractRawText'], attempts)
 
       if (!result) {
         throw new Error(
@@ -320,9 +327,7 @@ class TextExtractor {
 
       if (result.messages && result.messages.length > 0) {
         logger.warn(
-          `DOCX extraction had warnings: ${result.messages
-            .map((m) => m.message)
-            .join('; ')}`
+          `DOCX extraction had warnings: ${result.messages.map((m) => m.message).join('; ')}`
         )
       }
 
