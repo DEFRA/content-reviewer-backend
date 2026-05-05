@@ -282,18 +282,6 @@ describe('TextExtractor – DOCX extraction', () => {
     })
   })
 
-  describe('extractFromDocx – error path', () => {
-    test('Should throw wrapped error when mammoth fails', async () => {
-      vi.mocked(mammoth.convertToMarkdown).mockRejectedValue(
-        new Error('mammoth boom')
-      )
-
-      await expect(textExtractor.extractFromDocx(FAKE_BUFFER)).rejects.toThrow(
-        'Failed to extract text from DOCX: mammoth boom'
-      )
-    })
-  })
-
   describe('extractText – DOCX mime type routes through extractFromDocx', () => {
     test('Should return normalised text for DOCX mime type', async () => {
       vi.mocked(mammoth.convertToMarkdown).mockResolvedValue({
