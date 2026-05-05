@@ -109,6 +109,9 @@ class CleanupScheduler {
       const deletedCount =
         await reviewRepository.deleteOldReviews(retentionDays)
 
+      await reviewRepository.deleteOldPositionsFiles(retentionDays)
+      await reviewRepository.deleteOldContentUploads(retentionDays)
+
       const endTime = new Date()
       const durationMs = endTime.getTime() - startTime.getTime()
 
