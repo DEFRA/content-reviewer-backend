@@ -10,6 +10,34 @@ function buildCutoffDate(maxAgeInDays) {
   return cutoffDate
 }
 
+async function deleteFileIfOld(
+  s3Client,
+  bucket,
+  object,
+  cutoffTimestamp,
+  label
+) {
+  if (
+    !object.LastModified ||
+    object.LastModified.getTime() >= cutoffTimestamp
+  ) {
+    return false
+  }
+  try {
+    await s3Client.send(
+      new DeleteObjectCommand({ Bucket: bucket, Key: object.Key })
+    )
+    logger.info({ key: object.Key }, `Deleted old ${label} file from S3`)
+    return true
+  } catch (deleteError) {
+    logger.error(
+      { key: object.Key, error: deleteError.message },
+      `Failed to delete old ${label} file`
+    )
+    return false
+  }
+}
+
 async function deleteOrphanedFilesInPrefix(
   s3Client,
   bucket,
@@ -36,26 +64,14 @@ async function deleteOrphanedFilesInPrefix(
       )
 
       for (const object of listResponse.Contents ?? []) {
-        if (
-          object.LastModified &&
-          object.LastModified.getTime() < cutoffTimestamp
-        ) {
-          try {
-            await s3Client.send(
-              new DeleteObjectCommand({ Bucket: bucket, Key: object.Key })
-            )
-            logger.info(
-              { key: object.Key },
-              `Deleted old ${label} file from S3`
-            )
-            deletedCount++
-          } catch (deleteError) {
-            logger.error(
-              { key: object.Key, error: deleteError.message },
-              `Failed to delete old ${label} file`
-            )
-          }
-        }
+        const wasDeleted = await deleteFileIfOld(
+          s3Client,
+          bucket,
+          object,
+          cutoffTimestamp,
+          label
+        )
+        deletedCount += wasDeleted ? 1 : 0
       }
 
       continuationToken = listResponse.IsTruncated

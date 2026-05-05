@@ -387,6 +387,24 @@ describe('deleteOldPositionsFiles - default behaviour', () => {
 })
 
 describe('deleteOldPositionsFiles - edge cases', () => {
+  it('skips objects with no LastModified date', async () => {
+    const s3Client = makeMockS3()
+
+    s3Client.send.mockResolvedValueOnce({
+      Contents: [{ Key: POSITIONS_FILE_KEY }],
+      IsTruncated: false
+    })
+
+    const deleted = await deleteOldPositionsFiles(
+      s3Client,
+      BUCKET,
+      RETENTION_DAYS
+    )
+
+    expect(deleted).toBe(0)
+    expect(s3Client.send).toHaveBeenCalledTimes(1) // list only, no delete
+  })
+
   it('handles paginated results via ContinuationToken', async () => {
     const s3Client = makeMockS3()
     const oldDate = daysAgoDate(DAYS_OUTSIDE_WINDOW)
