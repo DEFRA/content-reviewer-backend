@@ -376,7 +376,7 @@ const config = convict({
     intervalHours: {
       doc: 'Interval in hours between cleanup runs',
       format: Number,
-      default: 1,
+      default: 24,
       env: 'CLEANUP_INTERVAL_HOURS'
     },
     retentionDays: {

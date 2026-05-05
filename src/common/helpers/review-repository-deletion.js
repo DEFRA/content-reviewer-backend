@@ -69,6 +69,31 @@ export async function deleteReviewMetadataFile(
   logger.info({ reviewId, reviewKey }, 'Deleted review metadata from S3')
 }
 
+async function deletePositionsFile(s3Client, bucket, reviewId) {
+  const key = `positions/${reviewId}.json`
+  try {
+    await s3Client.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }))
+    logger.info({ reviewId, key }, 'Deleted positions file from S3')
+  } catch (error) {
+    logger.error(
+      { reviewId, key, error: error.message },
+      'Failed to delete positions file (may not exist)'
+    )
+  }
+}
+
+async function deleteContentUploadFile(s3Client, bucket, reviewId, s3Key) {
+  try {
+    await s3Client.send(new DeleteObjectCommand({ Bucket: bucket, Key: s3Key }))
+    logger.info({ reviewId, s3Key }, 'Deleted content-uploads file from S3')
+  } catch (error) {
+    logger.error(
+      { reviewId, s3Key, error: error.message },
+      'Failed to delete content-uploads file (may not exist)'
+    )
+  }
+}
+
 /**
  * Delete all S3 objects for a specific review
  * @param {Object} s3Client - S3 client instance
@@ -96,21 +121,21 @@ export async function deleteSingleOldReview(s3Client, bucket, prefix, review) {
 
     // Delete the review JSON file directly using its known flat key
     const reviewKey = `${prefix}${reviewId}.json`
-    const deleteCommand = new DeleteObjectCommand({
-      Bucket: bucket,
-      Key: reviewKey
-    })
-
-    await s3Client.send(deleteCommand)
+    await s3Client.send(
+      new DeleteObjectCommand({ Bucket: bucket, Key: reviewKey })
+    )
 
     logger.info(
-      {
-        reviewId,
-        reviewKey,
-        createdAt: review.createdAt
-      },
+      { reviewId, reviewKey, createdAt: review.createdAt },
       'Deleted old review'
     )
+
+    // Delete associated files — non-critical, errors are swallowed
+    await deletePositionsFile(s3Client, bucket, reviewId)
+    if (review.s3Key) {
+      await deleteContentUploadFile(s3Client, bucket, reviewId, review.s3Key)
+    }
+
     return true
   } catch (deleteError) {
     logger.error(
