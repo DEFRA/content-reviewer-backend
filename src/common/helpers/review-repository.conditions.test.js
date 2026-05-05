@@ -176,14 +176,17 @@ describe('reviewRepository.saveReviewResult – with envelope', () => {
 
 // ============ savePositions – missing issues property (line 349) ============
 
-describe('reviewRepository.savePositions – missing issues property', () => {
-  it('defaults issues to empty array when reviewedContent has no issues property', async () => {
+describe('reviewRepository.savePositions – missing improvements property', () => {
+  it('defaults improvements to empty array when positionsData has no improvements property', async () => {
     MOCK_S3_SEND.mockResolvedValueOnce({})
 
-    await reviewRepository.savePositions(REVIEW_ID, { plainText: 'some text' })
+    await reviewRepository.savePositions(REVIEW_ID, {
+      rawResponse: 'some text',
+      guardrailAssessment: null
+    })
 
     const command = MOCK_S3_SEND.mock.calls[0][0]
     const body = JSON.parse(command.Body)
-    expect(body.issues).toEqual([])
+    expect(body.improvements).toEqual([])
   })
 })
