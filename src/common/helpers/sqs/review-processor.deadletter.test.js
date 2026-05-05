@@ -169,7 +169,6 @@ describe('ReviewProcessor - saveReviewToRepository', () => {
     const bedrockResult = {
       bedrockResponse: {
         usage: { totalTokens: 100 },
-        guardrailAssessment: null,
         stopReason: 'end_turn'
       },
       bedrockDuration: 500
@@ -215,7 +214,6 @@ describe('ReviewProcessor - saveReviewToRepository', () => {
     const bedrockResult = {
       bedrockResponse: {
         usage: { totalTokens: 100 },
-        guardrailAssessment: null,
         stopReason: 'end_turn'
       },
       bedrockDuration: 500
@@ -239,18 +237,17 @@ describe('ReviewProcessor - saveReviewToRepository', () => {
     )
   })
 
-  test('skips savePositions when reviewedContent is null', async () => {
+  test('skips savePositions when finalReviewContent is null', async () => {
     const { reviewRepository } = await import('../review-repository.js')
 
     const parseResult = {
       parsedReview: { reviewedContent: null },
-      finalReviewContent: 'text',
+      finalReviewContent: null,
       parseDuration: 50
     }
     const bedrockResult = {
       bedrockResponse: {
         usage: {},
-        guardrailAssessment: null,
         stopReason: 'end_turn'
       },
       bedrockDuration: 300
@@ -277,7 +274,6 @@ describe('ReviewProcessor - saveReviewToRepository', () => {
     const bedrockResult = {
       bedrockResponse: {
         usage: {},
-        guardrailAssessment: null,
         stopReason: 'end_turn'
       },
       bedrockDuration: 300

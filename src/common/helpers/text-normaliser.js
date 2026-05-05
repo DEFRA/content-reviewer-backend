@@ -99,6 +99,16 @@ const URL_PLACEHOLDER_RE = new RegExp(
 )
 
 /**
+ * Detects 2-byte UTF-8 sequences that were decoded as Latin-1 (mojibake).
+ * Pattern: U+00C2–U+00DF followed by U+0080–U+00BF — these are the two
+ * Latin-1 code-points that correspond to the two bytes of any UTF-8
+ * 2-byte sequence (e.g. Â£ → £, Â© → ©).
+ * Only 2-byte sequences are targeted; 3/4-byte patterns are not common in
+ * GOV.UK content and would require more complex lookahead matching.
+ */
+const MOJIBAKE_2BYTE_RE = /[\u00C2-\u00DF][\u0080-\u00BF]/g
+
+/**
  * Leading spaces on a line (for bullet indentation detection).
  */
 const LEADING_SPACES_RE = /^( *)/
@@ -137,9 +147,12 @@ const LEADING_SPACES_RE = /^( *)/
  * ║  ❌  3+ consecutive blank lines      → capped at 2              ║
  * ║  ❌  Typographic artefacts           (ligatures, curly quotes,   ║
  * ║       typographic dashes — outside URL tokens)                  ║
+ * ║  ❌  Mojibake                        (UTF-8 decoded as Latin-1:  ║
+ * ║       Â£ → £, Â© → ©, etc.)                                    ║
  * ╚══════════════════════════════════════════════════════════════════╝
  *
  * Normalisations applied (in order):
+ *  0.  Mojibake repair (UTF-8 decoded as Latin-1: Â£ → £, Â© → ©, etc.)
  *  1.  BOM / null-byte / invisible control-character stripping
  *  2.  Unicode NFC composition
  *  3.  Ligature expansion  (PDF artefacts: ﬁ → fi, ﬀ → ff, etc.)
@@ -241,6 +254,11 @@ class TextNormaliser {
     const originalLength = text.length
     let t = text
 
+    // ── 0. Mojibake repair ────────────────────────────────────────────────
+    // Fix UTF-8 text that was incorrectly decoded as Latin-1 (e.g. Â£ → £).
+    // Must run before NFC so that the repaired codepoints are composed correctly.
+    t = this._repairMojibake(t)
+
     // ── 1. Invisible / control character stripping ────────────────────────
     // Keeps: \t (tab), \n (LF), \r (CR) — handled in later steps.
     t = t.replaceAll(CONTROL_CHAR_RE, '')
@@ -338,6 +356,27 @@ class TextNormaliser {
   }
 
   // ── Private helpers ──────────────────────────────────────────────────────
+
+  /**
+   * Repair 2-byte UTF-8 sequences decoded as Latin-1 (mojibake).
+   * Each matching pair (e.g. U+00C2 + U+00A3 → U+00A3 "£") is decoded by
+   * reconstructing the original Unicode codepoint from the two Latin-1 bytes.
+   * @param {string} text
+   * @returns {string}
+   * @private
+   */
+  _repairMojibake(text) {
+    if (!MOJIBAKE_2BYTE_RE.test(text)) {
+      return text
+    }
+    MOJIBAKE_2BYTE_RE.lastIndex = 0 // reset after stateful test()
+    return text.replaceAll(MOJIBAKE_2BYTE_RE, (match) => {
+      const byte1 = match.charCodeAt(0)
+      const byte2 = match.charCodeAt(1)
+      const codepoint = ((byte1 & 0x1f) << 6) | (byte2 & 0x3f)
+      return String.fromCodePoint(codepoint)
+    })
+  }
 
   /**
    * Normalise a single line.

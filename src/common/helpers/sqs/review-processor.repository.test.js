@@ -204,7 +204,6 @@ describe('ReviewProcessor - saveReviewToRepository', () => {
       }
       const bedrockResult = {
         bedrockResponse: {
-          guardrailAssessment: null,
           stopReason: 'end_turn',
           usage: { inputTokens: 100, outputTokens: 50 }
         }
@@ -223,7 +222,6 @@ describe('ReviewProcessor - saveReviewToRepository', () => {
         expect.objectContaining({
           reviewData: { score: 90 },
           rawResponse: TEST_REVIEW_CONTENT,
-          guardrailAssessment: null,
           stopReason: 'end_turn',
           completedAt: expect.any(Date)
         }),

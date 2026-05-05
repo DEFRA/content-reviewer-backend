@@ -109,7 +109,6 @@ describe('ReviewProcessor - processContentReview - uploadId processing', () => {
       mockPerformBedrockReview.mockResolvedValue({
         bedrockResponse: {
           usage: { inputTokens: 100, outputTokens: 50 },
-          guardrailAssessment: null,
           stopReason: 'end_turn'
         },
         bedrockDuration: 1500
@@ -169,7 +168,6 @@ describe('ReviewProcessor - processContentReview - reviewId processing', () => {
       mockPerformBedrockReview.mockResolvedValue({
         bedrockResponse: {
           usage: {},
-          guardrailAssessment: null,
           stopReason: 'end_turn'
         },
         bedrockDuration: 1500

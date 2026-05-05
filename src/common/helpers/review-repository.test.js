@@ -646,15 +646,13 @@ describe('reviewRepository.deleteOldReviews', () => {
 // ============ savePositions ============
 
 describe('reviewRepository.savePositions', () => {
-  it('saves position data to S3 under positions/{reviewId}.json', async () => {
+  it('saves raw response to S3 under positions/{reviewId}.json', async () => {
     MOCK_S3_SEND.mockResolvedValueOnce({})
 
-    const reviewedContent = {
-      plainText: 'Some content',
-      issues: [{ start: 0, end: 4, type: 'clarity', text: 'Some' }]
-    }
-
-    await reviewRepository.savePositions(REVIEW_ID, reviewedContent)
+    await reviewRepository.savePositions(
+      REVIEW_ID,
+      '[SCORES]\nPlain English: 3/5 - Some issues'
+    )
 
     expect(MOCK_S3_SEND).toHaveBeenCalledTimes(1)
     const command = MOCK_S3_SEND.mock.calls[0][0]
@@ -662,42 +660,35 @@ describe('reviewRepository.savePositions', () => {
     expect(command.Bucket).toBe(S3_BUCKET)
   })
 
-  it('includes plainText and issues in the saved payload', async () => {
+  it('includes rawResponse and reviewId in the saved payload', async () => {
     MOCK_S3_SEND.mockResolvedValueOnce({})
 
-    const reviewedContent = {
-      plainText: 'My review text',
-      issues: [{ start: 3, end: 9, type: 'plain-english', text: 'review' }]
-    }
+    const rawResponse =
+      '[SCORES]\nPlain English: 4/5 - Good\n[IMPROVEMENTS]\n[/IMPROVEMENTS]'
 
-    await reviewRepository.savePositions(REVIEW_ID, reviewedContent)
+    await reviewRepository.savePositions(REVIEW_ID, rawResponse)
 
     const command = MOCK_S3_SEND.mock.calls[0][0]
     const body = JSON.parse(command.Body)
-    expect(body.plainText).toBe('My review text')
-    expect(body.issues).toHaveLength(1)
+    expect(body.rawResponse).toBe(rawResponse)
     expect(body.reviewId).toBe(REVIEW_ID)
   })
 
-  it('handles empty issues array gracefully', async () => {
+  it('defaults rawResponse to empty string when undefined is passed', async () => {
     MOCK_S3_SEND.mockResolvedValueOnce({})
 
-    await reviewRepository.savePositions(REVIEW_ID, {
-      plainText: 'text',
-      issues: []
-    })
+    await reviewRepository.savePositions(REVIEW_ID, undefined)
 
     const command = MOCK_S3_SEND.mock.calls[0][0]
     const body = JSON.parse(command.Body)
-    expect(body.issues).toHaveLength(0)
-    expect(command.Metadata.issueCount).toBe('0')
+    expect(body.rawResponse).toBe('')
   })
 
   it('throws when S3 send fails', async () => {
     MOCK_S3_SEND.mockRejectedValueOnce(new Error('S3 write failed'))
 
     await expect(
-      reviewRepository.savePositions(REVIEW_ID, { plainText: '', issues: [] })
+      reviewRepository.savePositions(REVIEW_ID, 'some response')
     ).rejects.toThrow('S3 write failed')
   })
 })

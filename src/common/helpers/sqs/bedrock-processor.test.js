@@ -503,6 +503,10 @@ describe('BedrockReviewProcessor - parseBedrockResponseData - Edge Cases - Impro
 })
 
 describe('BedrockReviewProcessor - buildUserPrompt - document size thresholds', () => {
+  const LARGE_DOC_CHARS = 40000
+  const MEDIUM_DOC_CHARS = 10000
+  const SMALL_DOC_CHARS = 100
+
   let processor
 
   beforeEach(() => {
@@ -510,18 +514,18 @@ describe('BedrockReviewProcessor - buildUserPrompt - document size thresholds', 
     processor = new BedrockReviewProcessor()
   })
 
-  test('sets min_issues_per_third = 3 for large documents (>= 40000 chars)', () => {
-    const prompt = processor.buildUserPrompt('x'.repeat(40000))
-    expect(prompt).toContain('min_issues_per_third = 3')
+  test('sets min 3 issues per third for large documents (>= 40000 chars)', () => {
+    const prompt = processor.buildUserPrompt('x'.repeat(LARGE_DOC_CHARS))
+    expect(prompt).toContain('min 3 issue each')
   })
 
-  test('sets min_issues_per_third = 2 for medium documents (>= 10000 and < 40000 chars)', () => {
-    const prompt = processor.buildUserPrompt('x'.repeat(10000))
-    expect(prompt).toContain('min_issues_per_third = 2')
+  test('sets min 2 issues per third for medium documents (>= 10000 and < 40000 chars)', () => {
+    const prompt = processor.buildUserPrompt('x'.repeat(MEDIUM_DOC_CHARS))
+    expect(prompt).toContain('min 2 issue each')
   })
 
-  test('sets min_issues_per_third = 1 for small documents (< 10000 chars)', () => {
-    const prompt = processor.buildUserPrompt('x'.repeat(100))
-    expect(prompt).toContain('min_issues_per_third = 1')
+  test('sets min 1 issue per third for small documents (< 10000 chars)', () => {
+    const prompt = processor.buildUserPrompt('x'.repeat(SMALL_DOC_CHARS))
+    expect(prompt).toContain('min 1 issue each')
   })
 })
