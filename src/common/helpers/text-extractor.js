@@ -260,7 +260,7 @@ class TextExtractor {
   async extractFromDocx(buffer) {
     try {
       // light debug info
-      logger.debug({
+      logger.info({
         isBuffer: Buffer.isBuffer(buffer),
         ctor: buffer?.constructor?.name,
         length: buffer?.length ?? buffer?.byteLength
@@ -305,7 +305,7 @@ class TextExtractor {
             const res = await mammoth[fn](opts)
             if (res) return res
           } catch (err) {
-            logger.debug(
+            logger.info(
               `DOCX ${fn} attempt failed with options keys: ${Object.keys(opts).join(', ')} - ${err.message}`
             )
           }
