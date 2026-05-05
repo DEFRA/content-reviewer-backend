@@ -259,44 +259,87 @@ class TextExtractor {
    */
   async extractFromDocx(buffer) {
     try {
-      const arrayBuffer = buffer.buffer.slice(
-        buffer.byteOffset,
-        buffer.byteOffset + buffer.byteLength
-      )
+      // light debug info
+      logger.info({
+        isBuffer: Buffer.isBuffer(buffer),
+        ctor: buffer?.constructor?.name,
+        length: buffer?.length ?? buffer?.byteLength
+      })
 
-      let result = null
-      const attempts = [{ arrayBuffer }, { buffer: arrayBuffer }]
-
-      // Try convertToMarkdown with a couple of option shapes
-      for (const opts of attempts) {
-        try {
-          // convertToMarkdown preserves: headings, bullets, bold, links
-          // some mammoth builds accept { arrayBuffer }, others expect { buffer }
-          // so attempt both shapes
-          // eslint-disable-next-line no-await-in-loop
-          result = await mammoth.convertToMarkdown(opts)
-          break
-        } catch (err) {
-          // continue to next attempt
-          logger.debug(
-            `DOCX convertToMarkdown attempt failed with options keys: ${Object.keys(opts).join(', ')} - ${err.message}`
+      // normalize incoming buffer-like to ArrayBuffer (prefer zero-copy)
+      const normalizeToArrayBuffer = (buf) => {
+        if (buf instanceof ArrayBuffer) {
+          return buf
+        }
+        if (ArrayBuffer.isView(buf)) {
+          return buf.buffer.slice(
+            buf.byteOffset,
+            buf.byteOffset + buf.byteLength
           )
         }
+        if (Buffer.isBuffer(buf)) {
+          if (
+            buf.buffer &&
+            typeof buf.byteOffset === 'number' &&
+            typeof buf.byteLength === 'number'
+          ) {
+            return buf.buffer.slice(
+              buf.byteOffset,
+              buf.byteOffset + buf.byteLength
+            )
+          }
+          return Uint8Array.from(buf).buffer
+        }
+        throw new Error('Unsupported input type for DOCX extraction')
       }
 
-      // If convertToMarkdown didn't work, fall back to extractRawText (plain text)
-      if (!result) {
-        try {
-          // eslint-disable-next-line no-await-in-loop
-          result = await mammoth.extractRawText({ arrayBuffer })
-        } catch (err) {
-          // last-ditch: try extractRawText with buffer key
-          logger.debug(
-            `DOCX extractRawText fallback: failed with arrayBuffer shape - ${err.message}`
-          )
-          // eslint-disable-next-line no-await-in-loop
-          result = await mammoth.extractRawText({ buffer: arrayBuffer })
+      const arrayBuffer = normalizeToArrayBuffer(buffer)
+      const nodeBuffer = Buffer.from(arrayBuffer)
+
+      const buildCombos = (fnNames, optsList) =>
+        optsList.flatMap((opts) => fnNames.map((fn) => ({ opts, fn })))
+
+      const tryMammoth = async (fnNames, optsList) => {
+        const combos = buildCombos(fnNames, optsList)
+
+        // single-attempt helper keeps control-flow shallow
+        const attempt = async ({ opts, fn }) => {
+          try {
+            // eslint-disable-next-line no-await-in-loop
+            const res = await mammoth[fn](opts)
+            if (res) {
+              return res
+            }
+          } catch (err) {
+            logger.info(
+              `DOCX ${fn} attempt failed with options keys: ${Object.keys(opts).join(', ')} - ${err.message}`
+            )
+          }
+          return null
         }
+
+        for (const combo of combos) {
+          const res = await attempt(combo)
+          if (res) {
+            return res
+          }
+        }
+
+        return null
+      }
+
+      const attempts = [{ arrayBuffer }, { buffer: nodeBuffer }]
+
+      // preferred: convertToMarkdown, fallback: extractRawText
+      let result = await tryMammoth(['convertToMarkdown'], attempts)
+      if (!result) {
+        result = await tryMammoth(['extractRawText'], attempts)
+      }
+
+      if (!result) {
+        throw new Error(
+          'mammoth failed to parse DOCX with any supported input shape'
+        )
       }
 
       if (result.messages && result.messages.length > 0) {
@@ -305,7 +348,7 @@ class TextExtractor {
         )
       }
 
-      return result.value
+      return result.value || ''
     } catch (error) {
       logger.error(`DOCX extraction failed: ${error.message}`)
       throw new Error(`Failed to extract text from DOCX: ${error.message}`)
