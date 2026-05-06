@@ -1,7 +1,9 @@
 import { describe, test, expect, beforeEach, vi } from 'vitest'
 
-const { mockSendFn } = vi.hoisted(() => ({
-  mockSendFn: vi.fn()
+const { mockSendFn, TEST_BUCKET, TEST_PROMPT_KEY } = vi.hoisted(() => ({
+  mockSendFn: vi.fn(),
+  TEST_BUCKET: 'test-bucket',
+  TEST_PROMPT_KEY: 'prompts/system-prompt.md'
 }))
 
 vi.mock('@aws-sdk/client-s3', () => ({
@@ -24,8 +26,8 @@ vi.mock('../../config.js', () => ({
       const configMap = {
         'aws.region': 'eu-west-2',
         'aws.endpoint': null,
-        's3.bucket': 'test-bucket',
-        's3.promptKey': 'prompts/system-prompt.md'
+        's3.bucket': TEST_BUCKET,
+        's3.promptKey': TEST_PROMPT_KEY
       }
       return configMap[key]
     })
@@ -45,8 +47,8 @@ import { config } from '../../config.js'
 import { PromptManager, DEFAULT_SYSTEM_PROMPT } from './prompt-manager.js'
 
 const TEST_CONSTANTS = {
-  BUCKET_NAME: 'test-bucket',
-  PROMPT_KEY: 'prompts/system-prompt.md',
+  BUCKET_NAME: TEST_BUCKET,
+  PROMPT_KEY: TEST_PROMPT_KEY,
   AWS_REGION: 'eu-west-2',
   CACHE_TTL: 3600000,
   TEST_PROMPT: 'Test system prompt content',
@@ -56,7 +58,8 @@ const TEST_CONSTANTS = {
   ZERO: 0,
   ONE: 1,
   ONE_HOUR: 3600000,
-  HALF_HOUR: 1800000
+  HALF_HOUR: 1800000,
+  ASYNC_SETTLE_MS: 50
 }
 
 const LONG_PROMPT = 'A'.repeat(TEST_CONSTANTS.LONG_PROMPT_LENGTH)
@@ -131,7 +134,7 @@ describe('PromptManager - Upload Prompt', () => {
   })
 })
 
-describe('PromptManager - Get System Prompt', () => {
+describe('PromptManager - Get System Prompt - fetch and cache', () => {
   beforeEach(() => {
     vi.clearAllMocks()
   })
@@ -186,6 +189,12 @@ describe('PromptManager - Get System Prompt', () => {
     const result = await manager.getSystemPrompt()
     expect(result).toBe('Updated prompt')
     expect(mockSendFn).toHaveBeenCalledTimes(TEST_CONSTANTS.ONE)
+  })
+})
+
+describe('PromptManager - Get System Prompt - fallback behaviour', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
   })
   test('Should fall back to default prompt when S3 fails', async () => {
     mockSendFn.mockRejectedValueOnce(new Error('S3 error'))
@@ -296,9 +305,9 @@ describe('PromptManager - Default System Prompt', () => {
   })
   test('Should contain required prompt sections', () => {
     expect(DEFAULT_SYSTEM_PROMPT).toContain('[SCORES]')
+    expect(DEFAULT_SYSTEM_PROMPT).toContain('[/SCORES]')
     expect(DEFAULT_SYSTEM_PROMPT).toContain('[IMPROVEMENTS]')
-    expect(DEFAULT_SYSTEM_PROMPT).toContain('START:')
-    expect(DEFAULT_SYSTEM_PROMPT).toContain('END:')
+    expect(DEFAULT_SYSTEM_PROMPT).toContain('[/IMPROVEMENTS]')
   })
   test('Should contain scoring guidelines', () => {
     expect(DEFAULT_SYSTEM_PROMPT).toContain('Plain English')
@@ -344,7 +353,7 @@ describe('PromptManager - Error Handling', () => {
     const result = await manager.getSystemPrompt()
 
     expect(result).toBe(DEFAULT_SYSTEM_PROMPT)
-    await new Promise((r) => setTimeout(r, 50))
+    await new Promise((r) => setTimeout(r, TEST_CONSTANTS.ASYNC_SETTLE_MS))
   })
 })
 
@@ -384,8 +393,8 @@ describe('PromptManager - Initialization with LocalStack endpoint', () => {
   const DEFAULT_CONFIG = {
     'aws.region': 'eu-west-2',
     'aws.endpoint': null,
-    's3.bucket': 'test-bucket',
-    's3.promptKey': 'prompts/system-prompt.md'
+    's3.bucket': TEST_BUCKET,
+    's3.promptKey': TEST_PROMPT_KEY
   }
 
   afterEach(() => {
@@ -394,7 +403,9 @@ describe('PromptManager - Initialization with LocalStack endpoint', () => {
 
   test('Should configure S3 client with endpoint and forcePathStyle when awsEndpoint is set', () => {
     config.get.mockImplementation((key) => {
-      if (key === 'aws.endpoint') return 'http://localhost:4566'
+      if (key === 'aws.endpoint') {
+        return 'http://localhost:4566'
+      }
       return DEFAULT_CONFIG[key]
     })
 

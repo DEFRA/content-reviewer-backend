@@ -467,7 +467,11 @@ describe('ContentExtractor - extractTextFromCanonicalDocument - success', () => 
       messageBody
     )
 
-    expect(result).toEqual({ canonicalText: TEST_TEXT_CONTENT, linkMap: null })
+    expect(result).toEqual({
+      canonicalText: TEST_TEXT_CONTENT,
+      linkMap: null,
+      sourceMap: null
+    })
   })
 
   test('returns { canonicalText, linkMap } when canonical document includes linkMap (URL source)', async () => {

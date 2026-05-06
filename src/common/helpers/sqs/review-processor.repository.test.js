@@ -205,7 +205,6 @@ describe('ReviewProcessor - saveReviewToRepository', () => {
       }
       const bedrockResult = {
         bedrockResponse: {
-          guardrailAssessment: null,
           stopReason: 'end_turn',
           usage: { inputTokens: 100, outputTokens: 50 }
         }
@@ -224,6 +223,9 @@ describe('ReviewProcessor - saveReviewToRepository', () => {
       expect(mockSaveReviewResult).toHaveBeenCalledWith(
         TEST_REVIEW_ID,
         expect.objectContaining({
+          reviewData: { score: 90 },
+          rawResponse: TEST_REVIEW_CONTENT,
+          stopReason: 'end_turn',
           completedAt: expect.any(Date)
         }),
         { inputTokens: 100, outputTokens: 50 },

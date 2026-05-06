@@ -12,14 +12,16 @@ import {
   deriveEvidence,
   deriveCategory,
   normalizeCategoryDisplay,
-  findNearestOccurrence,
-  resolveIssuePosition,
   snapToWordBoundary,
   mapIssue,
   mapImprovement,
   hasRefFields,
   buildRefMap
 } from './result-envelope-issue-mappers.js'
+import {
+  findNearestOccurrence,
+  resolveIssuePosition
+} from './result-envelope-position-resolver.js'
 
 // ── Shared test data ──────────────────────────────────────────────────────────
 

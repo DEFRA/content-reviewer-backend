@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { createLogger } from './logging/logger.js'
+import { resolveIssuePosition } from './result-envelope-position-resolver.js'
 
 const logger = createLogger()
 
@@ -65,112 +66,21 @@ export function normalizeCategoryDisplay(raw) {
 }
 
 /**
- * Search canonicalText for the nearest occurrence of `searchText` to `hintMid`.
- * Returns `{ start, end }` when found, or `null` when the text is not present.
- * @param {string} searchText
- * @param {string} canonicalText
- * @param {number} hintMid
- * @returns {{ start: number, end: number } | null}
- */
-export function findNearestOccurrence(searchText, canonicalText, hintMid) {
-  if (!searchText || !canonicalText) {
-    return null
-  }
-  let bestStart = -1
-  let bestDistance = Infinity
-  let searchFrom = 0
-
-  while (searchFrom <= canonicalText.length) {
-    const found = canonicalText.indexOf(searchText, searchFrom)
-    if (found === -1) {
-      break
-    }
-    const mid = found + searchText.length / 2
-    const dist = Math.abs(mid - hintMid)
-    if (dist < bestDistance) {
-      bestDistance = dist
-      bestStart = found
-    }
-    searchFrom = found + 1
-  }
-
-  if (bestStart === -1) {
-    return null
-  }
-  return { start: bestStart, end: bestStart + searchText.length }
-}
-
-/**
- * Resolve the best character-offset pair for a raw issue using verbatim text
- * fields as ground truth.  Falls back to the original offsets if not found.
- * @param {number} start
- * @param {number} end
- * @param {string} issueText
- * @param {string} canonicalText
- * @param {string|null} [fallbackText]
- * @returns {{ start: number, end: number }}
- */
-export function resolveIssuePosition(
-  start,
-  end,
-  issueText,
-  canonicalText,
-  fallbackText = null
-) {
-  if (issueText && canonicalText.slice(start, end) === issueText) {
-    return { start, end }
-  }
-
-  const hintMid = (start + end) / 2
-
-  if (issueText) {
-    const found = findNearestOccurrence(issueText, canonicalText, hintMid)
-    if (found) {
-      logger.info(
-        {
-          originalStart: start,
-          originalEnd: end,
-          resolvedStart: found.start,
-          resolvedEnd: found.end,
-          source: 'issueText',
-          text: issueText.substring(0, 60)
-        },
-        '[result-envelope] Resolved issue position via issueText search'
-      )
-      return found
-    }
-  }
-
-  if (fallbackText) {
-    const found = findNearestOccurrence(fallbackText, canonicalText, hintMid)
-    if (found) {
-      logger.info(
-        {
-          originalStart: start,
-          originalEnd: end,
-          resolvedStart: found.start,
-          resolvedEnd: found.end,
-          source: 'fallbackText (improvement.current)',
-          text: fallbackText.substring(0, 60)
-        },
-        '[result-envelope] Resolved issue position via improvement.current fallback'
-      )
-      return found
-    }
-  }
-
-  return { start, end }
-}
-
-/**
  * Map a parsed issue + its paired improvement into the spec issue object.
- * @param {Object} rawIssue
- * @param {Object} improvement
- * @param {number} idx
- * @param {string} canonicalText
+ * @param {Object}     rawIssue
+ * @param {Object}     improvement
+ * @param {number}     idx
+ * @param {string}     canonicalText
+ * @param {Array|null} [sourceMap]
  * @returns {Object}
  */
-export function mapIssue(rawIssue, improvement, idx, canonicalText) {
+export function mapIssue(
+  rawIssue,
+  improvement,
+  idx,
+  canonicalText,
+  sourceMap = null
+) {
   let start = rawIssue.start ?? 0
   let end = rawIssue.end ?? 0
 
@@ -180,7 +90,8 @@ export function mapIssue(rawIssue, improvement, idx, canonicalText) {
       end,
       rawIssue.text || '',
       canonicalText,
-      improvement?.current || null
+      improvement?.current || null,
+      sourceMap
     )
     start = resolved.start
     end = resolved.end

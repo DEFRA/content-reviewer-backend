@@ -169,7 +169,6 @@ describe('ReviewProcessor - saveReviewToRepository', () => {
     const bedrockResult = {
       bedrockResponse: {
         usage: { totalTokens: 100 },
-        guardrailAssessment: null,
         stopReason: 'end_turn'
       },
       bedrockDuration: 500
@@ -188,7 +187,8 @@ describe('ReviewProcessor - saveReviewToRepository', () => {
       bedrockResult.bedrockResponse.usage,
       'canonical text',
       'completed',
-      null // displayText — null for non-URL sources
+      null, // linkMap — null for non-URL sources
+      null // sourceMap — null when not provided
     )
     expect(mockSaveReviewResult).toHaveBeenCalledWith(
       'review_123',
@@ -215,7 +215,6 @@ describe('ReviewProcessor - saveReviewToRepository', () => {
     const bedrockResult = {
       bedrockResponse: {
         usage: { totalTokens: 100 },
-        guardrailAssessment: null,
         stopReason: 'end_turn'
       },
       bedrockDuration: 500
@@ -239,18 +238,17 @@ describe('ReviewProcessor - saveReviewToRepository', () => {
     )
   })
 
-  test('always calls savePositions with rawResponse and improvements', async () => {
+  test('skips savePositions when finalReviewContent is null', async () => {
     const { reviewRepository } = await import('../review-repository.js')
 
     const parseResult = {
-      parsedReview: { reviewedContent: null, improvements: [] },
-      finalReviewContent: 'text',
+      parsedReview: { reviewedContent: null },
+      finalReviewContent: null,
       parseDuration: 50
     }
     const bedrockResult = {
       bedrockResponse: {
         usage: {},
-        guardrailAssessment: null,
         stopReason: 'end_turn'
       },
       bedrockDuration: 300
@@ -284,7 +282,6 @@ describe('ReviewProcessor - saveReviewToRepository', () => {
     const bedrockResult = {
       bedrockResponse: {
         usage: {},
-        guardrailAssessment: null,
         stopReason: 'end_turn'
       },
       bedrockDuration: 300

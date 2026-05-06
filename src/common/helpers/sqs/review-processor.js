@@ -151,16 +151,21 @@ export class ReviewProcessor {
 
   /**
    * Process a single message.
-   * Runs a visibility-timeout heartbeat every 4 minutes so a long-running
-   * Bedrock call (100k-char documents can take 3-5 min) cannot cause the
+   * Runs a visibility-timeout heartbeat every 90 s so any unexpected delay
+   * before or during the Bedrock call (capped at 120 s) cannot cause the
    * message to become visible again and trigger duplicate processing.
+   * On failure, visibility is explicitly reset to 180 s (3 min) from the
+   * moment of failure so the retry always waits the full backoff window.
    */
   async processMessage(message, messageHandler) {
     const startTime = performance.now()
 
-    // Heartbeat: extend visibility every 4 minutes while processing.
-    const HEARTBEAT_INTERVAL_MS = 4 * 60 * 1000
-    const HEARTBEAT_VISIBILITY_SECONDS = 900
+    // Heartbeat: extend visibility every 90 s while processing.
+    // Fires once as a safety net in case pre-Bedrock steps take longer than
+    // expected; Bedrock itself is capped at 120 s so processing always
+    // completes before the second heartbeat would fire at 180 s.
+    const HEARTBEAT_INTERVAL_MS = 90_000
+    const HEARTBEAT_VISIBILITY_SECONDS = 180
     const heartbeat = setInterval(() => {
       messageHandler
         .extendVisibility(message.ReceiptHandle, HEARTBEAT_VISIBILITY_SECONDS)
@@ -211,6 +216,15 @@ export class ReviewProcessor {
           durationMs: duration
         },
         `Failed to process SQS message after ${duration}ms: ${error.message}`
+      )
+
+      // Explicitly reset the visibility window to 3 minutes from now.
+      // Without this, the remaining window could be as short as
+      // (180 s − durationMs) which would cause an earlier-than-expected retry.
+      // extendVisibility handles its own errors internally and never throws.
+      await messageHandler.extendVisibility(
+        message.ReceiptHandle,
+        HEARTBEAT_VISIBILITY_SECONDS
       )
     }
   }
@@ -266,7 +280,7 @@ export class ReviewProcessor {
 
     try {
       await this.updateReviewStatusToProcessing(reviewId)
-      const { canonicalText, linkMap } =
+      const { canonicalText, linkMap, sourceMap } =
         await this.contentExtractor.extractTextContent(reviewId, messageBody)
       this.validateExtractedContent(reviewId, canonicalText, messageBody)
       const bedrockResult = await this.bedrockProcessor.performBedrockReview(
@@ -278,15 +292,16 @@ export class ReviewProcessor {
         bedrockResult,
         canonicalText
       )
-      // Pass canonicalText (clean prose) and linkMap (offset-based link entries)
-      // so the result envelope can build accurate annotated sections and also
-      // restore clickable links in plain (non-highlighted) sections.
+      // Pass canonicalText, linkMap, and sourceMap so the result envelope can
+      // build accurate annotated sections, restore clickable links in plain
+      // sections, and resolve imprecise LLM offsets via normalised line-region search.
       await this.saveReviewToRepository(
         reviewId,
         parseResult,
         bedrockResult,
         canonicalText,
-        linkMap
+        linkMap,
+        sourceMap
       )
 
       this.logReviewCompletion(
@@ -363,18 +378,21 @@ export class ReviewProcessor {
    * @param {string} reviewId
    * @param {Object} parseResult       - { parsedReview, parseDuration, finalReviewContent }
    * @param {Object} bedrockResult     - { bedrockResponse, bedrockDuration }
-   * @param {string} canonicalText     - the normalised text from the canonical document;
+   * @param {string}     canonicalText  - the normalised text from the canonical document;
    *                                     used to derive annotated sections in result envelope
-   * @param {Array|null} linkMap       - offset-based link entries for URL sources;
+   * @param {Array|null} linkMap        - offset-based link entries for URL sources;
    *                                     used to restore clickable links in plain sections
    *                                     (null for file/text sources)
+   * @param {Array|null} sourceMap      - per-line offset entries from the canonical document;
+   *                                     used to narrow position resolution for imprecise LLM offsets
    */
   async saveReviewToRepository(
     reviewId,
     parseResult,
     bedrockResult,
     canonicalText = '',
-    linkMap = null
+    linkMap = null,
+    sourceMap = null
   ) {
     // Build the spec-compliant envelope (annotatedSections, scores, improvements, etc.)
     // and embed it directly into reviews/{reviewId}.json — no separate S3 file needed.
@@ -384,13 +402,19 @@ export class ReviewProcessor {
       bedrockResult.bedrockResponse.usage,
       canonicalText,
       'completed',
-      linkMap
+      linkMap,
+      sourceMap
     )
 
     const saveStart = performance.now()
     await reviewRepository.saveReviewResult(
       reviewId,
-      { completedAt: new Date() },
+      {
+        reviewData: parseResult.parsedReview,
+        rawResponse: parseResult.finalReviewContent,
+        stopReason: bedrockResult.bedrockResponse.stopReason,
+        completedAt: new Date()
+      },
       bedrockResult.bedrockResponse.usage,
       envelope
     )
@@ -401,14 +425,14 @@ export class ReviewProcessor {
       `Review result saved to S3 in ${saveDuration}ms`
     )
 
-    // Save raw Bedrock response, guardrail assessment, and parsed improvements as a
-    // debug artefact at positions/{reviewId}.json.  Non-critical — never blocks
-    // the main result.
+    // Save raw LLM response as a debug artefact at positions/{reviewId}.json.
+    // Non-critical — never blocks the main result.
     reviewRepository
       .savePositions(reviewId, {
-        rawResponse: parseResult.finalReviewContent,
-        guardrailAssessment: bedrockResult.bedrockResponse.guardrailAssessment,
-        improvements: parseResult.parsedReview?.improvements || []
+        rawResponse: parseResult.finalReviewContent || canonicalText,
+        guardrailAssessment:
+          bedrockResult?.bedrockResponse?.guardrailAssessment ?? null,
+        improvements: parseResult.parsedReview?.improvements ?? []
       })
       .catch((err) => {
         logger.error(

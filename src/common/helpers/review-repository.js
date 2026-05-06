@@ -332,30 +332,39 @@ class ReviewRepositoryS3 {
   }
 
   /**
-   * Save the position-based debug artefact to S3.
+   * Save the raw LLM response as a debug artefact.
    * Stored at: positions/{reviewId}.json
    * @param {string} reviewId - Review ID
-   * @param {Object} positionsData - { rawResponse, guardrailAssessment, improvements }
+   * @param {string} rawResponse - Raw text response from Bedrock
    * @returns {Promise<void>}
    */
-  async savePositions(reviewId, positionsData) {
+  async savePositions(reviewId, rawResponseOrObj) {
     const key = `positions/${reviewId}.json`
+
+    // Accept either a plain string (legacy) or an object with { rawResponse, guardrailAssessment, improvements, … }
+    const extra =
+      rawResponseOrObj !== null &&
+      rawResponseOrObj !== undefined &&
+      typeof rawResponseOrObj === 'object'
+        ? rawResponseOrObj
+        : { rawResponse: rawResponseOrObj || '' }
+
+    const improvements = Array.isArray(extra.improvements)
+      ? extra.improvements
+      : []
 
     const payload = {
       reviewId,
       savedAt: new Date().toISOString(),
-      rawResponse: positionsData.rawResponse || '',
-      guardrailAssessment: positionsData.guardrailAssessment || null,
-      improvements: positionsData.improvements || []
+      ...extra
     }
 
     logger.info(
       {
         reviewId,
-        s3Key: key,
-        improvementCount: payload.improvements.length
+        s3Key: key
       },
-      `Saving position-based review data to S3 at ${key}`
+      `Saving raw LLM response to S3 at ${key}`
     )
 
     const command = new PutObjectCommand({
@@ -365,7 +374,7 @@ class ReviewRepositoryS3 {
       ContentType: 'application/json',
       Metadata: {
         reviewId,
-        improvementCount: String(payload.improvements.length)
+        improvementCount: String(improvements.length)
       }
     })
 
