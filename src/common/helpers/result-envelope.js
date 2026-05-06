@@ -4,11 +4,13 @@ import {
   mapIssue,
   mapImprovement,
   sortAndAlignPairs,
-  findNearestOccurrence,
-  resolveIssuePosition,
   snapToWordBoundary,
   hasRefFields
 } from './result-envelope-issue-mappers.js'
+import {
+  findNearestOccurrence,
+  resolveIssuePosition
+} from './result-envelope-position-resolver.js'
 import {
   buildAnnotatedSections,
   mapScores

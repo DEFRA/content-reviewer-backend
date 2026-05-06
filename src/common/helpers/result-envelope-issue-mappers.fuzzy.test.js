@@ -14,7 +14,7 @@ import {
   fuzzySearchInRegion,
   findWithinSourceMapRegion,
   resolveIssuePosition
-} from './result-envelope-issue-mappers.js'
+} from './result-envelope-position-resolver.js'
 
 // ── Shared constants ──────────────────────────────────────────────────────────
 
