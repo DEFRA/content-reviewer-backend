@@ -20,6 +20,7 @@ const mockServerEvents = { on: vi.fn() }
 const mockServer = {
   register: vi.fn().mockResolvedValue(undefined),
   ext: vi.fn(),
+  auth: { scheme: vi.fn(), strategy: vi.fn(), default: vi.fn() },
   logger: mockServerLogger,
   events: mockServerEvents
 }
@@ -76,6 +77,10 @@ vi.mock('./common/helpers/request-tracing.js', () => ({
 
 vi.mock('./common/helpers/proxy/setup-proxy.js', () => ({
   setupProxy: vi.fn()
+}))
+
+vi.mock('./common/helpers/jwt.js', () => ({
+  verifyJwt: vi.fn()
 }))
 
 vi.mock('./common/helpers/sqs-worker.js', () => ({

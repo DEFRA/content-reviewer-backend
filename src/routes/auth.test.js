@@ -120,7 +120,7 @@ describe('loginHandler - success', () => {
 
     await login(request, h)
 
-    const [{ accessToken, refreshToken }] = h.response.mock.calls
+    const [[{ accessToken, refreshToken }]] = h.response.mock.calls
     expect(accessToken.split('.')).toHaveLength(3)
     expect(refreshToken.split('.')).toHaveLength(3)
   })
@@ -134,7 +134,7 @@ describe('loginHandler - success', () => {
 
     await login(request, h)
 
-    const [{ accessToken, refreshToken }] = h.response.mock.calls
+    const [[{ accessToken, refreshToken }]] = h.response.mock.calls
     const accessPayload = JSON.parse(
       Buffer.from(accessToken.split('.')[1], 'base64url').toString('utf8')
     )
@@ -225,7 +225,7 @@ describe('refreshHandler - success', () => {
       { payload: { userId: TEST_USER_ID, email: TEST_EMAIL, name: TEST_NAME } },
       loginH
     )
-    const [{ refreshToken }] = loginH.response.mock.calls
+    const [[{ refreshToken }]] = loginH.response.mock.calls
 
     // Now use the refresh token
     const h = createMockH()
@@ -248,12 +248,12 @@ describe('refreshHandler - success', () => {
       { payload: { userId: TEST_USER_ID, email: TEST_EMAIL, name: TEST_NAME } },
       loginH
     )
-    const [{ refreshToken }] = loginH.response.mock.calls
+    const [[{ refreshToken }]] = loginH.response.mock.calls
 
     const h = createMockH()
     await refresh({ payload: { refreshToken } }, h)
 
-    const [{ accessToken }] = h.response.mock.calls
+    const [[{ accessToken }]] = h.response.mock.calls
     const payload = JSON.parse(
       Buffer.from(accessToken.split('.')[1], 'base64url').toString('utf8')
     )
@@ -308,7 +308,7 @@ describe('refreshHandler - validation errors', () => {
       loginH
     )
     // Deliberately pass the access token to the refresh endpoint
-    const [{ accessToken }] = loginH.response.mock.calls
+    const [[{ accessToken }]] = loginH.response.mock.calls
 
     const h = createMockH()
     await refresh({ payload: { refreshToken: accessToken } }, h)
