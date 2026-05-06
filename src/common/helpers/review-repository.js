@@ -338,13 +338,25 @@ class ReviewRepositoryS3 {
    * @param {string} rawResponse - Raw text response from Bedrock
    * @returns {Promise<void>}
    */
-  async savePositions(reviewId, rawResponse) {
+  async savePositions(reviewId, rawResponseOrObj) {
     const key = `positions/${reviewId}.json`
+
+    // Accept either a plain string (legacy) or an object with { rawResponse, guardrailAssessment, improvements, … }
+    const extra =
+      rawResponseOrObj !== null &&
+      rawResponseOrObj !== undefined &&
+      typeof rawResponseOrObj === 'object'
+        ? rawResponseOrObj
+        : { rawResponse: rawResponseOrObj || '' }
+
+    const improvements = Array.isArray(extra.improvements)
+      ? extra.improvements
+      : []
 
     const payload = {
       reviewId,
       savedAt: new Date().toISOString(),
-      rawResponse: rawResponse || ''
+      ...extra
     }
 
     logger.info(
@@ -361,7 +373,8 @@ class ReviewRepositoryS3 {
       Body: JSON.stringify(payload, null, 2),
       ContentType: 'application/json',
       Metadata: {
-        reviewId
+        reviewId,
+        improvementCount: String(improvements.length)
       }
     })
 

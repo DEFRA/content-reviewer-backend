@@ -6,6 +6,14 @@ const S3_KEY = `reviews/${REVIEW_ID}.json`
 const STATUS_PENDING = 'pending'
 const STATUS_COMPLETED = 'completed'
 const ERROR_REVIEW_NOT_FOUND = 'Review not found'
+const REVIEW_LIMIT = 10
+const PAGE_LIMIT = 3
+const PAGE_SKIP = 0
+const REVIEW_COUNT = 5
+const RETENTION_DAYS = 30
+const DELETED_COUNT = 3
+const AWS_REGION = 'eu-west-2'
+const AWS_ENDPOINT = 'http://localhost:4566'
 
 const { MOCK_S3_SEND } = vi.hoisted(() => ({ MOCK_S3_SEND: vi.fn() }))
 
@@ -73,13 +81,21 @@ vi.mock('./review-repository-search.js', () => ({
 
 import { reviewRepository } from './review-repository.js'
 import { redactPIIFromReview } from './review-repository-pii.js'
-import { getRecentReviews as getRecentReviewsHelper } from './review-repository-queries.js'
+import {
+  getRecentReviews as getRecentReviewsHelper,
+  getReviewCount as getReviewCountHelper
+} from './review-repository-queries.js'
 import { searchReview as searchReviewHelper } from './review-repository-search.js'
 import {
   preserveImmutableFields,
   sanitizeAdditionalData,
   updateProcessingTimestamps
 } from './review-repository-helpers.js'
+import {
+  deleteUploadedContent,
+  deleteReviewMetadataFile,
+  deleteOldReviews as deleteOldReviewsHelper
+} from './review-repository-deletion.js'
 
 function buildReviewData(overrides = {}) {
   return {

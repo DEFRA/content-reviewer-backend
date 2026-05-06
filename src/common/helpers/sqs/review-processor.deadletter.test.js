@@ -187,7 +187,8 @@ describe('ReviewProcessor - saveReviewToRepository', () => {
       bedrockResult.bedrockResponse.usage,
       'canonical text',
       'completed',
-      null // displayText — null for non-URL sources
+      null, // linkMap — null for non-URL sources
+      null // sourceMap — null when not provided
     )
     expect(mockSaveReviewResult).toHaveBeenCalledWith(
       'review_123',

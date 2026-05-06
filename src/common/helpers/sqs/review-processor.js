@@ -413,16 +413,19 @@ export class ReviewProcessor {
 
     // Save raw LLM response as a debug artefact at positions/{reviewId}.json.
     // Non-critical — never blocks the main result.
-    if (parseResult.finalReviewContent) {
-      reviewRepository
-        .savePositions(reviewId, parseResult.finalReviewContent)
-        .catch((err) => {
-          logger.error(
-            { reviewId, error: err.message },
-            'Failed to save positions file - review result still saved successfully'
-          )
-        })
-    }
+    reviewRepository
+      .savePositions(reviewId, {
+        rawResponse: parseResult.finalReviewContent || canonicalText,
+        guardrailAssessment:
+          bedrockResult?.bedrockResponse?.guardrailAssessment ?? null,
+        improvements: parseResult.parsedReview?.improvements ?? []
+      })
+      .catch((err) => {
+        logger.error(
+          { reviewId, error: err.message },
+          'Failed to save positions file - review result still saved successfully'
+        )
+      })
   }
 
   /**

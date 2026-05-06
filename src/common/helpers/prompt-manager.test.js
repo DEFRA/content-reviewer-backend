@@ -1,10 +1,9 @@
 import { describe, test, expect, beforeEach, vi } from 'vitest'
 
-const TEST_BUCKET = 'test-bucket'
-const TEST_PROMPT_KEY = 'prompts/system-prompt.md'
-
-const { mockSendFn } = vi.hoisted(() => ({
-  mockSendFn: vi.fn()
+const { mockSendFn, TEST_BUCKET, TEST_PROMPT_KEY } = vi.hoisted(() => ({
+  mockSendFn: vi.fn(),
+  TEST_BUCKET: 'test-bucket',
+  TEST_PROMPT_KEY: 'prompts/system-prompt.md'
 }))
 
 vi.mock('@aws-sdk/client-s3', () => ({
