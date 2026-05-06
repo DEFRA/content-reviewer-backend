@@ -338,6 +338,70 @@ class TextExtractor {
   }
 
   /**
+   * Safely inspect / extract specific DOCX entries without writing to disk.
+   * - nodeBuffer: Buffer of the .docx file
+   * - opts.maxEntries: max file entries to allow
+   * - opts.maxUncompressed: max total uncompressed bytes allowed
+   * Returns { entries, documentXml, totalUncompressed }
+   */
+  async safeInspectDocx(nodeBuffer, opts = {}) {
+    const { maxEntries = 1000, maxUncompressed = 50 * 1024 * 1024 } = opts
+
+    if (
+      !Buffer.isBuffer(nodeBuffer) ||
+      nodeBuffer.length < 4 ||
+      nodeBuffer.slice(0, 4).toString('hex') !== '504b0304'
+    ) {
+      throw new Error('Not a ZIP archive / invalid DOCX')
+    }
+
+    const zip = await JSZip.loadAsync(nodeBuffer)
+    const entries = Object.keys(zip.files)
+
+    if (entries.length === 0) throw new Error('Empty archive')
+    if (entries.length > maxEntries)
+      throw new Error('Archive has too many entries')
+
+    const whitelistPrefixes = [
+      'word/',
+      'word/_rels/',
+      '_rels/',
+      'docProps/',
+      '[Content_Types].xml'
+    ]
+    let totalUncompressed = 0
+    let documentXml = null
+
+    for (const name of entries) {
+      const normalized = name.replace(/\\/g, '/')
+      if (normalized.includes('..'))
+        throw new Error(`Rejected unsafe entry path: ${name}`)
+
+      const allowed = whitelistPrefixes.some(
+        (p) => normalized === p || normalized.startsWith(p)
+      )
+      if (!allowed) continue
+
+      const fileEntry = zip.files[name]
+
+      if (name === 'word/document.xml') {
+        const xml = await fileEntry.async('string')
+        totalUncompressed += Buffer.byteLength(xml, 'utf8')
+        if (totalUncompressed > maxUncompressed)
+          throw new Error('Archive uncompressed size exceeds limit')
+        documentXml = xml
+      } else {
+        const arr = await fileEntry.async('uint8array')
+        totalUncompressed += arr.length
+        if (totalUncompressed > maxUncompressed)
+          throw new Error('Archive uncompressed size exceeds limit')
+      }
+    }
+
+    return { entries, documentXml, totalUncompressed }
+  }
+
+  /**
    * Core orchestration for DOCX extraction. Returns the mammoth result object.
    */
   async runDocxExtraction(buffer) {
@@ -354,20 +418,21 @@ class TextExtractor {
     // If mammoth failed, try a ZIP+XML fallback (JSZip)
     if (!result) {
       try {
-        const zip = await JSZip.loadAsync(nodeBuffer)
-        const docFile = zip.file('word/document.xml')
-        if (!docFile) {
+        const { documentXml } = await this.safeInspectDocx(nodeBuffer, {
+          maxEntries: 1000,
+          maxUncompressed: 50 * 1024 * 1024
+        })
+
+        if (!documentXml) {
           throw new Error('DOCX zip missing word/document.xml')
         }
-        const xml = await docFile.async('string')
-        // Extract text nodes (<w:t>...</w:t>) which hold runs of text in DOCX
-        const text = Array.from(xml.matchAll(/<w:t[^>]*>(.*?)<\/w:t>/g))
+
+        const text = Array.from(documentXml.matchAll(/<w:t[^>]*>(.*?)<\/w:t>/g))
           .map((m) => m[1])
           .join(' ')
-        // return an object shape compatible with mammoth result
+
         result = { value: text, messages: [] }
       } catch (zipErr) {
-        // keep original behaviour by throwing a clear error
         throw new Error(
           `mammoth failed and ZIP fallback failed: ${zipErr.message}`
         )
