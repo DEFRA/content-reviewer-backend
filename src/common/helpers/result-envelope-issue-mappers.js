@@ -85,8 +85,12 @@ export function buildNormalizedMapping(text) {
 
   for (let i = 0; i < text.length; i++) {
     let ch = text[i]
-    if (ch === '\u2018' || ch === '\u2019') ch = "'"
-    if (ch === '\u201C' || ch === '\u201D') ch = '"'
+    if (ch === '\u2018' || ch === '\u2019') {
+      ch = "'"
+    }
+    if (ch === '\u201C' || ch === '\u201D') {
+      ch = '"'
+    }
 
     if (/\s/.test(ch)) {
       if (!prevWasSpace) {
@@ -114,8 +118,12 @@ export function buildNormalizedMapping(text) {
 export function levenshtein(a, b) {
   const m = a.length
   const n = b.length
-  if (m === 0) return n
-  if (n === 0) return m
+  if (m === 0) {
+    return n
+  }
+  if (n === 0) {
+    return m
+  }
 
   let prev = Array.from({ length: n + 1 }, (_, i) => i)
   let curr = new Array(n + 1)
@@ -155,8 +163,12 @@ export function fuzzySearchInRegion(
   regionStart,
   threshold = FUZZY_SIMILARITY_THRESHOLD
 ) {
-  if (normSearch.length < FUZZY_MIN_SEARCH_LENGTH) return null
-  if (normRegion.length < normSearch.length) return null
+  if (normSearch.length < FUZZY_MIN_SEARCH_LENGTH) {
+    return null
+  }
+  if (normRegion.length < normSearch.length) {
+    return null
+  }
 
   const searchLen = normSearch.length
   const maxAllowedDist = Math.floor(searchLen * (1 - threshold))
@@ -169,21 +181,45 @@ export function fuzzySearchInRegion(
     if (dist < bestDist) {
       bestDist = dist
       bestIdx = i
-      if (dist === 0) break // exact match, can't improve
+      if (dist === 0) {
+        break
+      } // exact match, can't improve
     }
   }
 
-  if (bestIdx === -1) return null
+  if (bestIdx === -1) {
+    return null
+  }
 
   const endIdx = bestIdx + searchLen - 1
-  if (endIdx >= indexMap.length) return null
+  if (endIdx >= indexMap.length) {
+    return null
+  }
 
   const origStart = regionStart + indexMap[bestIdx]
   const origEnd = regionStart + indexMap[endIdx] + 1
 
-  if (origEnd <= origStart) return null
+  if (origEnd <= origStart) {
+    return null
+  }
 
   return { start: origStart, end: origEnd }
+}
+
+/**
+ * Return true when the required inputs for a sourceMap region search are valid.
+ * @param {string} searchText
+ * @param {string} canonicalText
+ * @param {Array}  sourceMap
+ * @returns {boolean}
+ */
+function isValidRegionSearchInput(searchText, canonicalText, sourceMap) {
+  return (
+    Boolean(searchText) &&
+    Boolean(canonicalText) &&
+    Array.isArray(sourceMap) &&
+    sourceMap.length > 0
+  )
 }
 
 /**
@@ -208,12 +244,7 @@ export function findWithinSourceMapRegion(
   llmStart,
   llmEnd
 ) {
-  if (
-    !searchText ||
-    !canonicalText ||
-    !Array.isArray(sourceMap) ||
-    !sourceMap.length
-  ) {
+  if (!isValidRegionSearchInput(searchText, canonicalText, sourceMap)) {
     return null
   }
 
@@ -323,6 +354,22 @@ export function findNearestOccurrence(searchText, canonicalText, hintMid) {
 }
 
 /**
+ * Return `{ start, end }` when the canonical text slice exactly matches issueText,
+ * otherwise null.
+ * @param {string} issueText
+ * @param {string} canonicalText
+ * @param {number} start
+ * @param {number} end
+ * @returns {{ start: number, end: number } | null}
+ */
+function resolveExactMatch(issueText, canonicalText, start, end) {
+  if (issueText && canonicalText.slice(start, end) === issueText) {
+    return { start, end }
+  }
+  return null
+}
+
+/**
  * Resolve the best character-offset pair for a raw issue using verbatim text
  * fields as ground truth.  Falls back to the original offsets if not found.
  *
@@ -351,97 +398,94 @@ export function resolveIssuePosition(
   sourceMap = null
 ) {
   // Step 1: exact slice match
-  if (issueText && canonicalText.slice(start, end) === issueText) {
-    return { start, end }
+  const exact = resolveExactMatch(issueText, canonicalText, start, end)
+  if (exact) {
+    return exact
   }
 
   const hintMid = (start + end) / 2
 
-  // Step 2: nearest exact occurrence in full text
+  // Steps 2–3: search by issueText
   if (issueText) {
-    const found = findNearestOccurrence(issueText, canonicalText, hintMid)
-    if (found) {
+    const found2 = findNearestOccurrence(issueText, canonicalText, hintMid)
+    if (found2) {
       logger.info(
         {
           originalStart: start,
           originalEnd: end,
-          resolvedStart: found.start,
-          resolvedEnd: found.end,
+          resolvedStart: found2.start,
+          resolvedEnd: found2.end,
           source: 'issueText',
           text: issueText.substring(0, 60)
         },
         '[result-envelope] Resolved issue position via issueText search'
       )
-      return found
+      return found2
     }
-  }
-
-  // Step 3: normalised search within the sourceMap line region
-  if (issueText && sourceMap) {
-    const found = findWithinSourceMapRegion(
-      issueText,
-      canonicalText,
-      sourceMap,
-      start,
-      end
-    )
-    if (found) {
+    const found3 = sourceMap
+      ? findWithinSourceMapRegion(
+          issueText,
+          canonicalText,
+          sourceMap,
+          start,
+          end
+        )
+      : null
+    if (found3) {
       logger.info(
         {
           originalStart: start,
           originalEnd: end,
-          resolvedStart: found.start,
-          resolvedEnd: found.end,
+          resolvedStart: found3.start,
+          resolvedEnd: found3.end,
           source: 'sourceMap-region-normalised',
           text: issueText.substring(0, 60)
         },
         '[result-envelope] Resolved issue position via normalised sourceMap region search'
       )
-      return found
+      return found3
     }
   }
 
-  // Step 4: nearest exact occurrence of fallback text in full text
+  // Steps 4–5: search by fallbackText
   if (fallbackText) {
-    const found = findNearestOccurrence(fallbackText, canonicalText, hintMid)
-    if (found) {
+    const found4 = findNearestOccurrence(fallbackText, canonicalText, hintMid)
+    if (found4) {
       logger.info(
         {
           originalStart: start,
           originalEnd: end,
-          resolvedStart: found.start,
-          resolvedEnd: found.end,
+          resolvedStart: found4.start,
+          resolvedEnd: found4.end,
           source: 'fallbackText (improvement.current)',
           text: fallbackText.substring(0, 60)
         },
         '[result-envelope] Resolved issue position via improvement.current fallback'
       )
-      return found
+      return found4
     }
-  }
-
-  // Step 5: normalised fallback search within the sourceMap line region
-  if (fallbackText && sourceMap) {
-    const found = findWithinSourceMapRegion(
-      fallbackText,
-      canonicalText,
-      sourceMap,
-      start,
-      end
-    )
-    if (found) {
+    const found5 = sourceMap
+      ? findWithinSourceMapRegion(
+          fallbackText,
+          canonicalText,
+          sourceMap,
+          start,
+          end
+        )
+      : null
+    if (found5) {
       logger.info(
         {
           originalStart: start,
           originalEnd: end,
-          resolvedStart: found.start,
-          resolvedEnd: found.end,
+          resolvedStart: found5.start,
+          resolvedEnd: found5.end,
           source: 'sourceMap-region-normalised-fallback',
           text: fallbackText.substring(0, 60)
         },
         '[result-envelope] Resolved issue position via normalised sourceMap region search (improvement.current fallback)'
       )
-      return found
+      return found5
     }
   }
 
