@@ -2,6 +2,7 @@ import { createRequire } from 'node:module'
 import { pathToFileURL } from 'node:url'
 import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs'
 import mammoth from 'mammoth'
+import JSZip from 'jszip'
 import { createLogger } from './logging/logger.js'
 import { textNormaliser } from './text-normaliser.js'
 
