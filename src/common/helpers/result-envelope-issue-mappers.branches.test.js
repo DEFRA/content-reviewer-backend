@@ -11,13 +11,13 @@ vi.mock('./logging/logger.js', () => ({
 import {
   mapImprovement,
   mapIssue,
-  findNearestOccurrence,
   buildPairs,
   dedupeOverlaps,
   isValidImprovement,
   buildSortedResults,
   sortAndAlignPairs
 } from './result-envelope-issue-mappers.js'
+import { findNearestOccurrence } from './result-envelope-position-resolver.js'
 
 // ── Shared test data ──────────────────────────────────────────────────────────
 
