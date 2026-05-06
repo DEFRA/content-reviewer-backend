@@ -45,10 +45,12 @@ export function signJwt(payload, expiresInSeconds) {
  * @param {string} token
  * @returns {Object} Decoded payload.
  */
+const JWT_PARTS_COUNT = 3
+
 export function verifyJwt(token) {
   const secret = config.get('jwt.secret')
   const parts = token.split('.')
-  if (parts.length !== 3) {
+  if (parts.length !== JWT_PARTS_COUNT) {
     throw new Error('Invalid token format')
   }
   const [header, body, signature] = parts

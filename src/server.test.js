@@ -102,6 +102,7 @@ import { config } from './config.js'
 import { setupProxy } from './common/helpers/proxy/setup-proxy.js'
 import { sqsWorker } from './common/helpers/sqs-worker.js'
 import { cleanupScheduler } from './common/helpers/cleanup-scheduler.js'
+import { verifyJwt } from './common/helpers/jwt.js'
 import { createServer } from './server.js'
 
 // ── Tests ──────────────────────────────────────────────────────────────────
@@ -462,6 +463,81 @@ describe('createServer - SQS worker error logging', () => {
     expect(mockServerLogger.error).toHaveBeenCalledWith(
       { error: 'SQS connection failed' },
       'Failed to start SQS worker - will continue without it'
+    )
+  })
+})
+
+// ── JWT authentication (configureJwtAuth) ─────────────────────────────────
+//
+// The authenticate callback registered with server.auth.scheme is never
+// invoked by the other tests (auth is mocked at the vi.fn() level).
+// These tests extract that callback and exercise each branch.
+
+describe('createServer - JWT authentication (configureJwtAuth)', () => {
+  const hContinue = Symbol('hapi-continue')
+  let authenticate
+
+  beforeEach(async () => {
+    vi.clearAllMocks()
+    mockServer.register.mockResolvedValue(undefined)
+    config.get.mockImplementation((key) => {
+      const vals = {
+        host: MOCK_HOST,
+        port: MOCK_PORT,
+        'cors.origin': MOCK_ORIGIN,
+        'cors.credentials': true,
+        mongo: MOCK_MONGO,
+        'mockMode.skipSqsWorker': true
+      }
+      return vals[key] ?? null
+    })
+    await createServer()
+    // Extract the authenticate handler from the bearer-jwt scheme factory
+    const [[, schemeFactory]] = mockServer.auth.scheme.mock.calls
+    ;({ authenticate } = schemeFactory())
+  })
+
+  it('returns unauthenticated when Authorization header is absent', async () => {
+    const unauthenticated = vi.fn()
+    const request = { headers: {} }
+    const h = { unauthenticated, continue: hContinue }
+    await authenticate(request, h)
+    expect(unauthenticated).toHaveBeenCalledWith(
+      expect.objectContaining({ isBoom: true })
+    )
+  })
+
+  it('returns unauthenticated when Authorization header does not start with Bearer', async () => {
+    const unauthenticated = vi.fn()
+    const request = { headers: { authorization: 'Basic dXNlcjpwYXNz' } }
+    const h = { unauthenticated, continue: hContinue }
+    await authenticate(request, h)
+    expect(unauthenticated).toHaveBeenCalledWith(
+      expect.objectContaining({ isBoom: true })
+    )
+  })
+
+  it('returns authenticated with credentials when token is valid', async () => {
+    const credentials = { sub: 'user-123', email: 'user@defra.gov.uk' }
+    verifyJwt.mockReturnValueOnce(credentials)
+    const authenticated = vi.fn()
+    const request = { headers: { authorization: 'Bearer valid.jwt.token' } }
+    const h = { authenticated, continue: hContinue }
+    await authenticate(request, h)
+    expect(verifyJwt).toHaveBeenCalledWith('valid.jwt.token')
+    expect(authenticated).toHaveBeenCalledWith({ credentials })
+  })
+
+  it('returns unauthenticated when verifyJwt throws', async () => {
+    verifyJwt.mockImplementationOnce(() => {
+      throw new Error('Invalid token')
+    })
+    const unauthenticated = vi.fn()
+    const request = { headers: { authorization: 'Bearer bad.jwt.token' } }
+    const h = { unauthenticated, continue: hContinue }
+    await authenticate(request, h)
+    expect(unauthenticated).toHaveBeenCalledWith(
+      expect.objectContaining({ isBoom: true })
     )
   })
 })

@@ -17,6 +17,7 @@ import { cleanupScheduler } from './common/helpers/cleanup-scheduler.js'
 
 // ── Security constants ────────────────────────────────────────────────────────
 const HTTP_TOO_MANY_REQUESTS = 429
+const BEARER_PREFIX_LENGTH = 7 // 'Bearer ' is 7 characters
 
 // Content-Security-Policy for a pure REST API — no scripts, styles or frames
 // served by this service, so every directive is locked to 'none'.
@@ -93,7 +94,7 @@ function configureJwtAuth(server) {
           Boom.unauthorized('Missing or invalid Authorization header')
         )
       }
-      const token = authHeader.slice(7)
+      const token = authHeader.slice(BEARER_PREFIX_LENGTH)
       try {
         const credentials = verifyJwt(token)
         return h.authenticated({ credentials })
