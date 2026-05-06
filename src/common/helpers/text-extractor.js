@@ -260,14 +260,11 @@ class TextExtractor {
   async extractFromDocx(buffer) {
     try {
       // light debug info
-      logger.info({
-        isBuffer: Buffer.isBuffer(buffer),
-        ctor: buffer?.constructor?.name,
-        length: buffer?.length ?? buffer?.byteLength
-      })
+      logger.info(
+        `isBuffer: ${Buffer.isBuffer(buffer)},  buffer length: ${buffer.length}, zip signature: ${buffer.slice(0, 4).toString('hex')}`
+      )
 
-      // Extract text from .docx
-      const result = await mammoth.extractRawText({ buffer })
+      const result = await this.runDocxExtraction(buffer)
 
       if (result.messages && result.messages.length > 0) {
         logger.warn(
@@ -352,6 +349,28 @@ class TextExtractor {
     let result = await this.tryMammoth(['convertToMarkdown'], attempts)
     if (!result) {
       result = await this.tryMammoth(['extractRawText'], attempts)
+    }
+    // If mammoth failed, try a ZIP+XML fallback (JSZip)
+    if (!result) {
+      try {
+        const zip = await JSZip.loadAsync(nodeBuffer)
+        const docFile = zip.file('word/document.xml')
+        if (!docFile) {
+          throw new Error('DOCX zip missing word/document.xml')
+        }
+        const xml = await docFile.async('string')
+        // Extract text nodes (<w:t>...</w:t>) which hold runs of text in DOCX
+        const text = Array.from(xml.matchAll(/<w:t[^>]*>(.*?)<\/w:t>/g))
+          .map((m) => m[1])
+          .join(' ')
+        // return an object shape compatible with mammoth result
+        result = { value: text, messages: [] }
+      } catch (zipErr) {
+        // keep original behaviour by throwing a clear error
+        throw new Error(
+          `mammoth failed and ZIP fallback failed: ${zipErr.message}`
+        )
+      }
     }
 
     if (!result) {
