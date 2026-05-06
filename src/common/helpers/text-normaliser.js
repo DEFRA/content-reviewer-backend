@@ -371,8 +371,8 @@ class TextNormaliser {
     }
     MOJIBAKE_2BYTE_RE.lastIndex = 0 // reset after stateful test()
     return text.replaceAll(MOJIBAKE_2BYTE_RE, (match) => {
-      const byte1 = match.charCodeAt(0)
-      const byte2 = match.charCodeAt(1)
+      const byte1 = match.codePointAt(0)
+      const byte2 = match.codePointAt(1)
       const codepoint = ((byte1 & 0x1f) << 6) | (byte2 & 0x3f)
       return String.fromCodePoint(codepoint)
     })

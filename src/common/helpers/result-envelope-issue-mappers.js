@@ -126,7 +126,7 @@ export function levenshtein(a, b) {
   }
 
   let prev = Array.from({ length: n + 1 }, (_, i) => i)
-  let curr = new Array(n + 1)
+  let curr = Array.from({ length: n + 1 })
 
   for (let i = 1; i <= m; i++) {
     curr[0] = i
@@ -258,17 +258,14 @@ export function findWithinSourceMapRegion(
 
   // Expand ±1 line to absorb small offset errors from the model
   const minLine = Math.max(0, overlapping[0].lineIndex - 1)
-  const maxLine = overlapping[overlapping.length - 1].lineIndex + 1
+  const maxLine = overlapping.at(-1).lineIndex + 1
 
   const expanded = sourceMap.filter(
     (entry) => entry.lineIndex >= minLine && entry.lineIndex <= maxLine
   )
 
   const regionStart = expanded[0].start
-  const regionEnd = Math.min(
-    expanded[expanded.length - 1].end,
-    canonicalText.length
-  )
+  const regionEnd = Math.min(expanded.at(-1).end, canonicalText.length)
   const regionText = canonicalText.slice(regionStart, regionEnd)
 
   const { normalized: normRegion, indexMap } =
