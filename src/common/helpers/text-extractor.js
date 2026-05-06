@@ -266,8 +266,6 @@ class TextExtractor {
         length: buffer?.length ?? buffer?.byteLength
       })
 
-      //const result = await this.runDocxExtraction(buffer)
-
       // Extract text from .docx
       const result = await mammoth.extractRawText({ buffer })
 
