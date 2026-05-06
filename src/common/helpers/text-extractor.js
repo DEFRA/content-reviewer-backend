@@ -266,81 +266,7 @@ class TextExtractor {
         length: buffer?.length ?? buffer?.byteLength
       })
 
-      // normalize incoming buffer-like to ArrayBuffer (prefer zero-copy)
-      const normalizeToArrayBuffer = (buf) => {
-        if (buf instanceof ArrayBuffer) {
-          return buf
-        }
-        if (ArrayBuffer.isView(buf)) {
-          return buf.buffer.slice(
-            buf.byteOffset,
-            buf.byteOffset + buf.byteLength
-          )
-        }
-        if (Buffer.isBuffer(buf)) {
-          if (
-            buf.buffer &&
-            typeof buf.byteOffset === 'number' &&
-            typeof buf.byteLength === 'number'
-          ) {
-            return buf.buffer.slice(
-              buf.byteOffset,
-              buf.byteOffset + buf.byteLength
-            )
-          }
-          return Uint8Array.from(buf).buffer
-        }
-        throw new Error('Unsupported input type for DOCX extraction')
-      }
-
-      const arrayBuffer = normalizeToArrayBuffer(buffer)
-      const nodeBuffer = Buffer.from(arrayBuffer)
-
-      const buildCombos = (fnNames, optsList) =>
-        optsList.flatMap((opts) => fnNames.map((fn) => ({ opts, fn })))
-
-      const tryMammoth = async (fnNames, optsList) => {
-        const combos = buildCombos(fnNames, optsList)
-
-        // single-attempt helper keeps control-flow shallow
-        const attempt = async ({ opts, fn }) => {
-          try {
-            // eslint-disable-next-line no-await-in-loop
-            const res = await mammoth[fn](opts)
-            if (res) {
-              return res
-            }
-          } catch (err) {
-            logger.info(
-              `DOCX ${fn} attempt failed with options keys: ${Object.keys(opts).join(', ')} - ${err.message}`
-            )
-          }
-          return null
-        }
-
-        for (const combo of combos) {
-          const res = await attempt(combo)
-          if (res) {
-            return res
-          }
-        }
-
-        return null
-      }
-
-      const attempts = [{ arrayBuffer }, { buffer: nodeBuffer }]
-
-      // preferred: convertToMarkdown, fallback: extractRawText
-      let result = await tryMammoth(['convertToMarkdown'], attempts)
-      if (!result) {
-        result = await tryMammoth(['extractRawText'], attempts)
-      }
-
-      if (!result) {
-        throw new Error(
-          'mammoth failed to parse DOCX with any supported input shape'
-        )
-      }
+      const result = await this.runDocxExtraction(buffer)
 
       if (result.messages && result.messages.length > 0) {
         logger.warn(
@@ -353,6 +279,87 @@ class TextExtractor {
       logger.error(`DOCX extraction failed: ${error.message}`)
       throw new Error(`Failed to extract text from DOCX: ${error.message}`)
     }
+  }
+
+  /**
+   * Normalise various buffer-like inputs into an ArrayBuffer.
+   */
+  normalizeToArrayBuffer(buf) {
+    if (buf instanceof ArrayBuffer) {
+      return buf
+    }
+    if (ArrayBuffer.isView(buf)) {
+      return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength)
+    }
+    if (Buffer.isBuffer(buf)) {
+      if (
+        buf.buffer &&
+        typeof buf.byteOffset === 'number' &&
+        typeof buf.byteLength === 'number'
+      ) {
+        return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength)
+      }
+      return Uint8Array.from(buf).buffer
+    }
+    throw new Error('Unsupported input type for DOCX extraction')
+  }
+
+  /**
+   * Build [opts, fn] combos for iteration.
+   */
+  buildCombos(fnNames, optsList) {
+    return optsList.flatMap((opts) => fnNames.map((fn) => ({ opts, fn })))
+  }
+
+  /**
+   * Attempt a single mammoth invocation and return result or null.
+   */
+  async attemptMammothCall(opts, fn) {
+    // eslint-disable-next-line no-await-in-loop
+    return mammoth[fn](opts).catch((err) => {
+      logger.info(
+        `DOCX ${fn} attempt failed with options keys: ${Object.keys(opts).join(', ')} - ${err.message}`
+      )
+      return null
+    })
+  }
+
+  /**
+   * Try a sequence of mammoth functions with given option shapes, return first success.
+   */
+  async tryMammoth(fnNames, optsList) {
+    const combos = this.buildCombos(fnNames, optsList)
+    for (const { opts, fn } of combos) {
+      const res = await this.attemptMammothCall(opts, fn)
+      if (res) {
+        return res
+      }
+    }
+    return null
+  }
+
+  /**
+   * Core orchestration for DOCX extraction. Returns the mammoth result object.
+   */
+  async runDocxExtraction(buffer) {
+    const arrayBuffer = this.normalizeToArrayBuffer(buffer)
+    const nodeBuffer = Buffer.from(arrayBuffer)
+
+    const attempts = [{ arrayBuffer }, { buffer: nodeBuffer }]
+
+    // preferred: convertToMarkdown, fallback: extractRawText
+    let result = await this.tryMammoth(['convertToMarkdown'], attempts)
+    if (!result) {
+      result = await this.tryMammoth(['extractRawText'], attempts)
+    }
+
+    if (!result) {
+      throw new Error(
+        'mammoth failed to parse DOCX with any supported input shape'
+      )
+    }
+
+    return result
   }
 
   /**
