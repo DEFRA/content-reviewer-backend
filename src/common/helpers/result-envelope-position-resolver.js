@@ -341,6 +341,104 @@ function logResolution(
 }
 
 /**
+ * Steps 2–3: try to locate issueText in canonicalText via nearest-occurrence
+ * search then sourceMap region search. Returns { start, end } or null.
+ * @param {string}     issueText
+ * @param {string}     canonicalText
+ * @param {Array|null} sourceMap
+ * @param {number}     start
+ * @param {number}     end
+ * @param {number}     hintMid
+ * @returns {{ start: number, end: number } | null}
+ */
+function resolveByIssueText(
+  issueText,
+  canonicalText,
+  sourceMap,
+  start,
+  end,
+  hintMid
+) {
+  const nearest = findNearestOccurrence(issueText, canonicalText, hintMid)
+  if (nearest) {
+    return logResolution(
+      nearest,
+      start,
+      end,
+      'issueText',
+      issueText.substring(0, LOG_PREVIEW_LENGTH),
+      '[result-envelope] Resolved issue position via issueText search'
+    )
+  }
+  const region = sourceMap
+    ? findWithinSourceMapRegion(issueText, canonicalText, sourceMap, start, end)
+    : null
+  if (region) {
+    return logResolution(
+      region,
+      start,
+      end,
+      'sourceMap-region-normalised',
+      issueText.substring(0, LOG_PREVIEW_LENGTH),
+      '[result-envelope] Resolved issue position via normalised sourceMap region search'
+    )
+  }
+  return null
+}
+
+/**
+ * Steps 4–5: try to locate fallbackText (improvement.current) in canonicalText
+ * via nearest-occurrence search then sourceMap region search. Returns { start, end } or null.
+ * @param {string}     fallbackText
+ * @param {string}     canonicalText
+ * @param {Array|null} sourceMap
+ * @param {number}     start
+ * @param {number}     end
+ * @param {number}     hintMid
+ * @returns {{ start: number, end: number } | null}
+ */
+function resolveByFallbackText(
+  fallbackText,
+  canonicalText,
+  sourceMap,
+  start,
+  end,
+  hintMid
+) {
+  const nearest = findNearestOccurrence(fallbackText, canonicalText, hintMid)
+  if (nearest) {
+    return logResolution(
+      nearest,
+      start,
+      end,
+      'fallbackText (improvement.current)',
+      fallbackText.substring(0, LOG_PREVIEW_LENGTH),
+      '[result-envelope] Resolved issue position via improvement.current fallback'
+    )
+  }
+  const region = sourceMap
+    ? findWithinSourceMapRegion(
+        fallbackText,
+        canonicalText,
+        sourceMap,
+        start,
+        end
+      )
+    : null
+  if (region) {
+    return logResolution(
+      region,
+      start,
+      end,
+      'sourceMap-region-normalised-fallback',
+      fallbackText.substring(0, LOG_PREVIEW_LENGTH),
+      '[result-envelope] Resolved issue position via normalised sourceMap region search (improvement.current fallback)'
+    )
+  }
+  return null
+}
+
+/**
  * Resolve the best character-offset pair for a raw issue using verbatim text
  * fields as ground truth.  Falls back to the original offsets if not found.
  *
@@ -368,7 +466,6 @@ export function resolveIssuePosition(
   fallbackText = null,
   sourceMap = null
 ) {
-  // Step 1: exact slice match
   const exact = resolveExactMatch(issueText, canonicalText, start, end)
   if (exact) {
     return exact
@@ -376,71 +473,31 @@ export function resolveIssuePosition(
 
   const hintMid = (start + end) / 2
 
-  // Steps 2–3: search by issueText
   if (issueText) {
-    const found2 = findNearestOccurrence(issueText, canonicalText, hintMid)
-    if (found2) {
-      return logResolution(
-        found2,
-        start,
-        end,
-        'issueText',
-        issueText.substring(0, LOG_PREVIEW_LENGTH),
-        '[result-envelope] Resolved issue position via issueText search'
-      )
-    }
-    const found3 = sourceMap
-      ? findWithinSourceMapRegion(
-          issueText,
-          canonicalText,
-          sourceMap,
-          start,
-          end
-        )
-      : null
-    if (found3) {
-      return logResolution(
-        found3,
-        start,
-        end,
-        'sourceMap-region-normalised',
-        issueText.substring(0, LOG_PREVIEW_LENGTH),
-        '[result-envelope] Resolved issue position via normalised sourceMap region search'
-      )
+    const result = resolveByIssueText(
+      issueText,
+      canonicalText,
+      sourceMap,
+      start,
+      end,
+      hintMid
+    )
+    if (result) {
+      return result
     }
   }
 
-  // Steps 4–5: search by fallbackText
   if (fallbackText) {
-    const found4 = findNearestOccurrence(fallbackText, canonicalText, hintMid)
-    if (found4) {
-      return logResolution(
-        found4,
-        start,
-        end,
-        'fallbackText (improvement.current)',
-        fallbackText.substring(0, LOG_PREVIEW_LENGTH),
-        '[result-envelope] Resolved issue position via improvement.current fallback'
-      )
-    }
-    const found5 = sourceMap
-      ? findWithinSourceMapRegion(
-          fallbackText,
-          canonicalText,
-          sourceMap,
-          start,
-          end
-        )
-      : null
-    if (found5) {
-      return logResolution(
-        found5,
-        start,
-        end,
-        'sourceMap-region-normalised-fallback',
-        fallbackText.substring(0, LOG_PREVIEW_LENGTH),
-        '[result-envelope] Resolved issue position via normalised sourceMap region search (improvement.current fallback)'
-      )
+    const result = resolveByFallbackText(
+      fallbackText,
+      canonicalText,
+      sourceMap,
+      start,
+      end,
+      hintMid
+    )
+    if (result) {
+      return result
     }
   }
 
