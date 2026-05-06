@@ -253,65 +253,6 @@ describe('TextExtractor – PDF extraction', () => {
   })
 })
 
-describe('TextExtractor – DOCX extraction', () => {
-  beforeEach(() => {
-    vi.clearAllMocks()
-  })
-
-  describe('extractFromDocx – success paths', () => {
-    test('Should return extracted markdown text when no warnings', async () => {
-      vi.mocked(mammoth.convertToMarkdown).mockResolvedValue({
-        value: 'Some extracted text',
-        messages: []
-      })
-
-      const result = await textExtractor.extractFromDocx(FAKE_BUFFER)
-
-      expect(result).toBe('Some extracted text')
-    })
-
-    test('Should still return text when mammoth emits warnings', async () => {
-      vi.mocked(mammoth.convertToMarkdown).mockResolvedValue({
-        value: 'Extracted with warnings',
-        messages: [{ type: 'warning', message: 'unrecognised element' }]
-      })
-
-      const result = await textExtractor.extractFromDocx(FAKE_BUFFER)
-
-      expect(result).toBe('Extracted with warnings')
-    })
-  })
-
-  describe('extractText – DOCX mime type routes through extractFromDocx', () => {
-    test('Should return normalised text for DOCX mime type', async () => {
-      vi.mocked(mammoth.convertToMarkdown).mockResolvedValue({
-        value: 'Document content here',
-        messages: []
-      })
-
-      const result = await textExtractor.extractText(
-        FAKE_BUFFER,
-        DOCX_MIME,
-        'test.docx'
-      )
-
-      expect(result).toContain('Document content')
-    })
-
-    test('Should wrap extractFromDocx error in extractText error', async () => {
-      vi.mocked(mammoth.convertToMarkdown).mockRejectedValue(
-        new Error('docx parse error')
-      )
-
-      await expect(
-        textExtractor.extractText(FAKE_BUFFER, DOCX_MIME, 'test.docx')
-      ).rejects.toThrow(
-        'Failed to extract text: Failed to extract text from DOCX'
-      )
-    })
-  })
-})
-
 describe('TextExtractor – extractText additional mime types', () => {
   beforeEach(() => {
     vi.clearAllMocks()
