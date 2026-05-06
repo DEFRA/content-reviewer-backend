@@ -321,8 +321,7 @@ class BedrockClient {
         success: false,
         blocked: true,
         reason: 'Content was blocked by content safety guardrails',
-        policyBreakdown,
-        guardrailAssessment: { allAssessments }
+        policyBreakdown
       }
     }
 
@@ -331,7 +330,6 @@ class BedrockClient {
       blocked: false,
       content: responseText,
       usage,
-      guardrailAssessment: { allAssessments },
       stopReason: response.stopReason
     }
   }

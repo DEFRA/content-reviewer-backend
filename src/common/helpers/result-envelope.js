@@ -76,13 +76,21 @@ class ResultEnvelopeStore {
   _findNearestOccurrence(searchText, canonicalText, hintMid) {
     return findNearestOccurrence(searchText, canonicalText, hintMid)
   }
-  _resolveIssuePosition(start, end, issueText, canonicalText, fallbackText) {
+  _resolveIssuePosition(
+    start,
+    end,
+    issueText,
+    canonicalText,
+    fallbackText,
+    sourceMap = null
+  ) {
     return resolveIssuePosition(
       start,
       end,
       issueText,
       canonicalText,
-      fallbackText
+      fallbackText,
+      sourceMap
     )
   }
   _snapToWordBoundary(text, start, end) {
@@ -105,6 +113,9 @@ class ResultEnvelopeStore {
    * @param {string}     [status]       - defaults to "completed"
    * @param {Array|null} [linkMap]      - array of { start, end, display } entries for URL
    *                                      sources; null for file/text sources without links.
+   * @param {Array|null} [sourceMap]    - per-line offset entries from the canonical document;
+   *                                      used to resolve imprecise LLM offsets via normalised
+   *                                      line-region search.
    * @returns {Object} spec-compliant envelope
    */
   buildEnvelope(
@@ -113,7 +124,8 @@ class ResultEnvelopeStore {
     bedrockUsage,
     canonicalText,
     status = 'completed',
-    linkMap = null
+    linkMap = null,
+    sourceMap = null
   ) {
     const {
       scores = {},
@@ -139,7 +151,7 @@ class ResultEnvelopeStore {
         rawIssue.ref === undefined
           ? (parsedImprovements[idx] ?? null)
           : (improvByRef.get(rawIssue.ref) ?? parsedImprovements[idx] ?? null)
-      return mapIssue(rawIssue, pairedImp, idx, canonicalText)
+      return mapIssue(rawIssue, pairedImp, idx, canonicalText, sourceMap)
     })
 
     const prelimImprovements = parsedImprovements.map((parsedImprovement) =>
