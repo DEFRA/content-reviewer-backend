@@ -2,7 +2,8 @@ import { randomUUID } from 'node:crypto'
 import { createLogger } from './logging/logger.js'
 import {
   snapToWordBoundary,
-  normalizeCategoryDisplay
+  normalizeCategoryDisplay,
+  sortAndAlignPairs
 } from './result-envelope-issue-mappers.js'
 import {
   findNearestOccurrence,
@@ -91,6 +92,9 @@ class ResultEnvelopeStore {
   }
   _buildAnnotatedSections(canonicalText, sortedImprovements, linkMap) {
     return buildAnnotatedSections(canonicalText, sortedImprovements, linkMap)
+  }
+  _sortAndAlignPairs(canonicalText, issues, improvements) {
+    return sortAndAlignPairs(canonicalText, issues, improvements)
   }
 
   /**

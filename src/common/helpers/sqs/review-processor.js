@@ -295,7 +295,7 @@ export class ReviewProcessor {
       // Pass canonicalText, linkMap, and sourceMap so the result envelope can
       // build accurate annotated sections, restore clickable links in plain
       // sections, and resolve imprecise LLM offsets via normalised line-region search.
-      await this.saveReviewToRepository(
+      const envelopeDuration = await this.saveReviewToRepository(
         reviewId,
         parseResult,
         bedrockResult,
@@ -448,6 +448,8 @@ export class ReviewProcessor {
           'Failed to save positions file - review result still saved successfully'
         )
       })
+
+    return envelopeDuration
   }
 
   /**

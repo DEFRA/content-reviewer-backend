@@ -272,7 +272,8 @@ describe('ReviewProcessor - logReviewCompletion', () => {
           reviewId: TEST_REVIEW_ID,
           totalDurationMs: expect.any(Number),
           bedrockDurationMs: 3000,
-          parseDurationMs: 500
+          parseDurationMs: 500,
+          envelopeDurationMs: expect.any(Number)
         },
         expect.stringContaining(
           '[STEP 6/6] Content review processing COMPLETED'

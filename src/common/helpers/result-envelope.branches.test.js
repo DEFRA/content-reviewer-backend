@@ -93,7 +93,7 @@ describe('buildEnvelope — null canonicalText (ternary false branch, line 153)'
     )
     expect(envelope.documentId).toBe(REVIEW_ID)
     expect(envelope.status).toBe('completed')
-    expect(Array.isArray(envelope.issues)).toBe(true)
+    expect(Array.isArray(envelope.improvements)).toBe(true)
   })
 })
 
@@ -113,8 +113,8 @@ describe('buildEnvelope — reviewedContent without issues (line 124 || [] branc
       null
     )
     expect(envelope.documentId).toBe(REVIEW_ID)
-    expect(Array.isArray(envelope.issues)).toBe(true)
-    expect(envelope.issues).toHaveLength(0)
+    expect(Array.isArray(envelope.improvements)).toBe(true)
+    expect(envelope.improvements).toHaveLength(0)
   })
 })
 
@@ -149,7 +149,7 @@ describe('buildEnvelope — rawIssue without ref, no improvements (line 140 ?? n
       null
     )
     expect(envelope.documentId).toBe(REVIEW_ID)
-    expect(Array.isArray(envelope.issues)).toBe(true)
+    expect(Array.isArray(envelope.improvements)).toBe(true)
   })
 })
 
@@ -176,6 +176,6 @@ describe('buildEnvelope — rawIssue with unknown ref, no improvements (line 141
       null
     )
     expect(envelope.documentId).toBe(REVIEW_ID)
-    expect(Array.isArray(envelope.issues)).toBe(true)
+    expect(Array.isArray(envelope.improvements)).toBe(true)
   })
 })
