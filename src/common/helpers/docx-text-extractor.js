@@ -35,6 +35,12 @@ const MAX_XML_SIZE_MB = 50
 // upload size limit.
 const MAX_EXTRACTED_XML_BYTES = MAX_XML_SIZE_MB * 1024 * 1024
 
+// Hard cap on the input buffer size accepted by the ZIP fallback.
+// Uploads are already capped at 10 MB upstream; this is an in-module
+// belt-and-braces check that runs *before* JSZip.loadAsync, so a malicious
+// caller cannot ask the zip library to ingest an arbitrarily large blob.
+const MAX_INPUT_BUFFER_BYTES = MAX_XML_SIZE_MB * 1024 * 1024
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Generic helpers
 // ─────────────────────────────────────────────────────────────────────────────
@@ -461,12 +467,22 @@ async function readZipEntryAsString(zip, path) {
 /**
  * ZIP+XML fallback used when mammoth cannot parse the DOCX.
  *
- * Zip-bomb mitigation (sonar S5042): the archive is rejected before any
- * extraction if it contains more than MAX_ZIP_ENTRIES entries, and each
- * extracted stream is capped at MAX_EXTRACTED_XML_BYTES.
+ * Zip-bomb mitigation (sonar S5042) is enforced in three layers:
+ *   1. Input buffer size capped at MAX_INPUT_BUFFER_BYTES *before* the archive
+ *      is ever opened — the zip library never sees an oversized blob.
+ *   2. Entry count capped at MAX_ZIP_ENTRIES — rejects archives that pack
+ *      thousands of tiny files to exhaust memory bookkeeping.
+ *   3. Each individual extracted stream capped at MAX_EXTRACTED_XML_BYTES —
+ *      rejects high-compression-ratio bombs that decompress to gigabytes.
  */
 async function runDocxZipFallback(nodeBuffer) {
   try {
+    if (nodeBuffer.length > MAX_INPUT_BUFFER_BYTES) {
+      throw new Error(
+        `DOCX buffer is ${nodeBuffer.length} bytes (limit ${MAX_INPUT_BUFFER_BYTES}) — refusing to expand`
+      )
+    }
+
     const zip = await JSZip.loadAsync(nodeBuffer)
 
     const entryCount = Object.keys(zip.files).length

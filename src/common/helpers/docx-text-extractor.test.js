@@ -26,9 +26,26 @@ vi.mock('jszip', () => ({
   default: { loadAsync: vi.fn() }
 }))
 
-const FAKE_BUFFER = Buffer.from('PKfake-docx-bytes')
+// ─── Test constants ─────────────────────────────────────────────────────────
 
-// ─── Helpers ────────────────────────────────────────────────────────────────
+const FAKE_BUFFER = Buffer.from('PKfake-docx-bytes')
+const EXAMPLE_URL = 'https://example.com'
+const GOV_UK_URL = 'https://gov.uk'
+
+// Limits in production code (mirrored here so test thresholds stay in sync).
+const MAX_INPUT_BUFFER_BYTES = 50 * 1024 * 1024
+const MAX_EXTRACTED_XML_BYTES = 50 * 1024 * 1024
+const MAX_ZIP_ENTRIES = 1000
+
+// Boundary values that trigger the corresponding guard.
+const OVERSIZED_BUFFER_BYTES = MAX_INPUT_BUFFER_BYTES + 1
+const OVERSIZED_XML_BYTES = MAX_EXTRACTED_XML_BYTES + 1
+const OVER_ENTRY_LIMIT = MAX_ZIP_ENTRIES + 1
+
+// First five bytes of a real ZIP local-file-header (PK\3\4 plus a version byte).
+const ZIP_MAGIC_BYTES = Uint8Array.of(0x50, 0x4b, 0x03, 0x04, 0x01)
+
+// ─── XML helpers ────────────────────────────────────────────────────────────
 
 const wrapDocument = (innerXml) =>
   `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -56,9 +73,9 @@ function makeMockZip(files, extraEntries = {}) {
   }
 }
 
-// ─── docxXmlToParagraphObjects ──────────────────────────────────────────────
+// ─── docxXmlToParagraphObjects — structural classification ─────────────────
 
-describe('docxXmlToParagraphObjects', () => {
+describe('docxXmlToParagraphObjects — structural classification', () => {
   test('returns an empty array when the body cannot be located', () => {
     const xml = '<?xml version="1.0"?><foo/>'
     const result = docxXmlToParagraphObjects(xml, null)
@@ -89,6 +106,17 @@ describe('docxXmlToParagraphObjects', () => {
     expect(result[0].type).toBe('list')
   })
 
+  test('treats a single w:p (non-array) the same as an array of one', () => {
+    const xml = wrapDocument('<w:p><w:r><w:t>Solo</w:t></w:r></w:p>')
+    const result = docxXmlToParagraphObjects(xml, null)
+    expect(result).toHaveLength(1)
+    expect(result[0].runs.map((r) => r.text).join('')).toContain('Solo')
+  })
+})
+
+// ─── docxXmlToParagraphObjects — content extraction ────────────────────────
+
+describe('docxXmlToParagraphObjects — content extraction', () => {
   test('captures bold and italic from w:rPr', () => {
     const xml = wrapDocument(
       '<w:p><w:r><w:rPr><w:b/><w:i/></w:rPr><w:t>Strong</w:t></w:r></w:p>'
@@ -107,12 +135,12 @@ describe('docxXmlToParagraphObjects', () => {
       </w:p>
     `)
     const rels = wrapRels(
-      '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="https://gov.uk"/>'
+      `<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="${GOV_UK_URL}"/>`
     )
     const [block] = docxXmlToParagraphObjects(xml, rels)
     const linkRun = block.runs.find((r) => r.href)
     expect(linkRun).toBeDefined()
-    expect(linkRun.href).toBe('https://gov.uk')
+    expect(linkRun.href).toBe(GOV_UK_URL)
     expect(linkRun.text).toContain('GOV.UK')
   })
 
@@ -140,13 +168,6 @@ describe('docxXmlToParagraphObjects', () => {
     expect(result).toHaveLength(1)
     expect(result[0].runs[0].href ?? null).toBeNull()
   })
-
-  test('treats a single w:p (non-array) the same as an array of one', () => {
-    const xml = wrapDocument('<w:p><w:r><w:t>Solo</w:t></w:r></w:p>')
-    const result = docxXmlToParagraphObjects(xml, null)
-    expect(result).toHaveLength(1)
-    expect(result[0].runs.map((r) => r.text).join('')).toContain('Solo')
-  })
 })
 
 // ─── blocksToDocxText ───────────────────────────────────────────────────────
@@ -167,12 +188,9 @@ describe('blocksToDocxText', () => {
 
   test('renders run with href as Markdown anchor', () => {
     const blocks = [
-      {
-        type: 'para',
-        runs: [{ text: 'Click', href: 'https://example.com' }]
-      }
+      { type: 'para', runs: [{ text: 'Click', href: EXAMPLE_URL }] }
     ]
-    expect(blocksToDocxText(blocks)).toBe('[Click](https://example.com)')
+    expect(blocksToDocxText(blocks)).toBe(`[Click](${EXAMPLE_URL})`)
   })
 
   test('groups consecutive runs sharing the same href into one anchor', () => {
@@ -180,12 +198,12 @@ describe('blocksToDocxText', () => {
       {
         type: 'para',
         runs: [
-          { text: 'Click ', href: 'https://example.com' },
-          { text: 'here', href: 'https://example.com' }
+          { text: 'Click ', href: EXAMPLE_URL },
+          { text: 'here', href: EXAMPLE_URL }
         ]
       }
     ]
-    expect(blocksToDocxText(blocks)).toBe('[Click here](https://example.com)')
+    expect(blocksToDocxText(blocks)).toBe(`[Click here](${EXAMPLE_URL})`)
   })
 
   test('keeps consecutive runs with different hrefs as separate anchors', () => {
@@ -216,7 +234,7 @@ describe('blocksToDocxText', () => {
   })
 })
 
-// ─── extractDocxText ────────────────────────────────────────────────────────
+// ─── extractDocxText — mammoth happy path ──────────────────────────────────
 
 describe('extractDocxText – mammoth happy path', () => {
   beforeEach(() => {
@@ -273,10 +291,11 @@ describe('extractDocxText – mammoth fallback to extractRawText', () => {
   })
 })
 
-describe('extractDocxText – ZIP fallback path', () => {
+// ─── extractDocxText — ZIP fallback (parse paths) ──────────────────────────
+
+describe('extractDocxText – ZIP fallback parses XML', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    // Force both mammoth functions to fail so we land in the ZIP fallback
     vi.mocked(mammoth.convertToMarkdown).mockRejectedValue(
       new Error('mammoth failed')
     )
@@ -290,9 +309,7 @@ describe('extractDocxText – ZIP fallback path', () => {
       '<w:p><w:r><w:t>Hello from ZIP fallback</w:t></w:r></w:p>'
     )
     vi.mocked(JSZip.loadAsync).mockResolvedValue(
-      makeMockZip({
-        'word/document.xml': documentXml
-      })
+      makeMockZip({ 'word/document.xml': documentXml })
     )
 
     const result = await extractDocxText(FAKE_BUFFER)
@@ -309,7 +326,7 @@ describe('extractDocxText – ZIP fallback path', () => {
       </w:p>
     `)
     const relsXml = wrapRels(
-      '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="https://gov.uk"/>'
+      `<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="${GOV_UK_URL}"/>`
     )
 
     vi.mocked(JSZip.loadAsync).mockResolvedValue(
@@ -320,7 +337,21 @@ describe('extractDocxText – ZIP fallback path', () => {
     )
 
     const result = await extractDocxText(FAKE_BUFFER)
-    expect(result).toContain('[GOV.UK](https://gov.uk)')
+    expect(result).toContain(`[GOV.UK](${GOV_UK_URL})`)
+  })
+})
+
+// ─── extractDocxText — ZIP fallback (error paths) ──────────────────────────
+
+describe('extractDocxText – ZIP fallback error handling', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(mammoth.convertToMarkdown).mockRejectedValue(
+      new Error('mammoth failed')
+    )
+    vi.mocked(mammoth.extractRawText).mockRejectedValue(
+      new Error('mammoth failed')
+    )
   })
 
   test('throws a wrapped error when zip is missing word/document.xml', async () => {
@@ -338,15 +369,36 @@ describe('extractDocxText – ZIP fallback path', () => {
       /Failed to extract text from DOCX/
     )
   })
+})
 
-  // ─── Zip-bomb mitigations (sonar S5042) ──────────────────────────────────
+// ─── Zip-bomb mitigations (sonar S5042) ────────────────────────────────────
 
-  test('rejects archives that contain more than 1000 entries', async () => {
+describe('extractDocxText – zip-bomb mitigations', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(mammoth.convertToMarkdown).mockRejectedValue(
+      new Error('mammoth failed')
+    )
+    vi.mocked(mammoth.extractRawText).mockRejectedValue(
+      new Error('mammoth failed')
+    )
+  })
+
+  test('rejects input buffers that exceed the cap before opening the archive', async () => {
+    const oversizedBuffer = Buffer.alloc(OVERSIZED_BUFFER_BYTES)
+
+    await expect(extractDocxText(oversizedBuffer)).rejects.toThrow(
+      /buffer.*refusing to expand/
+    )
+    // Guard fires before loadAsync, so the zip library is never invoked.
+    expect(JSZip.loadAsync).not.toHaveBeenCalled()
+  })
+
+  test('rejects archives that contain more than the entry-count limit', async () => {
     const documentXml = wrapDocument('<w:p><w:r><w:t>Hello</w:t></w:r></w:p>')
 
-    // 1001 entries → exceeds MAX_ZIP_ENTRIES
     const tooManyEntries = {}
-    for (let i = 0; i < 1001; i++) {
+    for (let i = 0; i < OVER_ENTRY_LIMIT; i++) {
       tooManyEntries[`junk/file_${i}.bin`] = ''
     }
 
@@ -359,9 +411,8 @@ describe('extractDocxText – ZIP fallback path', () => {
     )
   })
 
-  test('rejects archives whose document.xml exceeds the 50 MB cap', async () => {
-    // 51 MB string — single entry, but oversized.
-    const oversizedXml = 'A'.repeat(51 * 1024 * 1024)
+  test('rejects archives whose document.xml exceeds the per-entry size cap', async () => {
+    const oversizedXml = 'A'.repeat(OVERSIZED_XML_BYTES)
 
     vi.mocked(JSZip.loadAsync).mockResolvedValue(
       makeMockZip({ 'word/document.xml': oversizedXml })
@@ -372,6 +423,8 @@ describe('extractDocxText – ZIP fallback path', () => {
     )
   })
 })
+
+// ─── extractDocxText — buffer normalisation ────────────────────────────────
 
 describe('extractDocxText – buffer normalisation', () => {
   beforeEach(() => {
@@ -388,9 +441,8 @@ describe('extractDocxText – buffer normalisation', () => {
   })
 
   test('accepts a Uint8Array (ArrayBufferView)', async () => {
-    // Node Buffer is required by extractDocxText for the subarray() debug log;
-    // wrap a Uint8Array in Buffer.from to keep that contract.
-    const view = Buffer.from(Uint8Array.of(0x50, 0x4b, 0x03, 0x04, 0x01))
+    // Wrap a Uint8Array in Buffer.from so the subarray() debug log works.
+    const view = Buffer.from(ZIP_MAGIC_BYTES)
     const result = await extractDocxText(view)
     expect(result).toBe('ok')
   })
