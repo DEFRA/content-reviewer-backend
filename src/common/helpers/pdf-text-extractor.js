@@ -34,8 +34,14 @@ const PARAGRAPH_MIN_GAP = 12
 
 // Bullet markers used to detect list lines in PDFs.
 // • = bullet (•), – = en-dash (–), — = em-dash (—)
-const LIST_MARKER_REGEX = /^([•\-–—])\s+(.*)$/
-const BULLET_PREFIX_REGEX = /^([•\-–—])\s*/
+//
+// Both regexes are deliberately simple — they check or strip a *bounded*
+// prefix (one bullet character, optionally followed by whitespace). They are
+// never executed against the full line; only the leading 1–2 characters are
+// inspected. This keeps the matching strictly linear and avoids the
+// super-linear runtime concern flagged by sonar S5852.
+const LIST_MARKER_REGEX = /^[•\-–—]\s/
+const BULLET_PREFIX_REGEX = /^[•\-–—]\s*/
 
 // Suppress pdfjs console noise about missing CMap / standard fonts
 const PDFJS_VERBOSITY_QUIET = 0
