@@ -30,6 +30,22 @@ function buildPrelimPairs(
   canonicalText,
   sourceMap
 ) {
+  // When the LLM returns no reviewedContent.issues (improvements-only response),
+  // synthesize a placeholder raw issue for each improvement that has a non-empty
+  // `current` field so resolveIssuePosition can locate it via text search.
+  // Improvements with an empty `current` are skipped and will be discarded.
+  const effectiveRawIssues =
+    rawIssues.length > 0
+      ? rawIssues
+      : parsedImprovements
+          .filter((imp) => imp.current && imp.current.trim().length > 0)
+          .map((imp, idx) => ({
+            start: 0,
+            end: 0,
+            text: imp.current,
+            ref: imp.ref !== undefined ? imp.ref : idx
+          }))
+
   const improvByRef = new Map()
   for (const imp of parsedImprovements) {
     if (imp.ref !== undefined && !improvByRef.has(imp.ref)) {
@@ -37,7 +53,7 @@ function buildPrelimPairs(
     }
   }
 
-  const prelimIssues = rawIssues.map((rawIssue, idx) => {
+  const prelimIssues = effectiveRawIssues.map((rawIssue, idx) => {
     const pairedImp =
       rawIssue.ref === undefined
         ? (parsedImprovements[idx] ?? null)
