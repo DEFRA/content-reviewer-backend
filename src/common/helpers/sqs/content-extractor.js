@@ -96,7 +96,7 @@ export class ContentExtractor {
         downloadedBytes: buffer.length,
         durationMs: s3Duration
       },
-      `S3 file downloaded in ${s3Duration}ms`
+      `[RESPONSE TIME] S3 file downloaded in ${s3Duration}ms`
     )
 
     logger.info(
@@ -123,7 +123,7 @@ export class ContentExtractor {
         wordCount: textExtractor.countWords(textContent),
         durationMs: extractDuration
       },
-      `Text extracted successfully in ${extractDuration}ms`
+      `[RESPONSE TIME] Text extracted successfully in ${extractDuration}ms`
     )
 
     return textContent
@@ -185,7 +185,7 @@ export class ContentExtractor {
           : 0,
         durationMs: s3Duration
       },
-      `Canonical document read successfully in ${s3Duration}ms — using canonicalText (${canonicalDoc.charCount} chars)`
+      `[RESPONSE TIME] Canonical document read successfully in ${s3Duration}ms — using canonicalText (${canonicalDoc.charCount} chars)`
     )
 
     return {
@@ -247,7 +247,7 @@ export class ContentExtractor {
         contentLength: rawString.length,
         durationMs: s3Duration
       },
-      `Legacy plain-text S3 content read in ${s3Duration}ms`
+      `[RESPONSE TIME] Legacy plain-text S3 content read in ${s3Duration}ms`
     )
 
     return { canonicalText: rawString, linkMap: null }
@@ -281,7 +281,7 @@ export class ContentExtractor {
         contentLength: textContent.length,
         durationMs: s3Duration
       },
-      `S3 text content downloaded in ${s3Duration}ms`
+      `[RESPONSE TIME] S3 text content downloaded in ${s3Duration}ms`
     )
 
     return textContent

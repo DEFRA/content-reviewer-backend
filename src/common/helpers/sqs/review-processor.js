@@ -202,7 +202,7 @@ export class ReviewProcessor {
           reviewId: body.reviewId,
           durationMs: duration
         },
-        `SQS message processed successfully in ${duration}ms`
+        `[RESPONSE TIME] SQS message processed successfully in ${duration}ms`
       )
     } catch (error) {
       clearInterval(heartbeat)
@@ -308,7 +308,8 @@ export class ReviewProcessor {
         reviewId,
         processingStartTime,
         bedrockResult,
-        parseResult
+        parseResult,
+        envelopeDuration
       )
 
       return {
@@ -356,7 +357,7 @@ export class ReviewProcessor {
 
       logger.info(
         { reviewId, durationMs: statusUpdateDuration },
-        `Review status updated to processing in ${statusUpdateDuration}ms`
+        `[RESPONSE TIME] Review status updated to processing in ${statusUpdateDuration}ms`
       )
 
       // Status is tracked in reviews/{reviewId}.json via updateReviewStatus above
@@ -396,6 +397,7 @@ export class ReviewProcessor {
   ) {
     // Build the spec-compliant envelope (annotatedSections, scores, improvements, etc.)
     // and embed it directly into reviews/{reviewId}.json — no separate S3 file needed.
+    const envelopeStart = performance.now()
     const envelope = resultEnvelopeStore.buildEnvelope(
       reviewId,
       parseResult.parsedReview,
@@ -405,13 +407,22 @@ export class ReviewProcessor {
       linkMap,
       sourceMap
     )
+    const envelopeDuration = Math.round(performance.now() - envelopeStart)
+
+    logger.info(
+      {
+        reviewId,
+        issueCount: envelope.issueCount,
+        annotatedSections: envelope.annotatedSections?.length,
+        durationMs: envelopeDuration
+      },
+      `[RESPONSE TIME] Result envelope built in ${envelopeDuration}ms (${envelope.issueCount} issues, ${envelope.annotatedSections?.length} sections)`
+    )
 
     const saveStart = performance.now()
     await reviewRepository.saveReviewResult(
       reviewId,
       {
-        reviewData: parseResult.parsedReview,
-        rawResponse: parseResult.finalReviewContent,
         stopReason: bedrockResult.bedrockResponse.stopReason,
         completedAt: new Date()
       },
@@ -422,17 +433,14 @@ export class ReviewProcessor {
 
     logger.info(
       { reviewId, durationMs: saveDuration },
-      `Review result saved to S3 in ${saveDuration}ms`
+      `[RESPONSE TIME] Review result saved to S3 in ${saveDuration}ms`
     )
 
     // Save raw LLM response as a debug artefact at positions/{reviewId}.json.
     // Non-critical — never blocks the main result.
     reviewRepository
       .savePositions(reviewId, {
-        rawResponse: parseResult.finalReviewContent || canonicalText,
-        guardrailAssessment:
-          bedrockResult?.bedrockResponse?.guardrailAssessment ?? null,
-        improvements: parseResult.parsedReview?.improvements ?? []
+        rawResponse: parseResult.finalReviewContent || canonicalText
       })
       .catch((err) => {
         logger.error(
@@ -449,7 +457,8 @@ export class ReviewProcessor {
     reviewId,
     processingStartTime,
     bedrockResult,
-    parseResult
+    parseResult,
+    envelopeDuration = 0
   ) {
     const totalProcessingDuration = Math.round(
       performance.now() - processingStartTime
@@ -460,9 +469,10 @@ export class ReviewProcessor {
         reviewId,
         totalDurationMs: totalProcessingDuration,
         bedrockDurationMs: bedrockResult.bedrockDuration,
-        parseDurationMs: parseResult.parseDuration
+        parseDurationMs: parseResult.parseDuration,
+        envelopeDurationMs: envelopeDuration
       },
-      `[STEP 6/6] Content review processing COMPLETED - TOTAL: ${totalProcessingDuration}ms (Bedrock: ${bedrockResult.bedrockDuration}ms, Parse: ${parseResult.parseDuration}ms)`
+      `[RESPONSE TIME] [STEP 6/6] Content review processing COMPLETED - TOTAL: ${totalProcessingDuration}ms (Bedrock: ${bedrockResult.bedrockDuration}ms, Parse: ${parseResult.parseDuration}ms, Envelope: ${envelopeDuration}ms)`
     )
   }
 
@@ -482,7 +492,7 @@ export class ReviewProcessor {
         stack: error.stack,
         totalDurationMs: totalProcessingDuration
       },
-      `Review processing failed after ${totalProcessingDuration}ms`
+      `[RESPONSE TIME] Review processing failed after ${totalProcessingDuration}ms`
     )
 
     const errorMessage = this.errorHandler.formatErrorForUI(error)

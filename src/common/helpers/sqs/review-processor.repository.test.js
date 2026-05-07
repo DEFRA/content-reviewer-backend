@@ -223,8 +223,6 @@ describe('ReviewProcessor - saveReviewToRepository', () => {
       expect(mockSaveReviewResult).toHaveBeenCalledWith(
         TEST_REVIEW_ID,
         expect.objectContaining({
-          reviewData: { score: 90 },
-          rawResponse: TEST_REVIEW_CONTENT,
           stopReason: 'end_turn',
           completedAt: expect.any(Date)
         }),
@@ -234,9 +232,7 @@ describe('ReviewProcessor - saveReviewToRepository', () => {
       expect(mockSavePositions).toHaveBeenCalledWith(
         TEST_REVIEW_ID,
         expect.objectContaining({
-          rawResponse: TEST_REVIEW_CONTENT,
-          guardrailAssessment: null,
-          improvements: []
+          rawResponse: TEST_REVIEW_CONTENT
         })
       )
       expect(mockLoggerInfo).toHaveBeenCalledWith(
