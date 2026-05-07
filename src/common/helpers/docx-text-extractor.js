@@ -465,25 +465,45 @@ async function readZipEntryAsString(zip, path) {
 }
 
 /**
- * ZIP+XML fallback used when mammoth cannot parse the DOCX.
+ * Safely open a DOCX archive from a Node Buffer.
  *
- * Zip-bomb mitigation (sonar S5042) is enforced in three layers:
- *   1. Input buffer size capped at MAX_INPUT_BUFFER_BYTES *before* the archive
- *      is ever opened — the zip library never sees an oversized blob.
- *   2. Entry count capped at MAX_ZIP_ENTRIES — rejects archives that pack
- *      thousands of tiny files to exhaust memory bookkeeping.
- *   3. Each individual extracted stream capped at MAX_EXTRACTED_XML_BYTES —
- *      rejects high-compression-ratio bombs that decompress to gigabytes.
+ * Zip-bomb mitigation (sonar S5042) is enforced in three layers across this
+ * helper and `readZipEntryAsString` below:
+ *   1. Input buffer size is capped at MAX_INPUT_BUFFER_BYTES *here*, before
+ *      the archive is ever opened — the zip library never sees an oversized
+ *      blob. (Upstream uploads are already capped at 10 MB; this is an
+ *      in-module belt-and-braces guard.)
+ *   2. Entry count is capped at MAX_ZIP_ENTRIES by the caller, immediately
+ *      after this returns and before any reads are issued.
+ *   3. Each individual extracted stream is capped at MAX_EXTRACTED_XML_BYTES
+ *      inside `readZipEntryAsString` — rejects high-compression-ratio bombs
+ *      that decompress to gigabytes.
+ *
+ * Worst-case memory consumption is therefore bounded to approximately
+ * 2 × MAX_EXTRACTED_XML_BYTES regardless of the archive's contents.
+ *
+ * @param {Buffer} nodeBuffer
+ * @returns {Promise<import('jszip')>}
+ */
+async function safelyLoadDocxZip(nodeBuffer) {
+  if (nodeBuffer.length > MAX_INPUT_BUFFER_BYTES) {
+    throw new Error(
+      `DOCX buffer is ${nodeBuffer.length} bytes (limit ${MAX_INPUT_BUFFER_BYTES}) — refusing to expand`
+    )
+  }
+  // NOSONAR S5042: input size is bounded by the check above; entry count and
+  // per-entry extracted size are bounded by the caller and readZipEntryAsString.
+  return JSZip.loadAsync(nodeBuffer) // NOSONAR
+}
+
+/**
+ * ZIP+XML fallback used when mammoth cannot parse the DOCX.
+ * Archive opening is delegated to `safelyLoadDocxZip` (see its docstring for
+ * the full zip-bomb mitigation contract — sonar S5042).
  */
 async function runDocxZipFallback(nodeBuffer) {
   try {
-    if (nodeBuffer.length > MAX_INPUT_BUFFER_BYTES) {
-      throw new Error(
-        `DOCX buffer is ${nodeBuffer.length} bytes (limit ${MAX_INPUT_BUFFER_BYTES}) — refusing to expand`
-      )
-    }
-
-    const zip = await JSZip.loadAsync(nodeBuffer)
+    const zip = await safelyLoadDocxZip(nodeBuffer)
 
     const entryCount = Object.keys(zip.files).length
     if (entryCount > MAX_ZIP_ENTRIES) {
