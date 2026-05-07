@@ -5,6 +5,7 @@ import mammoth from 'mammoth'
 import JSZip from 'jszip'
 import { createLogger } from './logging/logger.js'
 import { textNormaliser } from './text-normaliser.js'
+import { XMLParser } from 'fast-xml-parser'
 
 // pdfjs-dist v5 requires an explicit path to the worker — empty string no longer accepted.
 // createRequire resolves the absolute path in node_modules; pathToFileURL converts it to
@@ -128,18 +129,213 @@ async function extractPdfWithLinks(buffer) {
   })
 
   const doc = await loadingTask.promise
-  const pageTexts = []
+  const pageBlocks = []
 
   for (let i = 1; i <= doc.numPages; i++) {
     const page = await doc.getPage(i)
-    const pageText = await extractPageTextWithLinks(page)
-    pageTexts.push(pageText)
-    page.cleanup()
+    try {
+      const [textContent, annotations] = await Promise.all([
+        page.getTextContent(),
+        page.getAnnotations()
+      ])
+
+      const linkAnnotations = (annotations || []).filter(
+        (ann) => ann.subtype === 'Link' && ann.url
+      )
+
+      const TX_INDEX = 4
+      const TY_INDEX = 5
+
+      const items = (textContent.items || []).map((it) => {
+        const tx = Number(it.transform[TX_INDEX] || 0)
+        const ty = Number(it.transform[TY_INDEX] || 0)
+        const fontSize = Math.abs(it.transform[3]) || 0
+        // detect bold from fontName or style fontFamily
+        const style = textContent.styles?.[it.fontName] || {}
+        const fontDesc = (
+          (it.fontName || '') +
+          ' ' +
+          (style.fontFamily || '')
+        ).toLowerCase()
+        const bold = /bold|black|heavy|700/.test(fontDesc)
+        // preserve raw string (do not aggressively collapse internal spaces here)
+        return { str: it.str || '', tx, ty, fontSize, bold }
+      })
+
+      if (items.length === 0) {
+        pageBlocks.push([]) // page with no content -> keep separation
+        continue
+      }
+
+      // median font size for page
+      const fontSizes = items
+        .map((x) => x.fontSize)
+        .filter(Boolean)
+        .sort((a, b) => a - b)
+
+      let medianFontSize
+      if (fontSizes.length === 0) {
+        medianFontSize = 0
+      } else if (fontSizes.length % 2 === 1) {
+        medianFontSize = fontSizes[(fontSizes.length - 1) / 2]
+      } else {
+        const mid = fontSizes.length / 2
+        medianFontSize = (fontSizes[mid - 1] + fontSizes[mid]) / 2
+      }
+
+      // group into lines by rounded y
+      const lineMap = new Map()
+      for (const it of items) {
+        const key = Math.round(it.ty)
+        if (!lineMap.has(key)) lineMap.set(key, [])
+        lineMap.get(key).push(it)
+      }
+
+      const lines = Array.from(lineMap.entries())
+        .map(([y, its]) => {
+          its.sort((a, b) => a.tx - b.tx)
+          const avgFont = its.reduce((s, x) => s + x.fontSize, 0) / its.length
+          return { y: Number(y), items: its, avgFontSize: avgFont }
+        })
+        .sort((a, b) => b.y - a.y) // top-to-bottom
+
+      // median gap
+      const gaps = []
+      for (let i = 0; i < lines.length - 1; i++)
+        gaps.push(Math.abs(lines[i].y - lines[i + 1].y))
+      gaps.sort((a, b) => a - b)
+      let medianGap
+      if (gaps.length === 0) {
+        medianGap = 0
+      } else if (gaps.length % 2 === 1) {
+        medianGap = gaps[(gaps.length - 1) / 2]
+      } else {
+        const mid = gaps.length / 2
+        medianGap = (gaps[mid - 1] + gaps[mid]) / 2
+      }
+
+      const findUrlForItem = (item) => {
+        const matched = linkAnnotations.find((ann) =>
+          rectsOverlap(ann.rect, [item.tx, item.ty])
+        )
+        return matched ? matched.url : null
+      }
+
+      // assemble blocks for page
+      const blocks = []
+      let currentParagraphRuns = []
+      let lastLineY = null
+
+      const flushParagraph = (type = 'para') => {
+        if (currentParagraphRuns.length > 0) {
+          blocks.push({ type, runs: currentParagraphRuns })
+          currentParagraphRuns = []
+        }
+      }
+
+      for (let idx = 0; idx < lines.length; idx++) {
+        const line = lines[idx]
+        // build runs for this line preserving bold and links
+        const runs = []
+        for (const it of line.items) {
+          // trim only leading/trailing but keep internal spacing as-is
+          const text = String(it.str || '')
+          if (!text || text.trim() === '') continue
+          const url = findUrlForItem(it)
+          runs.push({ text: text, bold: !!it.bold, href: url || null })
+        }
+        if (runs.length === 0) {
+          // blank line -> paragraph separator
+          flushParagraph()
+          lastLineY = line.y
+          continue
+        }
+
+        // build a textual representation for heuristics, inserting spaces between runs where appropriate
+        const heuristicLineText = runs
+          .map((r, i) => {
+            const next = runs[i + 1]
+            if (!next) return r.text.trim()
+            const endChar = r.text.slice(-1)
+            const startChar = next.text.charAt(0)
+            const needsSpace =
+              !/\s/.test(endChar) &&
+              !/[\s\-\u2013\u2014\.,:;\/\)\(]/.test(startChar)
+            return r.text + (needsSpace ? ' ' : '')
+          })
+          .join('')
+          .replace(/\s+/g, ' ')
+          .trim()
+
+        const lineText = heuristicLineText
+        const isHeading =
+          medianFontSize > 0 &&
+          line.avgFontSize >
+            Math.max(1.25 * medianFontSize, medianFontSize + 1) &&
+          lineText.length <= 200
+
+        // Only treat explicit bullet characters as list markers (avoid turning "1. Intro" into list)
+        const listMatch = lineText
+          .trim()
+          .match(/^([•\u2022\-\u2013\u2014])\s+(.*)$/)
+        const isList = !!listMatch
+
+        let largeGap = false
+        if (lastLineY !== null && medianGap > 0) {
+          const gap = Math.abs(lastLineY - line.y)
+          if (gap > Math.max(medianGap * 1.8, 12)) largeGap = true
+        }
+
+        if (isHeading) {
+          flushParagraph()
+          // preserve/force bold for heading runs so heading appears as in source
+          runs.forEach((r) => {
+            r.bold = r.bold || true
+          })
+          // heading: single-line block with bolding preserved in runs
+          blocks.push({ type: 'heading', runs })
+        } else if (isList) {
+          flushParagraph()
+          // keep runs but remove bullet from first run text
+          if (runs.length > 0) {
+            runs[0].text = runs[0].text.replace(
+              /^([•\u2022\-\u2013\u2014])\s*/,
+              ''
+            )
+          }
+          blocks.push({ type: 'list', runs })
+        } else {
+          if (largeGap) flushParagraph()
+          // append runs to current paragraph (keep runs separate to preserve bold)
+          currentParagraphRuns.push(...runs)
+        }
+
+        lastLineY = line.y
+      }
+
+      flushParagraph()
+      // append page blocks
+      pageBlocks.push(blocks)
+    } finally {
+      page.cleanup()
+    }
   }
 
   await doc.cleanup()
 
-  return pageTexts.join('\n\n')
+  // flatten pages into blocks with empty page separator between pages
+  const allBlocks = []
+  for (const pb of pageBlocks) {
+    if (pb.length === 0) {
+      // preserve page break as empty separator
+      allBlocks.push({ type: 'sep', runs: [] })
+      continue
+    }
+    for (const b of pb) allBlocks.push(b)
+    // add page separator
+    allBlocks.push({ type: 'sep', runs: [] })
+  }
+  return allBlocks
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -360,12 +556,12 @@ class TextExtractor {
           throw new Error('DOCX zip missing word/document.xml')
         }
         const xml = await docFile.async('string')
-        // Extract text nodes (<w:t>...</w:t>) which hold runs of text in DOCX
-        const text = Array.from(xml.matchAll(/<w:t[^>]*>(.*?)<\/w:t>/g))
-          .map((m) => m[1])
-          .join(' ')
+        const relEntry = zip.file('word/_rels/document.xml.rels')
+        const relsXml = relEntry ? await relEntry.async('string') : null
+
+        const structured = this.docxXmlToParagraphObjects(xml, relsXml)
         // return an object shape compatible with mammoth result
-        result = { value: text, messages: [] }
+        result = { value: structured, messages: [] }
       } catch (zipErr) {
         // keep original behaviour by throwing a clear error
         throw new Error(
@@ -381,6 +577,161 @@ class TextExtractor {
     }
 
     return result
+  }
+
+  /**
+   * Convert document.xml + rels XML into readable Markdown-ish text.
+   * Handles paragraphs, simple headings, bullets, numbered lists, links, bold/italic inline.
+   */
+  docxXmlToParagraphObjects(documentXml, relsXml) {
+    const parser = new XMLParser({
+      ignoreAttributes: false,
+      attributeNamePrefix: '',
+      textNodeName: '#text',
+      ignoreNameSpace: false
+    })
+
+    const doc = parser.parse(documentXml)
+    const body = doc['w:document']?.['w:body']
+    if (!body) return ''
+
+    // build rels map
+    const rels = {}
+    if (relsXml) {
+      try {
+        const relsDoc = parser.parse(relsXml)
+        const relList = relsDoc.Relationships?.Relationship
+        const items = Array.isArray(relList)
+          ? relList
+          : relList
+            ? [relList]
+            : []
+        for (const r of items) {
+          if (r.Id && r.Target) rels[r.Id] = r.Target
+        }
+      } catch (e) {
+        // ignore rel parse errors
+      }
+    }
+
+    const paragraphs = body['w:p']
+      ? Array.isArray(body['w:p'])
+        ? body['w:p']
+        : [body['w:p']]
+      : []
+    const out = []
+
+    const extractTextAndFormatting = (runNode) => {
+      if (!runNode) return ''
+      if (Array.isArray(runNode))
+        return runNode.map(extractTextAndFormatting).join('')
+      if (typeof runNode !== 'object') return String(runNode)
+
+      // ignore drawings/pictures and raw graphic nodes
+      if (
+        runNode['w:drawing'] ||
+        runNode['w:pict'] ||
+        runNode['pic:pic'] ||
+        runNode['a:graphic']
+      ) {
+        return ''
+      }
+
+      if (runNode['w:t'] !== undefined) {
+        if (typeof runNode['w:t'] === 'string') return runNode['w:t']
+        return runNode['w:t']['#text'] || ''
+      }
+
+      let text = ''
+      for (const k of Object.keys(runNode))
+        text += extractTextAndFormatting(runNode[k])
+      return text
+    }
+
+    const processParagraph = (p) => {
+      const pPr = p['w:pPr'] || {}
+      const pStyle =
+        (pPr['w:pStyle'] &&
+          (pPr['w:pStyle']['w:val'] || pPr['w:pStyle']['val'])) ||
+        ''
+      const isHeading = typeof pStyle === 'string' && /^Heading/i.test(pStyle)
+      const isList = !!pPr['w:numPr']
+
+      const runs = []
+
+      const pushRun = (text, bold = false, italic = false, href = null) => {
+        if (!text) return
+        // filter out artifact-like strings
+        const artifactPattern =
+          /(Picture\s*\d+)|http:\/\/schemas\.openxmlformats\.org|<w:drawing|<pic:|graphicData|{[0-9A-Fa-f-]{8,}}/
+        if (artifactPattern.test(text)) return
+        // skip likely binary blobs
+        if (text.length > 300 && !/\s/.test(text)) return
+        runs.push({ text, bold, italic, href })
+      }
+
+      const processNode = (node, currentHref = null) => {
+        if (!node) return
+        if (Array.isArray(node)) {
+          for (const n of node) processNode(n, currentHref)
+          return
+        }
+        if (typeof node !== 'object') return
+
+        // hyperlinks
+        if (node['w:hyperlink']) {
+          const arr = Array.isArray(node['w:hyperlink'])
+            ? node['w:hyperlink']
+            : [node['w:hyperlink']]
+          for (const hp of arr) {
+            const rid = hp['r:id'] || hp['r:embed'] || hp['r:Id'] || hp['r:ID']
+            const href = rid ? rels[rid] || null : null
+            const innerRuns = hp['w:r'] || hp
+            const text = extractTextAndFormatting(innerRuns)
+            pushRun(text, false, false, href)
+          }
+          return
+        }
+
+        // runs
+        if (node['w:r']) {
+          const runList = Array.isArray(node['w:r'])
+            ? node['w:r']
+            : [node['w:r']]
+          for (const r of runList) {
+            const text = extractTextAndFormatting(r)
+            const bold = !!(r['w:rPr'] && r['w:rPr']['w:b'] !== undefined)
+            const italic = !!(r['w:rPr'] && r['w:rPr']['w:i'] !== undefined)
+            pushRun(text, bold, italic, currentHref)
+          }
+          return
+        }
+
+        // explicitly ignore drawings/pictures to avoid raw XML blobs
+
+        // direct text node
+        if (node['w:t']) {
+          const text = extractTextAndFormatting(node)
+          pushRun(text)
+          return
+        }
+
+        for (const k of Object.keys(node)) processNode(node[k], currentHref)
+      }
+
+      processNode(p)
+
+      const type = isHeading ? 'heading' : isList ? 'list' : 'para'
+      return { type, runs }
+    }
+
+    for (const p of paragraphs) {
+      const paraObj = processParagraph(p)
+      // include only paragraphs with text
+      if (paraObj.runs.length > 0) out.push(paraObj)
+    }
+
+    return out
   }
 
   /**
