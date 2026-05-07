@@ -188,6 +188,44 @@ const handleGetReview = async (request, h) => {
 }
 
 /**
+ * Parse pagination params and fetch reviews + total count from the repository.
+ */
+async function fetchAllReviewsData(query, logger) {
+  const limit = Math.min(
+    Math.max(
+      Number.parseInt(query.limit, 10) || PAGINATION_DEFAULTS.LIMIT,
+      PAGINATION_LIMITS.MIN_LIMIT
+    ),
+    PAGINATION_LIMITS.MAX_LIMIT
+  )
+  const skip = Math.max(
+    Number.parseInt(query.skip, 10) || PAGINATION_DEFAULTS.SKIP,
+    PAGINATION_LIMITS.MIN_SKIP
+  )
+  const userId = query.userId || null
+
+  logger.info(
+    { limit, skip, userId: userId || 'all' },
+    'Fetching reviews from S3 repository'
+  )
+
+  const reviews = await reviewRepository.getAllReviews(limit, skip, userId)
+  logger.info(
+    {
+      count: reviews.length,
+      reviewIds: reviews.map((r) => r.id),
+      statuses: reviews.map((r) => r.status)
+    },
+    `Retrieved ${reviews.length} reviews from S3`
+  )
+
+  const totalCount = await reviewRepository.getReviewCount(userId)
+  logger.info({ totalCount }, 'Retrieved total review count from S3')
+
+  return { limit, skip, reviews, totalCount }
+}
+
+/**
  * GET /api/reviews - Get all reviews (history)
  * Supports optional ?userId= query param to filter to a specific user's reviews.
  */
@@ -198,38 +236,11 @@ const handleGetAllReviews = async (request, h) => {
   )
 
   try {
-    const limit = Math.min(
-      Math.max(
-        Number.parseInt(request.query.limit, 10) || PAGINATION_DEFAULTS.LIMIT,
-        PAGINATION_LIMITS.MIN_LIMIT
-      ),
-      PAGINATION_LIMITS.MAX_LIMIT
-    )
-    const skip = Math.max(
-      Number.parseInt(request.query.skip, 10) || PAGINATION_DEFAULTS.SKIP,
-      PAGINATION_LIMITS.MIN_SKIP
-    )
-    const userId = request.query.userId || null
-
-    request.logger.info(
-      { limit, skip, userId: userId || 'all' },
-      'Fetching reviews from S3 repository'
+    const { limit, skip, reviews, totalCount } = await fetchAllReviewsData(
+      request.query,
+      request.logger
     )
 
-    const reviews = await reviewRepository.getAllReviews(limit, skip, userId)
-    request.logger.info(
-      {
-        count: reviews.length,
-        reviewIds: reviews.map((r) => r.id),
-        statuses: reviews.map((r) => r.status)
-      },
-      `Retrieved ${reviews.length} reviews from S3`
-    )
-
-    const totalCount = await reviewRepository.getReviewCount(userId)
-    request.logger.info({ totalCount }, 'Retrieved total review count from S3')
-
-    // Format reviews for response
     const formattedReviews = reviews.map((review) =>
       formatReviewForList(review, request.logger)
     )

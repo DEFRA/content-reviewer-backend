@@ -19,6 +19,40 @@ import {
 const logger = createLogger()
 
 /**
+ * Build preliminary issue/improvement pairs from raw LLM output.
+ * Pre-pairs each rawIssue with its corresponding parsedImprovement (by ref
+ * first, index fallback) so mapIssue can use improvement.current as a
+ * fallback text for position resolution.
+ */
+function buildPrelimPairs(
+  rawIssues,
+  parsedImprovements,
+  canonicalText,
+  sourceMap
+) {
+  const improvByRef = new Map()
+  for (const imp of parsedImprovements) {
+    if (imp.ref !== undefined && !improvByRef.has(imp.ref)) {
+      improvByRef.set(imp.ref, imp)
+    }
+  }
+
+  const prelimIssues = rawIssues.map((rawIssue, idx) => {
+    const pairedImp =
+      rawIssue.ref === undefined
+        ? (parsedImprovements[idx] ?? null)
+        : (improvByRef.get(rawIssue.ref) ?? parsedImprovements[idx] ?? null)
+    return mapIssue(rawIssue, pairedImp, idx, canonicalText, sourceMap)
+  })
+
+  const prelimImprovements = parsedImprovements.map((parsedImprovement) =>
+    mapImprovement(parsedImprovement, `issue-orphan-${randomUUID()}`)
+  )
+
+  return { prelimIssues, prelimImprovements }
+}
+
+/**
  * Builds the spec-compliant result envelope.
  * The envelope is stored as the `envelope` field inside reviews/{reviewId}.json
  * by the review repository — no separate S3 file is written.
@@ -137,27 +171,13 @@ class ResultEnvelopeStore {
 
     const rawIssues = reviewedContent.issues || []
 
-    // Step 1: Build preliminary spec issue objects (original AI order).
-    // Pre-pair each rawIssue with its corresponding parsedImprovement (by ref
-    // first, index fallback) so that mapIssue can use improvement.current as
-    // a fallback text for position resolution.
-    const improvByRef = new Map()
-    for (const imp of parsedImprovements) {
-      if (imp.ref !== undefined && !improvByRef.has(imp.ref)) {
-        improvByRef.set(imp.ref, imp)
-      }
-    }
-
-    const prelimIssues = rawIssues.map((rawIssue, idx) => {
-      const pairedImp =
-        rawIssue.ref === undefined
-          ? (parsedImprovements[idx] ?? null)
-          : (improvByRef.get(rawIssue.ref) ?? parsedImprovements[idx] ?? null)
-      return mapIssue(rawIssue, pairedImp, idx, canonicalText, sourceMap)
-    })
-
-    const prelimImprovements = parsedImprovements.map((parsedImprovement) =>
-      mapImprovement(parsedImprovement, `issue-orphan-${randomUUID()}`)
+    // Step 1: Build preliminary spec issue objects (original AI order),
+    // pre-paired with their corresponding improvements for position resolution.
+    const { prelimIssues, prelimImprovements } = buildPrelimPairs(
+      rawIssues,
+      parsedImprovements,
+      canonicalText,
+      sourceMap
     )
 
     // Step 2: Sort both arrays together by text position, deduplicate overlaps,
