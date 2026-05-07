@@ -450,7 +450,7 @@ describe('BedrockReviewProcessor - parseBedrockResponseData - Edge Cases - Score
 
     expect(mockLoggerInfo).toHaveBeenCalledWith(
       expect.objectContaining({
-        parsedIssueCount: 0
+        parsedImprovementCount: 3
       }),
       expect.any(String)
     )
@@ -529,18 +529,27 @@ describe('BedrockReviewProcessor - buildUserPrompt - document size thresholds', 
     processor = new BedrockReviewProcessor()
   })
 
-  test('sets min 3 issues per third for large documents (>= 40000 chars)', () => {
+  test('includes SCAN GUIDANCE with correct offsets for large documents (>= 40000 chars)', () => {
     const prompt = processor.buildUserPrompt('x'.repeat(LARGE_DOC_CHARS))
-    expect(prompt).toContain('min 3 issue each')
+    expect(prompt).toContain('SCAN GUIDANCE')
+    expect(prompt).toContain('chars 0\u201313333')
+    expect(prompt).toContain('chars 13333\u201326666')
+    expect(prompt).toContain(`chars 26666\u2013${LARGE_DOC_CHARS}`)
   })
 
-  test('sets min 2 issues per third for medium documents (>= 10000 and < 40000 chars)', () => {
+  test('includes SCAN GUIDANCE with correct offsets for medium documents (>= 10000 chars)', () => {
     const prompt = processor.buildUserPrompt('x'.repeat(MEDIUM_DOC_CHARS))
-    expect(prompt).toContain('min 2 issue each')
+    expect(prompt).toContain('SCAN GUIDANCE')
+    expect(prompt).toContain('chars 0\u20133333')
+    expect(prompt).toContain('chars 3333\u20136666')
+    expect(prompt).toContain(`chars 6666\u2013${MEDIUM_DOC_CHARS}`)
   })
 
-  test('sets min 1 issue per third for small documents (< 10000 chars)', () => {
+  test('includes SCAN GUIDANCE with correct offsets for small documents (< 10000 chars)', () => {
     const prompt = processor.buildUserPrompt('x'.repeat(SMALL_DOC_CHARS))
-    expect(prompt).toContain('min 1 issue each')
+    expect(prompt).toContain('SCAN GUIDANCE')
+    expect(prompt).toContain('chars 0\u201333')
+    expect(prompt).toContain('chars 33\u201366')
+    expect(prompt).toContain(`chars 66\u2013${SMALL_DOC_CHARS}`)
   })
 })

@@ -335,28 +335,21 @@ class ReviewRepositoryS3 {
    * Save the raw LLM response as a debug artefact.
    * Stored at: positions/{reviewId}.json
    * @param {string} reviewId - Review ID
-   * @param {string} rawResponse - Raw text response from Bedrock
+   * @param {{ rawResponse: string }} rawResponseOrObj - Object containing the raw LLM text
    * @returns {Promise<void>}
    */
   async savePositions(reviewId, rawResponseOrObj) {
     const key = `positions/${reviewId}.json`
 
-    // Accept either a plain string (legacy) or an object with { rawResponse, guardrailAssessment, improvements, … }
-    const extra =
-      rawResponseOrObj !== null &&
-      rawResponseOrObj !== undefined &&
-      typeof rawResponseOrObj === 'object'
+    const rawResponse =
+      typeof rawResponseOrObj === 'string'
         ? rawResponseOrObj
-        : { rawResponse: rawResponseOrObj || '' }
-
-    const improvements = Array.isArray(extra.improvements)
-      ? extra.improvements
-      : []
+        : (rawResponseOrObj?.rawResponse ?? '')
 
     const payload = {
       reviewId,
       savedAt: new Date().toISOString(),
-      ...extra
+      rawResponse
     }
 
     logger.info(
@@ -373,8 +366,7 @@ class ReviewRepositoryS3 {
       Body: JSON.stringify(payload, null, 2),
       ContentType: 'application/json',
       Metadata: {
-        reviewId,
-        improvementCount: String(improvements.length)
+        reviewId
       }
     })
 

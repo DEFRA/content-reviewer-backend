@@ -109,6 +109,8 @@ class SQSClientHelper {
     } catch (error) {
       const duration = Math.round(performance.now() - startTime)
 
+      const isTimeout =
+        error.name === 'TimeoutError' || error.code === 'ETIMEDOUT'
       logger.error(
         {
           error: error.message,
@@ -120,7 +122,7 @@ class SQSClientHelper {
           queueName: this.queueName,
           durationMs: duration
         },
-        `SQS message send failed after ${duration}ms: ${error.message}`
+        `${isTimeout ? '[TIMEOUT]' : '[RESPONSE TIME]'} SQS message send failed after ${duration}ms: ${error.message}`
       )
 
       throw new Error(`SQS send failed: ${error.message}`)

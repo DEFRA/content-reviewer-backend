@@ -19,8 +19,51 @@ import {
   mapScores
 } from './result-envelope-sections.js'
 
-// SCORE_SCALE_FACTOR = 20 (Bedrock scores are 0-5; spec requires 0-100)
-const SCALE = 20
+// Scores are stored as 1-5 matching LLM output — no scale factor applied
+
+// ── Shared string fixtures ────────────────────────────────────────────────────
+const HELLO_WORLD_FOO = 'Hello world foo'
+const HELLO_WORLD = 'Hello world'
+const DISPLAY_LINK = 'link'
+const DISPLAY_GOVUK = 'GOV.UK'
+
+// ── Offsets within HELLO_WORLD_FOO: "Hello world foo" (length 15) ────────────
+// H e l l o   w o r l  d     f  o  o
+// 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14
+const HELLO_END = 5 // exclusive end of 'Hello'
+const WORLD_START = 6 // start of 'world'
+const WORLD_END = 11 // exclusive end of 'world'
+const FOO_START = 12 // start of 'foo'
+const FOO_END = 15 // exclusive end of 'foo' / text length
+const PARTIAL_TEXT_END = 8 // 8-char slice: 'HELLO wo'
+const EMPTY_POS = 5 // from === to for zero-length range test
+
+// ── Overlap / partial-range offsets ──────────────────────────────────────────
+const OVERLAP_START = 3 // link starts mid-word [3,9)
+const OVERLAP_END = 9 // link ends mid-word
+const PARTIAL_RANGE_END = 7 // range [0,7) for partial-overlap test
+
+// ── isValidLinkEntry fixture values ──────────────────────────────────────────
+const ENTRY_TEXT_LEN = 10 // textLength argument
+const ENTRY_END_OVER = 11 // end > ENTRY_TEXT_LEN
+const ENTRY_NEG_START = -1 // invalid negative start
+const ENTRY_MID_START = 2 // valid mid-text start
+const ENTRY_MID_END = 7 // valid mid-text end
+const ENTRY_EQUAL_POS = 3 // start === end (zero-length range)
+const ENTRY_FLIP_START = 5 // end < start scenario
+const ENTRY_FLIP_END = 3
+const ENTRY_INVALID_DISPLAY = 123 // non-string display value
+const NON_ARRAY_VAL = 42 // non-array linkMap value
+
+// ── buildAnnotatedSections link position ─────────────────────────────────────
+const GOVUK_LINK_START = 6
+const GOVUK_LINK_END = 12
+
+// ── Score test values ─────────────────────────────────────────────────────────
+const SCORE_2 = 2
+const SCORE_3 = 3
+const SCORE_4 = 4
+const SCORE_5 = 5
 
 // ---------------------------------------------------------------------------
 // isValidLinkEntry
@@ -28,59 +71,93 @@ const SCALE = 20
 
 describe('isValidLinkEntry', () => {
   it('returns false when start is not a number', () => {
-    expect(isValidLinkEntry({ start: 'a', end: 5, display: 'link' }, 10)).toBe(
-      false
-    )
+    expect(
+      isValidLinkEntry(
+        { start: 'a', end: HELLO_END, display: DISPLAY_LINK },
+        ENTRY_TEXT_LEN
+      )
+    ).toBe(false)
   })
 
   it('returns false when end is not a number', () => {
-    expect(isValidLinkEntry({ start: 0, end: null, display: 'link' }, 10)).toBe(
-      false
-    )
+    expect(
+      isValidLinkEntry(
+        { start: 0, end: null, display: DISPLAY_LINK },
+        ENTRY_TEXT_LEN
+      )
+    ).toBe(false)
   })
 
   it('returns false when start is negative', () => {
-    expect(isValidLinkEntry({ start: -1, end: 5, display: 'link' }, 10)).toBe(
-      false
-    )
+    expect(
+      isValidLinkEntry(
+        { start: ENTRY_NEG_START, end: HELLO_END, display: DISPLAY_LINK },
+        ENTRY_TEXT_LEN
+      )
+    ).toBe(false)
   })
 
   it('returns false when end equals start (zero-length range)', () => {
-    expect(isValidLinkEntry({ start: 3, end: 3, display: 'link' }, 10)).toBe(
-      false
-    )
+    expect(
+      isValidLinkEntry(
+        { start: ENTRY_EQUAL_POS, end: ENTRY_EQUAL_POS, display: DISPLAY_LINK },
+        ENTRY_TEXT_LEN
+      )
+    ).toBe(false)
   })
 
   it('returns false when end is less than start', () => {
-    expect(isValidLinkEntry({ start: 5, end: 3, display: 'link' }, 10)).toBe(
-      false
-    )
+    expect(
+      isValidLinkEntry(
+        { start: ENTRY_FLIP_START, end: ENTRY_FLIP_END, display: DISPLAY_LINK },
+        ENTRY_TEXT_LEN
+      )
+    ).toBe(false)
   })
 
   it('returns false when end exceeds textLength', () => {
-    expect(isValidLinkEntry({ start: 0, end: 11, display: 'link' }, 10)).toBe(
-      false
-    )
+    expect(
+      isValidLinkEntry(
+        { start: 0, end: ENTRY_END_OVER, display: DISPLAY_LINK },
+        ENTRY_TEXT_LEN
+      )
+    ).toBe(false)
   })
 
   it('returns false when display is not a string', () => {
-    expect(isValidLinkEntry({ start: 0, end: 5, display: 123 }, 10)).toBe(false)
+    expect(
+      isValidLinkEntry(
+        { start: 0, end: HELLO_END, display: ENTRY_INVALID_DISPLAY },
+        ENTRY_TEXT_LEN
+      )
+    ).toBe(false)
   })
 
   it('returns false when display is an empty string', () => {
-    expect(isValidLinkEntry({ start: 0, end: 5, display: '' }, 10)).toBe(false)
+    expect(
+      isValidLinkEntry(
+        { start: 0, end: HELLO_END, display: '' },
+        ENTRY_TEXT_LEN
+      )
+    ).toBe(false)
   })
 
   it('returns true for a valid entry with end exactly at textLength', () => {
-    expect(isValidLinkEntry({ start: 0, end: 10, display: 'link' }, 10)).toBe(
-      true
-    )
+    expect(
+      isValidLinkEntry(
+        { start: 0, end: ENTRY_TEXT_LEN, display: DISPLAY_LINK },
+        ENTRY_TEXT_LEN
+      )
+    ).toBe(true)
   })
 
   it('returns true for a valid entry wholly within text', () => {
-    expect(isValidLinkEntry({ start: 2, end: 7, display: 'GOV.UK' }, 10)).toBe(
-      true
-    )
+    expect(
+      isValidLinkEntry(
+        { start: ENTRY_MID_START, end: ENTRY_MID_END, display: DISPLAY_GOVUK },
+        ENTRY_TEXT_LEN
+      )
+    ).toBe(true)
   })
 })
 
@@ -89,43 +166,41 @@ describe('isValidLinkEntry', () => {
 // ---------------------------------------------------------------------------
 
 describe('validatedLinks', () => {
-  const TEXT = 'Hello world foo'
-
   it('returns empty array when linkMap is null', () => {
-    expect(validatedLinks(TEXT, null)).toEqual([])
+    expect(validatedLinks(HELLO_WORLD_FOO, null)).toEqual([])
   })
 
   it('returns empty array when linkMap is not an array', () => {
-    expect(validatedLinks(TEXT, 'not-array')).toEqual([])
-    expect(validatedLinks(TEXT, 42)).toEqual([])
+    expect(validatedLinks(HELLO_WORLD_FOO, 'not-array')).toEqual([])
+    expect(validatedLinks(HELLO_WORLD_FOO, NON_ARRAY_VAL)).toEqual([])
   })
 
   it('returns empty array when linkMap is an empty array', () => {
-    expect(validatedLinks(TEXT, [])).toEqual([])
+    expect(validatedLinks(HELLO_WORLD_FOO, [])).toEqual([])
   })
 
   it('filters out invalid entries', () => {
-    const linkMap = [{ start: -1, end: 5, display: 'bad' }]
-    expect(validatedLinks(TEXT, linkMap)).toEqual([])
+    const linkMap = [{ start: ENTRY_NEG_START, end: HELLO_END, display: 'bad' }]
+    expect(validatedLinks(HELLO_WORLD_FOO, linkMap)).toEqual([])
   })
 
   it('returns valid entries sorted by start position', () => {
     const linkMap = [
-      { start: 6, end: 11, display: 'World' },
-      { start: 0, end: 5, display: 'Hello' }
+      { start: WORLD_START, end: WORLD_END, display: 'World' },
+      { start: 0, end: HELLO_END, display: 'Hello' }
     ]
-    const result = validatedLinks(TEXT, linkMap)
+    const result = validatedLinks(HELLO_WORLD_FOO, linkMap)
     expect(result).toHaveLength(2)
     expect(result[0].start).toBe(0)
-    expect(result[1].start).toBe(6)
+    expect(result[1].start).toBe(WORLD_START)
   })
 
   it('filters mixed valid and invalid entries', () => {
     const linkMap = [
-      { start: 0, end: 5, display: 'Hello' },
-      { start: -1, end: 5, display: 'bad' }
+      { start: 0, end: HELLO_END, display: 'Hello' },
+      { start: ENTRY_NEG_START, end: HELLO_END, display: 'bad' }
     ]
-    const result = validatedLinks(TEXT, linkMap)
+    const result = validatedLinks(HELLO_WORLD_FOO, linkMap)
     expect(result).toHaveLength(1)
     expect(result[0].display).toBe('Hello')
   })
@@ -136,63 +211,86 @@ describe('validatedLinks', () => {
 // ---------------------------------------------------------------------------
 
 describe('buildPlainSpan', () => {
-  const TEXT = 'Hello world foo'
-  //            0123456789012345
-  //                     1111111
+  // HELLO_WORLD_FOO = 'Hello world foo'
+  // H e l l o   w o r l  d     f  o  o
+  // 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14
 
   it('returns a direct slice when links array is empty', () => {
-    expect(buildPlainSpan(TEXT, [], 0, 5)).toBe('Hello')
-    expect(buildPlainSpan(TEXT, [], 6, 11)).toBe('world')
+    expect(buildPlainSpan(HELLO_WORLD_FOO, [], 0, HELLO_END)).toBe('Hello')
+    expect(buildPlainSpan(HELLO_WORLD_FOO, [], WORLD_START, WORLD_END)).toBe(
+      'world'
+    )
   })
 
   it('substitutes a link wholly within the range', () => {
-    const links = [{ start: 6, end: 11, display: 'WORLD' }]
-    expect(buildPlainSpan(TEXT, links, 0, TEXT.length)).toBe('Hello WORLD foo')
+    const links = [{ start: WORLD_START, end: WORLD_END, display: 'WORLD' }]
+    expect(
+      buildPlainSpan(HELLO_WORLD_FOO, links, 0, HELLO_WORLD_FOO.length)
+    ).toBe('Hello WORLD foo')
   })
 
   it('includes plain text before and after a substituted link', () => {
-    const links = [{ start: 6, end: 11, display: 'WORLD' }]
-    expect(buildPlainSpan(TEXT, links, 0, 11)).toBe('Hello WORLD')
+    const links = [{ start: WORLD_START, end: WORLD_END, display: 'WORLD' }]
+    expect(buildPlainSpan(HELLO_WORLD_FOO, links, 0, WORLD_END)).toBe(
+      'Hello WORLD'
+    )
   })
 
   it('stops adding text before the link when link.start equals pos', () => {
-    const links = [{ start: 0, end: 5, display: 'HELLO' }]
-    expect(buildPlainSpan(TEXT, links, 0, TEXT.length)).toBe('HELLO world foo')
+    const links = [{ start: 0, end: HELLO_END, display: 'HELLO' }]
+    expect(
+      buildPlainSpan(HELLO_WORLD_FOO, links, 0, HELLO_WORLD_FOO.length)
+    ).toBe('HELLO world foo')
   })
 
   it('breaks early when a link starts at or after the range end', () => {
-    const links = [{ start: 12, end: 15, display: 'FOO' }]
+    const links = [{ start: FOO_START, end: FOO_END, display: 'FOO' }]
     // range is [0, 5) — link at 12 is outside
-    expect(buildPlainSpan(TEXT, links, 0, 5)).toBe('Hello')
+    expect(buildPlainSpan(HELLO_WORLD_FOO, links, 0, HELLO_END)).toBe('Hello')
   })
 
   it('skips a link that ends before or at the range start (beforeRange)', () => {
-    const links = [{ start: 0, end: 5, display: 'HELLO' }]
+    const links = [{ start: 0, end: HELLO_END, display: 'HELLO' }]
     // range is [6, 15) — link ends at 5 which is <= 6
-    expect(buildPlainSpan(TEXT, links, 6, TEXT.length)).toBe('world foo')
+    expect(
+      buildPlainSpan(
+        HELLO_WORLD_FOO,
+        links,
+        WORLD_START,
+        HELLO_WORLD_FOO.length
+      )
+    ).toBe('world foo')
   })
 
   it('skips a link that partially overlaps the range without being wholly within', () => {
     // link spans [3, 9), range is [0, 7) — link.end 9 > to 7, so not whollyWithin
-    const links = [{ start: 3, end: 9, display: 'overlap' }]
-    expect(buildPlainSpan(TEXT, links, 0, 7)).toBe('Hello w')
+    const links = [
+      { start: OVERLAP_START, end: OVERLAP_END, display: 'overlap' }
+    ]
+    expect(buildPlainSpan(HELLO_WORLD_FOO, links, 0, PARTIAL_RANGE_END)).toBe(
+      'Hello w'
+    )
   })
 
   it('handles multiple links within the range', () => {
     const links = [
-      { start: 0, end: 5, display: 'HELLO' },
-      { start: 6, end: 11, display: 'WORLD' }
+      { start: 0, end: HELLO_END, display: 'HELLO' },
+      { start: WORLD_START, end: WORLD_END, display: 'WORLD' }
     ]
-    expect(buildPlainSpan(TEXT, links, 0, TEXT.length)).toBe('HELLO WORLD foo')
+    expect(
+      buildPlainSpan(HELLO_WORLD_FOO, links, 0, HELLO_WORLD_FOO.length)
+    ).toBe('HELLO WORLD foo')
   })
 
   it('appends trailing text after the last link when pos < to', () => {
-    const links = [{ start: 0, end: 5, display: 'HELLO' }]
-    expect(buildPlainSpan(TEXT, links, 0, 8)).toBe('HELLO wo')
+    const links = [{ start: 0, end: HELLO_END, display: 'HELLO' }]
+    expect(buildPlainSpan(HELLO_WORLD_FOO, links, 0, PARTIAL_TEXT_END)).toBe(
+      'HELLO wo'
+    )
   })
 
   it('returns empty string when from equals to', () => {
-    expect(buildPlainSpan(TEXT, [], 5, 5)).toBe('')
+    expect(buildPlainSpan(HELLO_WORLD_FOO, [], EMPTY_POS, EMPTY_POS)).toBe('')
   })
 })
 
@@ -210,15 +308,15 @@ describe('buildAnnotatedSections', () => {
   })
 
   it('returns a single plain section when there are no issues', () => {
-    const result = buildAnnotatedSections('Hello world', [])
+    const result = buildAnnotatedSections(HELLO_WORLD, [])
     expect(result).toEqual([
-      { text: 'Hello world', issueIdx: null, category: null }
+      { text: HELLO_WORLD, issueIdx: null, category: null }
     ])
   })
 
   it('wraps a single issue at the start followed by trailing plain text', () => {
-    const result = buildAnnotatedSections('Hello world', [
-      { absStart: 0, absEnd: 5, category: 'grammar' }
+    const result = buildAnnotatedSections(HELLO_WORLD, [
+      { start: 0, end: HELLO_END, category: 'grammar' }
     ])
     expect(result).toEqual([
       { text: 'Hello', issueIdx: 0, category: 'grammar' },
@@ -227,8 +325,8 @@ describe('buildAnnotatedSections', () => {
   })
 
   it('prepends plain text before an issue in the middle', () => {
-    const result = buildAnnotatedSections('Hello world', [
-      { absStart: 6, absEnd: 11, category: 'style' }
+    const result = buildAnnotatedSections(HELLO_WORLD, [
+      { start: WORLD_START, end: WORLD_END, category: 'style' }
     ])
     expect(result).toEqual([
       { text: 'Hello ', issueIdx: null, category: null },
@@ -238,7 +336,7 @@ describe('buildAnnotatedSections', () => {
 
   it('produces no trailing section when issue ends exactly at text end', () => {
     const result = buildAnnotatedSections('Hello', [
-      { absStart: 0, absEnd: 5, category: 'grammar' }
+      { start: 0, end: HELLO_END, category: 'grammar' }
     ])
     expect(result).toEqual([
       { text: 'Hello', issueIdx: 0, category: 'grammar' }
@@ -246,10 +344,9 @@ describe('buildAnnotatedSections', () => {
   })
 
   it('handles multiple non-overlapping issues with plain spans between them', () => {
-    const text = 'Hello world foo'
-    const result = buildAnnotatedSections(text, [
-      { absStart: 0, absEnd: 5, category: 'grammar' },
-      { absStart: 12, absEnd: 15, category: 'style' }
+    const result = buildAnnotatedSections(HELLO_WORLD_FOO, [
+      { start: 0, end: HELLO_END, category: 'grammar' },
+      { start: FOO_START, end: FOO_END, category: 'style' }
     ])
     expect(result).toEqual([
       { text: 'Hello', issueIdx: 0, category: 'grammar' },
@@ -259,16 +356,18 @@ describe('buildAnnotatedSections', () => {
   })
 
   it('uses default null linkMap when not provided', () => {
-    const result = buildAnnotatedSections('Hello world', [])
+    const result = buildAnnotatedSections(HELLO_WORLD, [])
     expect(result).toHaveLength(1)
-    expect(result[0].text).toBe('Hello world')
+    expect(result[0].text).toBe(HELLO_WORLD)
   })
 
   it('substitutes link display text in plain spans when linkMap is provided', () => {
-    // text:    "Visit gov.uk for info"
-    //           0     6    11
+    // text: "Visit gov.uk for info"
+    //        0     6    12
     const text = 'Visit gov.uk for info'
-    const linkMap = [{ start: 6, end: 12, display: 'GOV.UK' }]
+    const linkMap = [
+      { start: GOVUK_LINK_START, end: GOVUK_LINK_END, display: DISPLAY_GOVUK }
+    ]
     const result = buildAnnotatedSections(text, [], linkMap)
     expect(result).toHaveLength(1)
     expect(result[0].text).toBe('Visit GOV.UK for info')
@@ -279,7 +378,7 @@ describe('buildAnnotatedSections', () => {
 // mapScores
 // ---------------------------------------------------------------------------
 
-describe('mapScores', () => {
+describe('mapScores — zero values', () => {
   it('returns all zeros when rawScores is null', () => {
     const result = mapScores(null)
     expect(result.plainEnglish).toBe(0)
@@ -287,135 +386,127 @@ describe('mapScores', () => {
     expect(result.accessibility).toBe(0)
     expect(result.govukStyle).toBe(0)
     expect(result.completeness).toBe(0)
-    expect(result.overall).toBe(0)
   })
 
   it('returns all zeros when rawScores is undefined', () => {
     const result = mapScores(undefined)
-    expect(result.overall).toBe(0)
+    expect(result.plainEnglish).toBe(0)
   })
 
   it('returns all zeros when rawScores is an empty object', () => {
     const result = mapScores({})
-    expect(result.overall).toBe(0)
+    expect(result.plainEnglish).toBe(0)
   })
+})
 
+describe('mapScores — plain english', () => {
   it('maps plain english score using the "plain english" key', () => {
-    const result = mapScores({ 'plain english': { score: 4, note: 'Good' } })
-    expect(result.plainEnglish).toBe(4 * SCALE)
+    const result = mapScores({
+      'plain english': { score: SCORE_4, note: 'Good' }
+    })
+    expect(result.plainEnglish).toBe(SCORE_4)
     expect(result.plainEnglishNote).toBe('Good')
   })
 
   it('maps plain english score using the alternate "plain-english" key', () => {
-    const result = mapScores({ 'plain-english': { score: 3, note: '' } })
-    expect(result.plainEnglish).toBe(3 * SCALE)
+    const result = mapScores({ 'plain-english': { score: SCORE_3, note: '' } })
+    expect(result.plainEnglish).toBe(SCORE_3)
   })
+})
 
+describe('mapScores — clarity', () => {
   it('maps clarity using the "clarity & structure" key', () => {
     const result = mapScores({
-      'clarity & structure': { score: 3, note: 'OK' }
+      'clarity & structure': { score: SCORE_3, note: 'OK' }
     })
-    expect(result.clarity).toBe(3 * SCALE)
+    expect(result.clarity).toBe(SCORE_3)
     expect(result.clarityNote).toBe('OK')
   })
 
   it('maps clarity using the fallback "clarity" key', () => {
-    const result = mapScores({ clarity: { score: 2, note: '' } })
-    expect(result.clarity).toBe(2 * SCALE)
+    const result = mapScores({ clarity: { score: SCORE_2, note: '' } })
+    expect(result.clarity).toBe(SCORE_2)
   })
+})
 
+describe('mapScores — accessibility', () => {
   it('maps accessibility using the "accessibility" key', () => {
-    const result = mapScores({ accessibility: { score: 5, note: 'Excellent' } })
-    expect(result.accessibility).toBe(5 * SCALE)
+    const result = mapScores({
+      accessibility: { score: SCORE_5, note: 'Excellent' }
+    })
+    expect(result.accessibility).toBe(SCORE_5)
     expect(result.accessibilityNote).toBe('Excellent')
   })
 
   it('maps accessibility using the fallback "accessible" key', () => {
-    const result = mapScores({ accessible: { score: 4, note: '' } })
-    expect(result.accessibility).toBe(4 * SCALE)
+    const result = mapScores({ accessible: { score: SCORE_4, note: '' } })
+    expect(result.accessibility).toBe(SCORE_4)
   })
+})
 
+describe('mapScores — govuk style', () => {
   it('maps govukStyle using the "gov.uk style compliance" key', () => {
     const result = mapScores({
-      'gov.uk style compliance': { score: 4, note: '' }
+      'gov.uk style compliance': { score: SCORE_4, note: '' }
     })
-    expect(result.govukStyle).toBe(4 * SCALE)
+    expect(result.govukStyle).toBe(SCORE_4)
   })
 
   it('maps govukStyle using the "govuk style compliance" key', () => {
     const result = mapScores({
-      'govuk style compliance': { score: 3, note: '' }
+      'govuk style compliance': { score: SCORE_3, note: '' }
     })
-    expect(result.govukStyle).toBe(3 * SCALE)
+    expect(result.govukStyle).toBe(SCORE_3)
   })
 
   it('maps govukStyle using the "formatting" fallback key', () => {
-    const result = mapScores({ formatting: { score: 3, note: '' } })
-    expect(result.govukStyle).toBe(3 * SCALE)
+    const result = mapScores({ formatting: { score: SCORE_3, note: '' } })
+    expect(result.govukStyle).toBe(SCORE_3)
   })
+})
 
+describe('mapScores — completeness', () => {
   it('maps completeness using the "content completeness" key', () => {
     const result = mapScores({
-      'content completeness': { score: 4, note: '' }
+      'content completeness': { score: SCORE_4, note: '' }
     })
-    expect(result.completeness).toBe(4 * SCALE)
+    expect(result.completeness).toBe(SCORE_4)
   })
 
   it('maps completeness using the fallback "completeness" key', () => {
-    const result = mapScores({ completeness: { score: 3.5, note: '' } })
-    expect(result.completeness).toBe(Math.round(3.5 * SCALE))
+    const result = mapScores({ completeness: { score: SCORE_3, note: '' } })
+    expect(result.completeness).toBe(SCORE_3)
   })
+})
 
+describe('mapScores — edge cases and full mapping', () => {
   it('uses 0 when val.score is missing', () => {
     const result = mapScores({ 'plain english': { note: 'No score' } })
     expect(result.plainEnglish).toBe(0)
   })
 
   it('uses empty string when val.note is missing', () => {
-    const result = mapScores({ 'plain english': { score: 4 } })
+    const result = mapScores({ 'plain english': { score: SCORE_4 } })
     expect(result.plainEnglishNote).toBe('')
   })
 
-  it('calculates overall as the average of all non-zero category scores', () => {
+  it('maps all five categories correctly in one call', () => {
     const result = mapScores({
-      'plain english': { score: 4 },
-      clarity: { score: 2 },
-      accessibility: { score: 5 },
-      'gov.uk style compliance': { score: 4 },
-      completeness: { score: 3 }
+      'plain english': { score: SCORE_4 },
+      clarity: { score: SCORE_2 },
+      accessibility: { score: SCORE_5 },
+      'gov.uk style compliance': { score: SCORE_4 },
+      completeness: { score: SCORE_3 }
     })
-    const expected = Math.round((80 + 40 + 100 + 80 + 60) / 5)
-    expect(result.overall).toBe(expected)
-  })
-
-  it('excludes zero-value scores from the overall average', () => {
-    const result = mapScores({
-      'plain english': { score: 5 },
-      clarity: { score: 0 }
-    })
-    // Only plainEnglish (100) is non-zero; clarity (0) is excluded
-    expect(result.overall).toBe(100)
-  })
-
-  it('returns overall of 0 when all scores are zero', () => {
-    const result = mapScores({
-      'plain english': { score: 0 },
-      clarity: { score: 0 }
-    })
-    expect(result.overall).toBe(0)
-  })
-
-  it('exposes style as an alias for govukStyle and tone as an alias for clarity', () => {
-    const result = mapScores({
-      'gov.uk style compliance': { score: 3 },
-      clarity: { score: 4 }
-    })
-    expect(result.style).toBe(result.govukStyle)
-    expect(result.tone).toBe(result.clarity)
+    expect(result.plainEnglish).toBe(SCORE_4)
+    expect(result.clarity).toBe(SCORE_2)
+    expect(result.accessibility).toBe(SCORE_5)
+    expect(result.govukStyle).toBe(SCORE_4)
+    expect(result.completeness).toBe(SCORE_3)
   })
 
   it('handles score keys case-insensitively', () => {
-    const result = mapScores({ 'Plain English': { score: 4 } })
-    expect(result.plainEnglish).toBe(4 * SCALE)
+    const result = mapScores({ 'Plain English': { score: SCORE_4 } })
+    expect(result.plainEnglish).toBe(SCORE_4)
   })
 })
