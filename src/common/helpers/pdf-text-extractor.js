@@ -295,7 +295,7 @@ function buildPageBlocks(lines, medianFontSize, medianGap, findUrlForItem) {
  */
 function buildUrlFinder(annotations) {
   const linkAnnotations = (annotations || []).filter(
-    (ann) => ann.subtype === 'Link' && ann.url
+    (ann) => ann.subtype === 'Link' && ann.url?.startsWith('http')
   )
   return (item) => {
     const matched = linkAnnotations.find((ann) =>
@@ -356,12 +356,73 @@ function flattenPageBlocks(pageBlocks) {
   return allBlocks
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Block → Markdown string serialisation
+// ─────────────────────────────────────────────────────────────────────────────
+
 /**
- * Extract structured blocks (heading / list / para / sep) from a PDF buffer,
- * preserving hyperlinks as href attributes on the run objects.
+ * Group adjacent runs that share the same non-null href into a single anchor —
+ * e.g. two consecutive items inside one link annotation become `[Go here](url)`
+ * rather than `[Go](url)[ here](url)`.
+ */
+function groupRunsByHref(runs) {
+  const groups = []
+  let current = null
+  for (const r of runs) {
+    if (r.href && current?.href === r.href) {
+      current.text += r.text
+    } else {
+      current = { text: r.text, href: r.href }
+      groups.push(current)
+    }
+  }
+  return groups
+}
+
+/**
+ * Render a grouped run as Markdown — `[text](href)` for anchors, raw text
+ * otherwise.
+ */
+function renderGroupedRun(group) {
+  if (group.href) {
+    return `[${group.text.trim()}](${group.href})`
+  }
+  return group.text
+}
+
+/**
+ * Render a single block as a single line of text. Returns an empty string for
+ * `sep` blocks and for blocks whose runs collapse to whitespace.
+ */
+function renderBlock(block) {
+  if (block.type === 'sep') {
+    return ''
+  }
+  const text = groupRunsByHref(block.runs).map(renderGroupedRun).join('').trim()
+  if (!text) {
+    return ''
+  }
+  if (block.type === 'list') {
+    return `- ${text}`
+  }
+  return text
+}
+
+/**
+ * Serialise an array of blocks into a Markdown string with paragraph breaks.
+ * Empty / `sep` blocks are dropped — the `\n\n` join produces the page-break
+ * spacing the rest of the pipeline expects.
+ */
+function blocksToText(blocks) {
+  return blocks.map(renderBlock).filter(Boolean).join('\n\n')
+}
+
+/**
+ * Extract Markdown-formatted text from a PDF buffer, preserving hyperlinks
+ * as inline `[anchor](url)` syntax. Pages are separated by a blank line.
  *
  * @param {Buffer} buffer
- * @returns {Promise<Array>}
+ * @returns {Promise<string>}
  */
 export async function extractPdfWithLinks(buffer) {
   const data = new Uint8Array(buffer)
@@ -383,5 +444,5 @@ export async function extractPdfWithLinks(buffer) {
   }
 
   await doc.cleanup()
-  return flattenPageBlocks(pageBlocks)
+  return blocksToText(flattenPageBlocks(pageBlocks))
 }

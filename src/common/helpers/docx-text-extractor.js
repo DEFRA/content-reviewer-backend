@@ -17,7 +17,7 @@ const DOCX_BINARY_BLOB_MIN_LENGTH = 300
 
 // XML/Word artefact patterns we drop from extracted runs.
 const DOCX_ARTIFACT_PATTERN =
-  /(Picture\s*\d+)|http:\/\/schemas.openxmlformats.org|<w:drawing|<pic:|graphicData|\{[0-9A-Fa-f-]{8,}}/
+  /(Picture\s*\d+)|http:\/\/schemas\.openxmlformats\.org|<w:drawing|<pic:|graphicData|\{[0-9A-Fa-f-]{8,}}/
 
 // Paragraph-style names that mark headings.
 const DOCX_HEADING_STYLE_REGEX = /^Heading/i
@@ -71,6 +71,30 @@ function isArtifactRunText(text) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
+ * True when the node represents a drawing / picture / graphic — ignored by
+ * text extraction because their inner XML is binary or structural noise.
+ */
+function isGraphicNode(node) {
+  return !!(
+    node['w:drawing'] ||
+    node['w:pict'] ||
+    node['pic:pic'] ||
+    node['a:graphic']
+  )
+}
+
+/**
+ * Read the text of a `w:t` value, which may be either a raw string or an
+ * object wrapping `#text`.
+ */
+function readWtValue(wt) {
+  if (typeof wt === 'string') {
+    return wt
+  }
+  return wt['#text'] || ''
+}
+
+/**
  * Recursively read text from a DOCX XML node, ignoring drawings/pictures.
  */
 function readDocxNodeText(node) {
@@ -83,19 +107,11 @@ function readDocxNodeText(node) {
   if (typeof node !== 'object') {
     return String(node)
   }
-  if (
-    node['w:drawing'] ||
-    node['w:pict'] ||
-    node['pic:pic'] ||
-    node['a:graphic']
-  ) {
+  if (isGraphicNode(node)) {
     return ''
   }
   if (node['w:t'] !== undefined) {
-    if (typeof node['w:t'] === 'string') {
-      return node['w:t']
-    }
-    return node['w:t']['#text'] || ''
+    return readWtValue(node['w:t'])
   }
   let text = ''
   for (const k of Object.keys(node)) {
