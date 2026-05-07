@@ -51,16 +51,16 @@ async function getResultEnvelopeHandler(request, h) {
 
     // Completed review — return the stored envelope
     if (review.status === 'completed' && review.envelope) {
-      const totalDuration = Math.round(performance.now() - startTime)
+      const completedDuration = Math.round(performance.now() - startTime)
       logger.info(
         {
           reviewId,
           status: review.envelope.status,
           issueCount: review.envelope.issueCount,
           s3DurationMs: s3Duration,
-          totalDurationMs: totalDuration
+          totalDurationMs: completedDuration
         },
-        `[RESPONSE TIME] [result-envelope] Completed envelope returned in ${totalDuration}ms (S3: ${s3Duration}ms)`
+        `[RESPONSE TIME] [result-envelope] Completed envelope returned in ${completedDuration}ms (S3: ${s3Duration}ms)`
       )
       return h.response({ success: true, data: review.envelope })
     }
