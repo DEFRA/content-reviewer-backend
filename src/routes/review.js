@@ -73,7 +73,7 @@ const handleTextReview = async (request, h) => {
         ...timings,
         endpoint: ENDPOINTS.REVIEW_TEXT
       },
-      `[UPLOAD PHASE] Text review queued successfully - TOTAL: ${requestDuration}ms (S3: ${timings.s3UploadDuration}ms, DB: ${timings.dbCreateDuration}ms, SQS: ${timings.sqsSendDuration}ms)`
+      `[RESPONSE TIME] [UPLOAD PHASE] Text review queued successfully - TOTAL: ${requestDuration}ms (S3: ${timings.s3UploadDuration}ms, DB: ${timings.dbCreateDuration}ms, SQS: ${timings.sqsSendDuration}ms)`
     )
 
     return h
@@ -154,7 +154,7 @@ const handleGetReview = async (request, h) => {
         hasError: !!review.error,
         durationMs: requestDuration
       },
-      `Review status retrieved in ${requestDuration}ms`
+      `[RESPONSE TIME] Review status retrieved in ${requestDuration}ms`
     )
 
     // Return review without internal fields
@@ -188,7 +188,8 @@ const handleGetReview = async (request, h) => {
 }
 
 /**
- * Parse pagination params and fetch reviews + total count from the repository.
+ * Parse pagination params and fetch reviews + total count from the repository,
+ * returning per-operation durations for response-time logging.
  */
 async function fetchAllReviewsData(query, logger) {
   const limit = Math.min(
@@ -209,7 +210,9 @@ async function fetchAllReviewsData(query, logger) {
     'Fetching reviews from S3 repository'
   )
 
+  const s3ListStart = performance.now()
   const reviews = await reviewRepository.getAllReviews(limit, skip, userId)
+  const s3ListDuration = Math.round(performance.now() - s3ListStart)
   logger.info(
     {
       count: reviews.length,
@@ -219,10 +222,20 @@ async function fetchAllReviewsData(query, logger) {
     `Retrieved ${reviews.length} reviews from S3`
   )
 
+  const countStart = performance.now()
   const totalCount = await reviewRepository.getReviewCount(userId)
+  const countDuration = Math.round(performance.now() - countStart)
   logger.info({ totalCount }, 'Retrieved total review count from S3')
 
-  return { limit, skip, reviews, totalCount }
+  return {
+    limit,
+    skip,
+    userId,
+    reviews,
+    totalCount,
+    s3ListDuration,
+    countDuration
+  }
 }
 
 /**
@@ -230,19 +243,40 @@ async function fetchAllReviewsData(query, logger) {
  * Supports optional ?userId= query param to filter to a specific user's reviews.
  */
 const handleGetAllReviews = async (request, h) => {
+  const requestStartTime = performance.now()
   request.logger.info(
     { query: request.query },
     `${ENDPOINTS.REVIEWS_LIST} request received`
   )
 
   try {
-    const { limit, skip, reviews, totalCount } = await fetchAllReviewsData(
-      request.query,
-      request.logger
-    )
+    const {
+      limit,
+      skip,
+      userId,
+      reviews,
+      totalCount,
+      s3ListDuration,
+      countDuration
+    } = await fetchAllReviewsData(request.query, request.logger)
 
     const formattedReviews = reviews.map((review) =>
       formatReviewForList(review, request.logger)
+    )
+
+    const requestDuration = Math.round(performance.now() - requestStartTime)
+    request.logger.info(
+      {
+        count: formattedReviews.length,
+        totalCount,
+        limit,
+        skip,
+        userId: userId || 'all',
+        s3ListDurationMs: s3ListDuration,
+        countDurationMs: countDuration,
+        totalDurationMs: requestDuration
+      },
+      `[RESPONSE TIME] Reviews list returned in ${requestDuration}ms (S3 list: ${s3ListDuration}ms, count: ${countDuration}ms)`
     )
 
     return h
@@ -258,22 +292,20 @@ const handleGetAllReviews = async (request, h) => {
       })
       .code(HTTP_STATUS.OK)
   } catch (error) {
+    const requestDuration = Math.round(performance.now() - requestStartTime)
     request.logger.error(
       {
         errorName: error.name,
         errorCode: error.Code || error.code,
         errorMessage: error.message,
         httpStatusCode: error.$metadata?.httpStatusCode,
-        requestId: error.$metadata?.requestId
+        requestId: error.$metadata?.requestId,
+        durationMs: requestDuration
       },
       'Failed to get reviews'
     )
-
     return h
-      .response({
-        success: false,
-        error: 'Failed to retrieve reviews'
-      })
+      .response({ success: false, error: 'Failed to retrieve reviews' })
       .code(HTTP_STATUS.INTERNAL_SERVER_ERROR)
   }
 }
@@ -282,6 +314,7 @@ const handleGetAllReviews = async (request, h) => {
  * DELETE /api/reviews/:reviewId - Delete a review and its associated S3 content
  */
 const handleDeleteReview = async (request, h) => {
+  const requestStartTime = performance.now()
   const { reviewId } = request.params
 
   request.logger.info(
@@ -291,15 +324,20 @@ const handleDeleteReview = async (request, h) => {
 
   try {
     // Delete the review and associated content
+    const deleteStart = performance.now()
     const result = await reviewRepository.deleteReview(reviewId)
+    const deleteDuration = Math.round(performance.now() - deleteStart)
+    const totalDuration = Math.round(performance.now() - requestStartTime)
 
     request.logger.info(
       {
         reviewId,
         deletedKeys: result.deletedKeys,
-        deletedCount: result.deletedCount
+        deletedCount: result.deletedCount,
+        deleteDurationMs: deleteDuration,
+        totalDurationMs: totalDuration
       },
-      'Review deleted successfully'
+      `[RESPONSE TIME] Review deleted in ${totalDuration}ms (S3: ${deleteDuration}ms, ${result.deletedCount} keys removed)`
     )
 
     return h
@@ -312,11 +350,13 @@ const handleDeleteReview = async (request, h) => {
       })
       .code(HTTP_STATUS.OK)
   } catch (error) {
+    const totalDuration = Math.round(performance.now() - requestStartTime)
     request.logger.error(
       {
         reviewId,
         error: error.message,
-        stack: error.stack
+        stack: error.stack,
+        durationMs: totalDuration
       },
       'Failed to delete review'
     )

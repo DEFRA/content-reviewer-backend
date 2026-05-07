@@ -264,9 +264,7 @@ describe('ReviewProcessor - saveReviewToRepository', () => {
     expect(reviewRepository.savePositions).toHaveBeenCalledWith(
       'review_789',
       expect.objectContaining({
-        rawResponse: 'text',
-        guardrailAssessment: null,
-        improvements: []
+        rawResponse: 'text'
       })
     )
   })

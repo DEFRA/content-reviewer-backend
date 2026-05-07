@@ -143,6 +143,14 @@ class BedrockClient {
     }
 
     if (error.name === 'TimeoutError' || error.code === 'ETIMEDOUT') {
+      logger.error(
+        {
+          errorName: error.name,
+          errorCode: error.code,
+          timeoutMs: BEDROCK_TIMEOUT_MS
+        },
+        `[TIMEOUT] Bedrock API request timed out after ${BEDROCK_TIMEOUT_MS / 1000}s`
+      )
       throw new Error(
         'Bedrock API request timed out. The request took too long to process.'
       )

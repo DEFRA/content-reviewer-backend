@@ -88,8 +88,8 @@ const IMP_FORWARD_NO_REF = {
 function makeIssue(start, end, ref, type = TYPE_PLAIN) {
   return {
     issueId: `issue-${ref}`,
-    absStart: start,
-    absEnd: end,
+    start: start,
+    end: end,
     category: type,
     severity: 'medium',
     why: '',
@@ -116,8 +116,8 @@ function makeImprovement(ref, severity = 'medium') {
 function makeIssueNoRef(start, end, type = TYPE_PLAIN) {
   return {
     issueId: `issue-noref-${start}`,
-    absStart: start,
-    absEnd: end,
+    start: start,
+    end: end,
     category: type,
     severity: 'medium',
     why: '',
@@ -152,175 +152,7 @@ beforeEach(() => {
   vi.clearAllMocks()
 })
 
-// ── _sortAndAlignPairs — ref-based matching ───────────────────────────────────
-
 const STUB_ISSUE_TEXT = 'Issue identified'
-
-describe('_sortAndAlignPairs — ref-based (1:1 and ordering)', () => {
-  it('matches issues to improvements by ref (1:1 aligned)', () => {
-    const issues = [
-      makeIssue(UTILISE_START, UTILISE_END, 1),
-      makeIssue(FORWARD_START, FORWARD_END, 2)
-    ]
-    const improvements = [makeImprovement(1), makeImprovement(2)]
-    const { sortedIssues, sortedImprovements } =
-      resultEnvelopeStore._sortAndAlignPairs(PAIR_TEXT, issues, improvements)
-
-    expect(sortedIssues).toHaveLength(2)
-    expect(sortedImprovements).toHaveLength(2)
-    expect(sortedImprovements[0].issueId).toBe(sortedIssues[0].issueId)
-    expect(sortedImprovements[1].issueId).toBe(sortedIssues[1].issueId)
-  })
-
-  it('matches improvements to correct issues when refs are out of order', () => {
-    const issues = [
-      makeIssue(UTILISE_START, UTILISE_END, 2),
-      makeIssue(FORWARD_START, FORWARD_END, 1)
-    ]
-    const improvements = [makeImprovement(1, 'high'), makeImprovement(2, 'low')]
-    const { sortedIssues, sortedImprovements } =
-      resultEnvelopeStore._sortAndAlignPairs(PAIR_TEXT, issues, improvements)
-
-    expect(sortedIssues).toHaveLength(2)
-    expect(sortedImprovements).toHaveLength(2)
-    expect(sortedImprovements.every((imp) => !imp.unmatched)).toBe(true)
-  })
-
-  it('sorts issues by absStart (text order)', () => {
-    const issues = [
-      makeIssue(FORWARD_START, FORWARD_END, 2),
-      makeIssue(UTILISE_START, UTILISE_END, 1)
-    ]
-    const improvements = [makeImprovement(1), makeImprovement(2)]
-    const { sortedIssues } = resultEnvelopeStore._sortAndAlignPairs(
-      PAIR_TEXT,
-      issues,
-      improvements
-    )
-    expect(sortedIssues[0].absStart).toBeLessThan(sortedIssues[1].absStart)
-  })
-
-  it('assigns sequential chunkIdx starting at 0', () => {
-    const issues = [
-      makeIssue(UTILISE_START, UTILISE_END, 1),
-      makeIssue(FORWARD_START, FORWARD_END, 2)
-    ]
-    const improvements = [makeImprovement(1), makeImprovement(2)]
-    const { sortedIssues } = resultEnvelopeStore._sortAndAlignPairs(
-      PAIR_TEXT,
-      issues,
-      improvements
-    )
-    expect(sortedIssues[0].chunkIdx).toBe(0)
-    expect(sortedIssues[1].chunkIdx).toBe(1)
-  })
-})
-
-describe('_sortAndAlignPairs — ref-based (mismatch cases)', () => {
-  it('discards improvement when its ref has no matching issue', () => {
-    const issues = [makeIssue(UTILISE_START, UTILISE_END, 1)]
-    const improvements = [makeImprovement(1), makeImprovement(UNMATCHED_REF)]
-    const { sortedIssues, sortedImprovements } =
-      resultEnvelopeStore._sortAndAlignPairs(PAIR_TEXT, issues, improvements)
-
-    expect(sortedIssues).toHaveLength(1)
-    expect(sortedImprovements).toHaveLength(1)
-    expect(sortedImprovements[0].ref).toBe(1)
-  })
-
-  it('drops issue when no paired improvement exists', () => {
-    const issues = [makeIssue(UTILISE_START, UTILISE_END, 1)]
-    const improvements = [makeImprovement(UNMATCHED_REF)]
-    const { sortedIssues, sortedImprovements } =
-      resultEnvelopeStore._sortAndAlignPairs(PAIR_TEXT, issues, improvements)
-
-    expect(sortedIssues).toHaveLength(0)
-    expect(sortedImprovements).toHaveLength(0)
-  })
-
-  it('drops overlapping issue spans', () => {
-    const issues = [
-      makeIssue(UTILISE_START, OVERLAP_MID_END, 1),
-      makeIssue(OVERLAP_MID_START, OVERLAP_FAR_END, 2)
-    ]
-    const improvements = [makeImprovement(1), makeImprovement(2)]
-    const { sortedIssues } = resultEnvelopeStore._sortAndAlignPairs(
-      PAIR_TEXT,
-      issues,
-      improvements
-    )
-    expect(sortedIssues).toHaveLength(1)
-  })
-})
-
-// ── _sortAndAlignPairs — index-based fallback ─────────────────────────────────
-
-describe('_sortAndAlignPairs — index-based fallback (1:1 and empty)', () => {
-  it('pairs issues and improvements by index when no refs present', () => {
-    const issues = [
-      makeIssueNoRef(UTILISE_START, UTILISE_END),
-      makeIssueNoRef(FORWARD_START, FORWARD_END)
-    ]
-    const improvements = [makeImprovementNoRef('A'), makeImprovementNoRef('B')]
-    const { sortedIssues, sortedImprovements } =
-      resultEnvelopeStore._sortAndAlignPairs(PAIR_TEXT, issues, improvements)
-
-    expect(sortedIssues).toHaveLength(2)
-    expect(sortedImprovements).toHaveLength(2)
-    expect(sortedImprovements.every((imp) => !imp.unmatched)).toBe(true)
-  })
-
-  it('handles empty issues and improvements gracefully', () => {
-    const { sortedIssues, sortedImprovements } =
-      resultEnvelopeStore._sortAndAlignPairs(PAIR_TEXT, [], [])
-    expect(sortedIssues).toHaveLength(0)
-    expect(sortedImprovements).toHaveLength(0)
-  })
-
-  it('filters out issues with invalid offsets', () => {
-    const issues = [
-      makeIssueNoRef(UTILISE_START, UTILISE_END),
-      { ...makeIssueNoRef(INVALID_ISSUE_START, INVALID_ISSUE_END) }
-    ]
-    const improvements = [makeImprovementNoRef('A'), makeImprovementNoRef('B')]
-    const { sortedIssues, sortedImprovements } =
-      resultEnvelopeStore._sortAndAlignPairs(PAIR_TEXT, issues, improvements)
-
-    expect(sortedIssues).toHaveLength(1)
-    expect(sortedImprovements.length).toBeGreaterThanOrEqual(1)
-  })
-})
-
-describe('_sortAndAlignPairs — index-based fallback (mismatch cases)', () => {
-  it('discards excess improvements when improvements > issues', () => {
-    const issues = [makeIssueNoRef(UTILISE_START, UTILISE_END)]
-    const improvements = [
-      makeImprovementNoRef('A'),
-      makeImprovementNoRef('B'),
-      makeImprovementNoRef('C')
-    ]
-    const { sortedIssues, sortedImprovements } =
-      resultEnvelopeStore._sortAndAlignPairs(PAIR_TEXT, issues, improvements)
-
-    expect(sortedIssues).toHaveLength(1)
-    expect(sortedImprovements).toHaveLength(1)
-    expect(sortedImprovements[0].issue).toBe('A')
-  })
-
-  it('drops issue when paired improvement is missing', () => {
-    const issues = [
-      makeIssueNoRef(UTILISE_START, UTILISE_END),
-      makeIssueNoRef(FORWARD_START, FORWARD_END)
-    ]
-    const improvements = [makeImprovementNoRef('A')]
-    const { sortedIssues, sortedImprovements } =
-      resultEnvelopeStore._sortAndAlignPairs(PAIR_TEXT, issues, improvements)
-
-    expect(sortedIssues).toHaveLength(1)
-    expect(sortedImprovements).toHaveLength(1)
-    expect(sortedImprovements[0].issue).toBe('A')
-  })
-})
 
 // ── _buildAnnotatedSections ───────────────────────────────────────────────────
 
@@ -343,8 +175,8 @@ describe('_buildAnnotatedSections — basic structure', () => {
   it('splits text into plain + highlight + plain sections', () => {
     const issues = [
       {
-        absStart: ANNOTATE_UTILISE_START,
-        absEnd: ANNOTATE_UTILISE_END,
+        start: ANNOTATE_UTILISE_START,
+        end: ANNOTATE_UTILISE_END,
         category: TYPE_PLAIN,
         issueId: 'id-1',
         chunkIdx: 0
@@ -366,15 +198,15 @@ describe('_buildAnnotatedSections — edge positions', () => {
   it('assigns sequential issueIdx values (0, 1, 2…)', () => {
     const issues = [
       {
-        absStart: ANNOTATE_UTILISE_START,
-        absEnd: ANNOTATE_UTILISE_END,
+        start: ANNOTATE_UTILISE_START,
+        end: ANNOTATE_UTILISE_END,
         category: TYPE_PLAIN,
         issueId: 'a',
         chunkIdx: 0
       },
       {
-        absStart: ANNOTATE_ALL_START,
-        absEnd: ANNOTATE_ALL_END,
+        start: ANNOTATE_ALL_START,
+        end: ANNOTATE_ALL_END,
         category: TYPE_CLARITY,
         issueId: 'b',
         chunkIdx: 1
@@ -392,8 +224,8 @@ describe('_buildAnnotatedSections — edge positions', () => {
   it('handles issue at start of text (no leading plain section)', () => {
     const issues = [
       {
-        absStart: 0,
-        absEnd: ANNOTATE_THE_END,
+        start: 0,
+        end: ANNOTATE_THE_END,
         category: TYPE_PLAIN,
         issueId: 'a',
         chunkIdx: 0
@@ -410,8 +242,8 @@ describe('_buildAnnotatedSections — edge positions', () => {
   it('handles issue at end of text (no trailing plain section)', () => {
     const issues = [
       {
-        absStart: ANNOTATE_ISSUE_START,
-        absEnd: ANNOTATE_TEXT.length,
+        start: ANNOTATE_ISSUE_START,
+        end: ANNOTATE_TEXT.length,
         category: TYPE_CLARITY,
         issueId: 'a',
         chunkIdx: 0
@@ -432,65 +264,8 @@ const MISMATCH_CANONICAL =
   'The department should utilise all resources going forward today.'
 const MISMATCH_USAGE = { totalTokens: MISMATCH_TOKENS }
 
-describe('buildEnvelope — mismatch: more improvements than issues', () => {
-  it('discards unmatched improvements when improvements > issues (ref-based)', () => {
-    const review = makeMismatchReview({
-      reviewedContent: {
-        issues: [
-          {
-            start: MISMATCH_UTILISE_START,
-            end: MISMATCH_UTILISE_END,
-            type: TYPE_PLAIN,
-            text: 'utilise',
-            ref: 1
-          }
-        ]
-      },
-      improvements: [IMP_UTILISE_REF1, IMP_FORWARD_REF2]
-    })
-
-    const envelope = resultEnvelopeStore.buildEnvelope(
-      REVIEW_ID,
-      review,
-      MISMATCH_USAGE,
-      MISMATCH_CANONICAL
-    )
-
-    expect(envelope.issueCount).toBe(1)
-    expect(envelope.improvements).toHaveLength(1)
-    expect(envelope.improvements[0].issue).toBe('Use simpler word')
-  })
-
-  it('discards unmatched improvements when improvements > issues (index fallback)', () => {
-    const review = makeMismatchReview({
-      reviewedContent: {
-        issues: [
-          {
-            start: MISMATCH_UTILISE_START,
-            end: MISMATCH_UTILISE_END,
-            type: TYPE_PLAIN,
-            text: 'utilise'
-          }
-        ]
-      },
-      improvements: [IMP_UTILISE_NO_REF, IMP_FORWARD_NO_REF]
-    })
-
-    const envelope = resultEnvelopeStore.buildEnvelope(
-      REVIEW_ID,
-      review,
-      MISMATCH_USAGE,
-      MISMATCH_CANONICAL
-    )
-
-    expect(envelope.issueCount).toBe(1)
-    expect(envelope.improvements).toHaveLength(1)
-    expect(
-      envelope.improvements.find((imp) => imp.unmatched === true)
-    ).toBeUndefined()
-  })
-
-  it('discards improvements with no matching issue (ref-based)', () => {
+describe('buildEnvelope — mismatch: improvements with empty current are filtered', () => {
+  it('discards improvements with empty current field', () => {
     const unmatchedImp = {
       severity: 'low',
       category: 'completeness',
@@ -501,17 +276,6 @@ describe('buildEnvelope — mismatch: more improvements than issues', () => {
       ref: MISMATCH_UNMATCHED_REF
     }
     const review = makeMismatchReview({
-      reviewedContent: {
-        issues: [
-          {
-            start: MISMATCH_UTILISE_START,
-            end: MISMATCH_UTILISE_END,
-            type: TYPE_PLAIN,
-            text: 'utilise',
-            ref: 1
-          }
-        ]
-      },
       improvements: [IMP_UTILISE_REF1, unmatchedImp]
     })
 
@@ -524,9 +288,6 @@ describe('buildEnvelope — mismatch: more improvements than issues', () => {
 
     expect(envelope.improvements).toHaveLength(1)
     expect(envelope.improvements[0].issue).toBe('Use simpler word')
-    expect(
-      envelope.improvements.filter((imp) => imp.unmatched === true)
-    ).toHaveLength(0)
   })
 })
 

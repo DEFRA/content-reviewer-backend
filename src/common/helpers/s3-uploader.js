@@ -196,6 +196,9 @@ class S3Uploader {
    * @private
    */
   _logUploadError(uploadId, filename, key, error, duration) {
+    const isTimeout =
+      error.name === 'TimeoutError' || error.code === 'ETIMEDOUT'
+    const prefix = isTimeout ? '[TIMEOUT]' : '[RESPONSE TIME]'
     logger.error(
       {
         uploadId,
@@ -205,9 +208,10 @@ class S3Uploader {
         error: error.message,
         errorName: error.name,
         errorCode: error.Code,
-        durationMs: duration
+        durationMs: duration,
+        ...(isTimeout && { timeoutMs: config.get('s3.requestTimeoutMs') })
       },
-      `S3 text upload failed after ${duration}ms: ${error.message}`
+      `${prefix} S3 text upload failed after ${duration}ms: ${error.message}`
     )
   }
 

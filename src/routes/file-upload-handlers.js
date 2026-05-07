@@ -213,7 +213,7 @@ export const handleFileUpload = async (request, h) => {
 
     const totalDuration = Math.round(performance.now() - requestStartTime)
     request.logger.info(
-      `[UPLOAD] File sent to CDP Uploader — awaiting callback to complete pipeline with reviewId: ${reviewId}, uploadId: ${uploadId} and totalDurationMs: ${totalDuration}`
+      `[RESPONSE TIME] [UPLOAD] File sent to CDP Uploader — awaiting callback to complete pipeline with reviewId: ${reviewId}, uploadId: ${uploadId} and totalDurationMs: ${totalDuration}`
     )
 
     return h
@@ -447,7 +447,7 @@ export const handleUploadCallback = async (request, h) => {
   } catch (error) {
     const totalDuration = Math.round(performance.now() - requestStartTime)
     request.logger.error(
-      `[CALLBACK] Handler failed after ${totalDuration}ms with error: ${error.message}`
+      `[RESPONSE TIME] [CALLBACK] Handler failed after ${totalDuration}ms with error: ${error.message}`
     )
     uploadStatusStore.set(reviewId, {
       status: 'error',
