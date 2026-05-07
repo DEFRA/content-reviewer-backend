@@ -197,9 +197,9 @@ class ResultEnvelopeStore {
 
     // Step 2: Sort both arrays together by text position, deduplicate overlaps,
     // and re-index sequentially.
-    const { sortedIssues, sortedImprovements } = canonicalText
+    const { sortedImprovements } = canonicalText
       ? sortAndAlignPairs(canonicalText, prelimIssues, prelimImprovements)
-      : { sortedIssues: prelimIssues, sortedImprovements: prelimImprovements }
+      : { sortedImprovements: prelimImprovements }
 
     // Step 3: Build annotated sections using the sorted, re-indexed issues
     const annotatedSections = buildAnnotatedSections(
