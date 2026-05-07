@@ -22,6 +22,19 @@ const DOCX_ARTIFACT_PATTERN =
 // Paragraph-style names that mark headings.
 const DOCX_HEADING_STYLE_REGEX = /^Heading/i
 
+// Zip-bomb mitigations for the DOCX ZIP fallback path (sonar S5042).
+// A real DOCX has well under 100 entries; > 1000 indicates a malicious archive
+// designed to exhaust memory by packing many tiny files.
+const MAX_ZIP_ENTRIES = 1000
+
+// Maximum size in megabytes for each individual extracted XML stream.
+const MAX_XML_SIZE_MB = 50
+// 50 MB cap on each individual extracted XML stream. Real-world DOCX
+// document.xml / rels.xml are < 5 MB even for very large documents; anything
+// above this almost certainly indicates a zip bomb expanding far beyond the
+// upload size limit.
+const MAX_EXTRACTED_XML_BYTES = MAX_XML_SIZE_MB * 1024 * 1024
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Generic helpers
 // ─────────────────────────────────────────────────────────────────────────────
@@ -179,8 +192,8 @@ function processDocxRuns(runNode, runs, currentHref) {
   for (const r of ensureArray(runNode)) {
     const text = readDocxNodeText(r)
     const rPr = r['w:rPr']
-    const bold = !!(rPr && rPr['w:b'] !== undefined)
-    const italic = !!(rPr && rPr['w:i'] !== undefined)
+    const bold = rPr?.['w:b'] !== undefined
+    const italic = rPr?.['w:i'] !== undefined
     pushDocxRun(runs, text, { bold, italic, href: currentHref })
   }
 }
@@ -258,9 +271,15 @@ function parseDocxRels(parser, relsXml) {
 }
 
 /**
- * Convert document.xml + rels XML into readable Markdown-ish paragraph objects.
+ * Convert document.xml + rels XML into an array of `{ type, runs }` paragraph
+ * objects. Returns an empty array when the body cannot be located so callers
+ * never need to handle a mixed string/array return type.
+ *
+ * @param {string} documentXml
+ * @param {string|null} relsXml
+ * @returns {Array<{ type: string, runs: Array }>}
  */
-function docxXmlToParagraphObjects(documentXml, relsXml) {
+export function docxXmlToParagraphObjects(documentXml, relsXml) {
   const parser = new XMLParser({
     ignoreAttributes: false,
     attributeNamePrefix: '',
@@ -271,7 +290,7 @@ function docxXmlToParagraphObjects(documentXml, relsXml) {
   const doc = parser.parse(documentXml)
   const body = doc['w:document']?.['w:body']
   if (!body) {
-    return ''
+    return []
   }
 
   const rels = parseDocxRels(parser, relsXml)
@@ -286,6 +305,67 @@ function docxXmlToParagraphObjects(documentXml, relsXml) {
   }
 
   return out
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Block → Markdown string serialisation
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Group adjacent runs that share the same non-null href into a single anchor.
+ */
+function groupDocxRunsByHref(runs) {
+  const groups = []
+  let current = null
+  for (const r of runs) {
+    if (r.href && current?.href === r.href) {
+      current.text += r.text
+    } else {
+      current = { text: r.text, href: r.href }
+      groups.push(current)
+    }
+  }
+  return groups
+}
+
+/**
+ * Render a grouped run as Markdown — `[text](href)` for anchors, raw text
+ * otherwise.
+ */
+function renderDocxGroupedRun(group) {
+  if (group.href) {
+    return `[${group.text.trim()}](${group.href})`
+  }
+  return group.text
+}
+
+/**
+ * Render a single block as a single line of text. List blocks get a `- `
+ * prefix; blocks whose runs collapse to whitespace are returned as empty.
+ */
+function renderDocxBlock(block) {
+  const text = groupDocxRunsByHref(block.runs)
+    .map(renderDocxGroupedRun)
+    .join('')
+    .trim()
+  if (!text) {
+    return ''
+  }
+  if (block.type === 'list') {
+    return `- ${text}`
+  }
+  return text
+}
+
+/**
+ * Serialise an array of paragraph blocks into a Markdown string with
+ * paragraph breaks. Empty blocks are dropped.
+ *
+ * @param {Array<{ type: string, runs: Array }>} blocks
+ * @returns {string}
+ */
+export function blocksToDocxText(blocks) {
+  return blocks.map(renderDocxBlock).filter(Boolean).join('\n\n')
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -358,20 +438,55 @@ async function tryMammoth(fnNames, optsList) {
 }
 
 /**
+ * Read a single zip entry as a UTF-8 string, rejecting payloads that exceed
+ * the per-file size cap. Returns null when the entry does not exist.
+ *
+ * Zip-bomb mitigation (sonar S5042): we cap each extracted stream so a
+ * crafted DOCX cannot expand a small upload into a multi-gigabyte string.
+ */
+async function readZipEntryAsString(zip, path) {
+  const entry = zip.file(path)
+  if (!entry) {
+    return null
+  }
+  const content = await entry.async('string')
+  if (content.length > MAX_EXTRACTED_XML_BYTES) {
+    throw new Error(
+      `DOCX entry "${path}" exceeds ${MAX_EXTRACTED_XML_BYTES} bytes — refusing to expand`
+    )
+  }
+  return content
+}
+
+/**
  * ZIP+XML fallback used when mammoth cannot parse the DOCX.
+ *
+ * Zip-bomb mitigation (sonar S5042): the archive is rejected before any
+ * extraction if it contains more than MAX_ZIP_ENTRIES entries, and each
+ * extracted stream is capped at MAX_EXTRACTED_XML_BYTES.
  */
 async function runDocxZipFallback(nodeBuffer) {
   try {
     const zip = await JSZip.loadAsync(nodeBuffer)
-    const docFile = zip.file('word/document.xml')
-    if (!docFile) {
+
+    const entryCount = Object.keys(zip.files).length
+    if (entryCount > MAX_ZIP_ENTRIES) {
+      throw new Error(
+        `DOCX zip has ${entryCount} entries (limit ${MAX_ZIP_ENTRIES}) — refusing to expand`
+      )
+    }
+
+    const xml = await readZipEntryAsString(zip, 'word/document.xml')
+    if (!xml) {
       throw new Error('DOCX zip missing word/document.xml')
     }
-    const xml = await docFile.async('string')
-    const relEntry = zip.file('word/_rels/document.xml.rels')
-    const relsXml = relEntry ? await relEntry.async('string') : null
+    const relsXml = await readZipEntryAsString(
+      zip,
+      'word/_rels/document.xml.rels'
+    )
+
     const structured = docxXmlToParagraphObjects(xml, relsXml)
-    return { value: structured, messages: [] }
+    return { value: blocksToDocxText(structured), messages: [] }
   } catch (zipErr) {
     throw new Error(`mammoth failed and ZIP fallback failed: ${zipErr.message}`)
   }
@@ -412,8 +527,8 @@ async function runDocxExtraction(buffer) {
  * falls back to direct ZIP+XML parsing when mammoth cannot read the file.
  *
  * @param {Buffer} buffer
- * @returns {Promise<string|Array>} mammoth Markdown string or an array of
- *                                  `{ type, runs }` blocks (ZIP fallback path)
+ * @returns {Promise<string>} Markdown string (with `[text](url)` hyperlinks).
+ *                            Empty string when no content could be located.
  */
 export async function extractDocxText(buffer) {
   try {
