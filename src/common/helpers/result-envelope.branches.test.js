@@ -104,7 +104,8 @@ describe('buildEnvelope — null canonicalText (ternary false branch, line 153)'
 describe('buildEnvelope — reviewedContent without issues (line 124 || [] branch)', () => {
   it('treats rawIssues as empty array when reviewedContent.issues is absent', () => {
     const parsedReview = makeParsedReview({
-      reviewedContent: {} // no `issues` key → triggers || []
+      reviewedContent: {}, // no `issues` key → triggers || []
+      improvements: []
     })
     const envelope = resultEnvelopeStore.buildEnvelope(
       REVIEW_ID,

@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import { createLogger } from './logging/logger.js'
 import {
+  mapIssue,
+  mapImprovement,
   snapToWordBoundary,
   normalizeCategoryDisplay,
   sortAndAlignPairs
@@ -15,6 +17,56 @@ import {
 } from './result-envelope-sections.js'
 
 const logger = createLogger()
+
+/**
+ * Build preliminary issue/improvement pairs from raw LLM output.
+ * Pre-pairs each rawIssue with its corresponding parsedImprovement (by ref
+ * first, index fallback) so mapIssue can use improvement.current as a
+ * fallback text for position resolution.
+ */
+function buildPrelimPairs(
+  rawIssues,
+  parsedImprovements,
+  canonicalText,
+  sourceMap
+) {
+  // When the LLM returns no reviewedContent.issues (improvements-only response),
+  // synthesize a placeholder raw issue for each improvement that has a non-empty
+  // `current` field so resolveIssuePosition can locate it via text search.
+  // Improvements with an empty `current` are skipped and will be discarded.
+  const effectiveRawIssues =
+    rawIssues.length > 0
+      ? rawIssues
+      : parsedImprovements
+          .filter((imp) => imp.current && imp.current.trim().length > 0)
+          .map((imp, idx) => ({
+            start: 0,
+            end: 0,
+            text: imp.current,
+            ref: imp.ref !== undefined ? imp.ref : idx
+          }))
+
+  const improvByRef = new Map()
+  for (const imp of parsedImprovements) {
+    if (imp.ref !== undefined && !improvByRef.has(imp.ref)) {
+      improvByRef.set(imp.ref, imp)
+    }
+  }
+
+  const prelimIssues = effectiveRawIssues.map((rawIssue, idx) => {
+    const pairedImp =
+      rawIssue.ref === undefined
+        ? (parsedImprovements[idx] ?? null)
+        : (improvByRef.get(rawIssue.ref) ?? parsedImprovements[idx] ?? null)
+    return mapIssue(rawIssue, pairedImp, idx, canonicalText, sourceMap)
+  })
+
+  const prelimImprovements = parsedImprovements.map((parsedImprovement) =>
+    mapImprovement(parsedImprovement, `issue-orphan-${randomUUID()}`)
+  )
+
+  return { prelimIssues, prelimImprovements }
+}
 
 /**
  * Builds the spec-compliant result envelope.
@@ -126,74 +178,30 @@ class ResultEnvelopeStore {
     linkMap = null,
     sourceMap = null
   ) {
-    const { scores = {}, improvements: parsedImprovements = [] } = parsedReview
+    const {
+      scores = {},
+      reviewedContent = {},
+      improvements: parsedImprovements = []
+    } = parsedReview
 
-    // Step 1: Resolve the true character position of each improvement's CURRENT
-    // text. The LLM's START/END offsets are unreliable — resolveIssuePosition
-    // uses CURRENT as ground truth and finds the nearest real occurrence in the
-    // document, correcting any hallucinated offsets.
-    const resolved = parsedImprovements
-      .filter((imp) => imp.current && imp.suggested)
-      .map((imp) => {
-        const pos = canonicalText
-          ? resolveIssuePosition(
-              imp.start ?? 0,
-              imp.end ?? 0,
-              imp.current,
-              canonicalText,
-              imp.current,
-              sourceMap
-            )
-          : { start: imp.start ?? 0, end: imp.end ?? 0 }
+    const rawIssues = reviewedContent.issues || []
 
-        const snapped = canonicalText
-          ? snapToWordBoundary(canonicalText, pos.start, pos.end)
-          : pos
+    // Step 1: Build preliminary spec issue objects (original AI order),
+    // pre-paired with their corresponding improvements for position resolution.
+    const { prelimIssues, prelimImprovements } = buildPrelimPairs(
+      rawIssues,
+      parsedImprovements,
+      canonicalText,
+      sourceMap
+    )
 
-        return { ...imp, start: snapped.start, end: snapped.end }
-      })
-      .filter(
-        (imp) =>
-          typeof imp.start === 'number' &&
-          typeof imp.end === 'number' &&
-          imp.start >= 0 &&
-          imp.end > imp.start &&
-          imp.end <= (canonicalText?.length ?? Infinity)
-      )
+    // Step 2: Sort both arrays together by text position, deduplicate overlaps,
+    // and re-index sequentially.
+    const { sortedImprovements } = canonicalText
+      ? sortAndAlignPairs(canonicalText, prelimIssues, prelimImprovements)
+      : { sortedImprovements: prelimImprovements }
 
-    // Step 2: Sort by resolved start offset, dedupe overlapping spans (earlier wins)
-    resolved.sort((a, b) => a.start - b.start)
-    const deduped = []
-    let cursor = 0
-    for (const imp of resolved) {
-      if (imp.start >= cursor) {
-        deduped.push(imp)
-        cursor = imp.end
-      } else {
-        logger.warn(
-          { start: imp.start, end: imp.end, cursor, ref: imp.ref },
-          '[result-envelope] Dropping overlapping improvement span'
-        )
-      }
-    }
-
-    // Step 3: Build final improvements array with issueIdx aligned 1:1 with
-    // annotatedSections highlighted spans
-    const sortedImprovements = deduped.map((imp, idx) => ({
-      issueId: `issue-${randomUUID()}`,
-      issueIdx: idx,
-      severity: imp.severity || 'medium',
-      category: normalizeCategoryDisplay(imp.category),
-      issue: imp.issue || '',
-      why: imp.why || '',
-      current: imp.current || '',
-      suggested: imp.suggested || '',
-      start: imp.start,
-      end: imp.end,
-      ref: imp.ref
-    }))
-
-    // Step 4: Build annotated sections directly from sorted improvements
+    // Step 3: Build annotated sections using the sorted, re-indexed issues
     const annotatedSections = buildAnnotatedSections(
       canonicalText,
       sortedImprovements,

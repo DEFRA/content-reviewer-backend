@@ -15,12 +15,8 @@ import { parseBedrockResponse } from './review-parser.js'
 
 const SCORES_TAG_OPEN = '[SCORES]'
 const SCORES_TAG_CLOSE = '[/SCORES]'
-const REVIEWED_CONTENT_OPEN = '[REVIEWED_CONTENT]'
-const REVIEWED_CONTENT_CLOSE = '[/REVIEWED_CONTENT]'
 const IMPROVEMENTS_OPEN = '[IMPROVEMENTS]'
 const IMPROVEMENTS_CLOSE = '[/IMPROVEMENTS]'
-const ISSUE_POSITIONS_OPEN = '[ISSUE_POSITIONS]'
-const ISSUE_POSITIONS_CLOSE = '[/ISSUE_POSITIONS]'
 
 const SAMPLE_SCORE_LINE = 'Clarity: 3/5 - Needs improvement'
 const SAMPLE_SCORE_LINE_2 = 'Structure: 4/5 - Good layout'
@@ -40,18 +36,11 @@ const CURRENT_UTILISE = 'CURRENT: utilise'
 const SUGGESTED_USE = 'SUGGESTED: use'
 const ISSUE_JARGON_WORD = 'ISSUE: Jargon word'
 
-function buildMarkerResponse({
-  scores = '',
-  content = '',
-  improvements = ''
-} = {}) {
+function buildMarkerResponse({ scores = '', improvements = '' } = {}) {
   return [
     SCORES_TAG_OPEN,
     scores,
     SCORES_TAG_CLOSE,
-    REVIEWED_CONTENT_OPEN,
-    content,
-    REVIEWED_CONTENT_CLOSE,
     IMPROVEMENTS_OPEN,
     improvements,
     IMPROVEMENTS_CLOSE
@@ -78,44 +67,6 @@ describe('parseBedrockResponse - marker-based format', () => {
     const result = parseBedrockResponse(response)
     expect(result.scores).toHaveProperty('Structure')
     expect(result.scores.Structure.score).toBe(SCORE_STRUCTURE)
-  })
-
-  it('parses reviewed content plain text', () => {
-    const response = buildMarkerResponse({
-      content: 'This is reviewed content without issues.'
-    })
-    const result = parseBedrockResponse(response)
-    expect(result.reviewedContent.plainText).toBe(
-      'This is reviewed content without issues.'
-    )
-  })
-
-  it('extracts issues from reviewed content', () => {
-    const issueContent =
-      'Some text [ISSUE:Clarity]This is unclear.[/ISSUE] more text'
-    const response = buildMarkerResponse({ content: issueContent })
-    const result = parseBedrockResponse(response)
-    expect(result.reviewedContent.issues).toHaveLength(1)
-    expect(result.reviewedContent.issues[0].category).toBe('Clarity')
-    expect(result.reviewedContent.issues[0].text).toBe('This is unclear.')
-  })
-
-  it('extracts multiple issues from content', () => {
-    const issueContent =
-      '[ISSUE:Clarity]First issue.[/ISSUE] text [ISSUE:Structure]Second issue.[/ISSUE]'
-    const response = buildMarkerResponse({ content: issueContent })
-    const result = parseBedrockResponse(response)
-    expect(result.reviewedContent.issues).toHaveLength(2)
-  })
-
-  it('removes issue markers from plain text', () => {
-    const issueContent = 'Before [ISSUE:Clarity]marked text[/ISSUE] after'
-    const response = buildMarkerResponse({ content: issueContent })
-    const result = parseBedrockResponse(response)
-    expect(result.reviewedContent.plainText).not.toContain('[ISSUE:')
-    expect(result.reviewedContent.plainText).not.toContain('[/ISSUE]')
-    expect(result.reviewedContent.plainText).toContain('Before')
-    expect(result.reviewedContent.plainText).toContain('after')
   })
 
   it('parses improvements section', () => {
@@ -150,10 +101,8 @@ describe('parseBedrockResponse - marker-based empty sections', () => {
     expect(result.scores).toEqual({})
   })
 
-  it('returns empty issues when content has no issue markers', () => {
-    const response = buildMarkerResponse({
-      content: 'Plain content, no markers.'
-    })
+  it('returns empty issues when no improvements present', () => {
+    const response = buildMarkerResponse()
     const result = parseBedrockResponse(response)
     expect(result.reviewedContent.issues).toEqual([])
   })
@@ -254,101 +203,6 @@ describe('parseBedrockResponse - score edge cases', () => {
     const plainText = 'A: 3'
     const result = parseBedrockResponse(plainText)
     expect(Object.keys(result.scores)).toHaveLength(0)
-  })
-})
-
-// ============ Issue extraction edge cases ============
-
-describe('parseBedrockResponse - issue extraction edge cases', () => {
-  it('handles unclosed ISSUE tag gracefully', () => {
-    const issueContent = 'text [ISSUE:Clarity unclosed bracket text'
-    const response = buildMarkerResponse({ content: issueContent })
-    const result = parseBedrockResponse(response)
-    expect(result.reviewedContent.issues).toEqual([])
-  })
-
-  it('handles missing end marker [/ISSUE] gracefully', () => {
-    const issueContent = 'text [ISSUE:Clarity] no end tag'
-    const response = buildMarkerResponse({ content: issueContent })
-    const result = parseBedrockResponse(response)
-    expect(result.reviewedContent.issues).toEqual([])
-  })
-
-  it('records issue position correctly', () => {
-    const issueContent = '[ISSUE:Clarity]First issue.[/ISSUE]'
-    const response = buildMarkerResponse({ content: issueContent })
-    const result = parseBedrockResponse(response)
-    expect(result.reviewedContent.issues[0].position).toBeDefined()
-    expect(typeof result.reviewedContent.issues[0].position).toBe('number')
-  })
-})
-
-// ============ REF field extraction ============
-
-describe('parseBedrockResponse - ref field in [ISSUE_POSITIONS]', () => {
-  it('extracts ref field from [ISSUE_POSITIONS] JSON when present', () => {
-    const originalText = SAMPLE_UTILISE_TEXT
-    const issuePositionsResponse = [
-      '[SCORES]',
-      PLAIN_ENGLISH_SCORE_LINE,
-      '[/SCORES]',
-      ISSUE_POSITIONS_OPEN,
-      '{"issues":[{"ref":1,"start":22,"end":29,"type":"plain-english","text":"utilise"}]}',
-      ISSUE_POSITIONS_CLOSE,
-      IMPROVEMENTS_OPEN,
-      IMPROVEMENTS_CLOSE
-    ].join('\n')
-    const result = parseBedrockResponse(
-      issuePositionsResponse,
-      undefined,
-      originalText
-    )
-    expect(result.reviewedContent.issues).toHaveLength(1)
-    expect(result.reviewedContent.issues[0].ref).toBe(1)
-  })
-
-  it('extracts ref as undefined when ref field is absent from [ISSUE_POSITIONS]', () => {
-    const originalText = SAMPLE_UTILISE_TEXT
-    const issuePositionsResponse = [
-      '[SCORES]',
-      PLAIN_ENGLISH_SCORE_LINE,
-      '[/SCORES]',
-      ISSUE_POSITIONS_OPEN,
-      '{"issues":[{"start":22,"end":29,"type":"plain-english","text":"utilise"}]}',
-      ISSUE_POSITIONS_CLOSE,
-      IMPROVEMENTS_OPEN,
-      IMPROVEMENTS_CLOSE
-    ].join('\n')
-    const result = parseBedrockResponse(
-      issuePositionsResponse,
-      undefined,
-      originalText
-    )
-    expect(result.reviewedContent.issues).toHaveLength(1)
-    expect(result.reviewedContent.issues[0].ref).toBeUndefined()
-  })
-
-  it('extracts multiple refs from [ISSUE_POSITIONS] JSON', () => {
-    const originalText =
-      'The department should utilise all resources going forward.'
-    const issuePositionsResponse = [
-      '[SCORES]',
-      PLAIN_ENGLISH_SCORE_LINE,
-      '[/SCORES]',
-      ISSUE_POSITIONS_OPEN,
-      '{"issues":[{"ref":1,"start":22,"end":29,"type":"plain-english","text":"utilise"},{"ref":2,"start":44,"end":57,"type":"govuk-style","text":"going forward"}]}',
-      ISSUE_POSITIONS_CLOSE,
-      IMPROVEMENTS_OPEN,
-      IMPROVEMENTS_CLOSE
-    ].join('\n')
-    const result = parseBedrockResponse(
-      issuePositionsResponse,
-      undefined,
-      originalText
-    )
-    expect(result.reviewedContent.issues).toHaveLength(2)
-    expect(result.reviewedContent.issues[0].ref).toBe(1)
-    expect(result.reviewedContent.issues[1].ref).toBe(2)
   })
 })
 

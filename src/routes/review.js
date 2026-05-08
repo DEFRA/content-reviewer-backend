@@ -188,59 +188,78 @@ const handleGetReview = async (request, h) => {
 }
 
 /**
+ * Parse pagination params and fetch reviews + total count from the repository,
+ * returning per-operation durations for response-time logging.
+ */
+async function fetchAllReviewsData(query, logger) {
+  const limit = Math.min(
+    Math.max(
+      Number.parseInt(query.limit, 10) || PAGINATION_DEFAULTS.LIMIT,
+      PAGINATION_LIMITS.MIN_LIMIT
+    ),
+    PAGINATION_LIMITS.MAX_LIMIT
+  )
+  const skip = Math.max(
+    Number.parseInt(query.skip, 10) || PAGINATION_DEFAULTS.SKIP,
+    PAGINATION_LIMITS.MIN_SKIP
+  )
+  const userId = query.userId || null
+
+  logger.info(
+    { limit, skip, userId: userId || 'all' },
+    'Fetching reviews from S3 repository'
+  )
+
+  const s3ListStart = performance.now()
+  const reviews = await reviewRepository.getAllReviews(limit, skip, userId)
+  const s3ListDuration = Math.round(performance.now() - s3ListStart)
+  logger.info(
+    {
+      count: reviews.length,
+      reviewIds: reviews.map((r) => r.id),
+      statuses: reviews.map((r) => r.status)
+    },
+    `Retrieved ${reviews.length} reviews from S3`
+  )
+
+  const countStart = performance.now()
+  const totalCount = await reviewRepository.getReviewCount(userId)
+  const countDuration = Math.round(performance.now() - countStart)
+  logger.info({ totalCount }, 'Retrieved total review count from S3')
+
+  return {
+    limit,
+    skip,
+    userId,
+    reviews,
+    totalCount,
+    s3ListDuration,
+    countDuration
+  }
+}
+
+/**
  * GET /api/reviews - Get all reviews (history)
  * Supports optional ?userId= query param to filter to a specific user's reviews.
  */
 const handleGetAllReviews = async (request, h) => {
   const requestStartTime = performance.now()
-
   request.logger.info(
     { query: request.query },
     `${ENDPOINTS.REVIEWS_LIST} request received`
   )
 
   try {
-    const limit = Math.min(
-      Math.max(
-        Number.parseInt(request.query.limit, 10) || PAGINATION_DEFAULTS.LIMIT,
-        PAGINATION_LIMITS.MIN_LIMIT
-      ),
-      PAGINATION_LIMITS.MAX_LIMIT
-    )
-    const skip = Math.max(
-      Number.parseInt(request.query.skip, 10) || PAGINATION_DEFAULTS.SKIP,
-      PAGINATION_LIMITS.MIN_SKIP
-    )
-    const userId = request.query.userId || null
+    const {
+      limit,
+      skip,
+      userId,
+      reviews,
+      totalCount,
+      s3ListDuration,
+      countDuration
+    } = await fetchAllReviewsData(request.query, request.logger)
 
-    request.logger.info(
-      { limit, skip, userId: userId || 'all' },
-      'Fetching reviews from S3 repository'
-    )
-
-    const s3ListStart = performance.now()
-    const reviews = await reviewRepository.getAllReviews(limit, skip, userId)
-    const s3ListDuration = Math.round(performance.now() - s3ListStart)
-
-    request.logger.info(
-      {
-        count: reviews.length,
-        reviewIds: reviews.map((r) => r.id),
-        statuses: reviews.map((r) => r.status),
-        durationMs: s3ListDuration
-      },
-      `[RESPONSE TIME] Retrieved ${reviews.length} reviews from S3 in ${s3ListDuration}ms`
-    )
-
-    const countStart = performance.now()
-    const totalCount = await reviewRepository.getReviewCount(userId)
-    const countDuration = Math.round(performance.now() - countStart)
-    request.logger.info(
-      { totalCount, durationMs: countDuration },
-      `[RESPONSE TIME] Retrieved total review count from S3 in ${countDuration}ms`
-    )
-
-    // Format reviews for response
     const formattedReviews = reviews.map((review) =>
       formatReviewForList(review, request.logger)
     )
@@ -285,12 +304,8 @@ const handleGetAllReviews = async (request, h) => {
       },
       'Failed to get reviews'
     )
-
     return h
-      .response({
-        success: false,
-        error: 'Failed to retrieve reviews'
-      })
+      .response({ success: false, error: 'Failed to retrieve reviews' })
       .code(HTTP_STATUS.INTERNAL_SERVER_ERROR)
   }
 }
