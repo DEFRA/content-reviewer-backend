@@ -10,6 +10,7 @@ const HTTP_OK = 200
 const sqsWorkerStatus = {
   method: 'GET',
   path: '/api/sqs-worker/status',
+  options: { auth: false },
   handler: (_request, h) => {
     const status = sqsWorker.getStatus()
     const skipWorker = config.get('mockMode.skipSqsWorker')

@@ -29,6 +29,7 @@ export const uploadRoutes = {
         method: 'POST',
         path: '/upload-callback',
         options: {
+          auth: false, // Called by CDP Uploader service — no JWT available
           cors: getCorsConfig()
         },
         handler: handleUploadCallback
@@ -38,6 +39,7 @@ export const uploadRoutes = {
         method: 'GET',
         path: '/upload-success',
         options: {
+          auth: false, // Browser redirect target — no JWT in browser request
           cors: getCorsConfig()
         },
         handler: handleUploadSuccess
