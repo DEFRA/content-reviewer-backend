@@ -72,7 +72,7 @@ beforeEach(() => {
 // ── _mapScores ────────────────────────────────────────────────────────────────
 
 describe('_mapScores', () => {
-  it('maps all five canonical categories and scales 0-5 to 0-100', () => {
+  it('maps all five canonical categories (raw 1-5 scores, no scaling)', () => {
     const raw = {
       [DISPLAY_PLAIN_ENGLISH]: { score: 4, note: 'Good' },
       [DISPLAY_CLARITY]: { score: 3, note: 'OK' },
@@ -81,11 +81,11 @@ describe('_mapScores', () => {
       [DISPLAY_COMPLETENESS]: { score: 1, note: 'Incomplete' }
     }
     const result = resultEnvelopeStore._mapScores(raw)
-    expect(result.plainEnglish).toBe(SCORE_80)
-    expect(result.clarity).toBe(SCORE_60)
-    expect(result.accessibility).toBe(SCORE_100)
-    expect(result.govukStyle).toBe(SCORE_40)
-    expect(result.completeness).toBe(SCORE_20)
+    expect(result.plainEnglish).toBe(4)
+    expect(result.clarity).toBe(3)
+    expect(result.accessibility).toBe(5)
+    expect(result.govukStyle).toBe(2)
+    expect(result.completeness).toBe(1)
   })
 
   it('stores note strings alongside scaled values', () => {
@@ -96,24 +96,11 @@ describe('_mapScores', () => {
     expect(result.plainEnglishNote).toBe('Average')
   })
 
-  it('computes overall as the average of non-zero scores', () => {
-    const raw = {
-      [DISPLAY_PLAIN_ENGLISH]: { score: 4, note: '' },
-      [DISPLAY_CLARITY]: { score: 2, note: '' },
-      Accessibility: { score: 0, note: '' },
-      [DISPLAY_GOVUK_STYLE]: { score: 0, note: '' },
-      [DISPLAY_COMPLETENESS]: { score: 0, note: '' }
-    }
-    const result = resultEnvelopeStore._mapScores(raw)
-    // Only plainEnglish (80) and clarity (40) are non-zero → average = 60
-    expect(result.overall).toBe(SCORE_60)
-  })
-
   it('returns all zeros when scores object is empty', () => {
     const result = resultEnvelopeStore._mapScores({})
     expect(result.plainEnglish).toBe(0)
     expect(result.clarity).toBe(0)
-    expect(result.overall).toBe(0)
+    expect(result.accessibility).toBe(0)
   })
 
   it('maps GOV.UK Style Compliance key as output by Bedrock prompt template', () => {
@@ -121,31 +108,17 @@ describe('_mapScores', () => {
       [DISPLAY_GOVUK_STYLE]: { score: 3, note: GOVUK_NOTE }
     }
     const result = resultEnvelopeStore._mapScores(raw)
-    expect(result.govukStyle).toBe(SCORE_60)
+    expect(result.govukStyle).toBe(3)
     expect(result.govukStyleNote).toBe(GOVUK_NOTE)
   })
 
-  it('falls back to legacy key aliases (style, tone)', () => {
+  it('falls back to legacy "style" key alias for govukStyle', () => {
     const raw = {
-      Style: { score: 3, note: '' },
-      Tone: { score: 4, note: '' }
+      Style: { score: 3, note: '' }
     }
     const result = resultEnvelopeStore._mapScores(raw)
-    expect(result.govukStyle).toBe(SCORE_60)
+    expect(result.govukStyle).toBe(3)
     expect(typeof result.clarity).toBe('number')
-  })
-
-  it('populates legacy style and tone fields for backwards compatibility', () => {
-    const raw = {
-      [DISPLAY_PLAIN_ENGLISH]: { score: 3, note: '' },
-      [DISPLAY_CLARITY]: { score: 4, note: '' },
-      Accessibility: { score: 3, note: '' },
-      [DISPLAY_GOVUK_STYLE]: { score: 5, note: '' },
-      [DISPLAY_COMPLETENESS]: { score: 2, note: '' }
-    }
-    const result = resultEnvelopeStore._mapScores(raw)
-    expect(result.style).toBe(result.govukStyle)
-    expect(result.tone).toBe(result.clarity)
   })
 })
 
@@ -158,10 +131,9 @@ describe('buildStubEnvelope', () => {
     expect(stub.documentId).toBe(REVIEW_ID)
   })
 
-  it('has empty arrays for annotatedSections, issues and improvements', () => {
+  it('has empty arrays for annotatedSections and improvements', () => {
     const stub = resultEnvelopeStore.buildStubEnvelope(REVIEW_ID, 'processing')
     expect(stub.annotatedSections).toEqual([])
-    expect(stub.issues).toEqual([])
     expect(stub.improvements).toEqual([])
   })
 
@@ -169,7 +141,7 @@ describe('buildStubEnvelope', () => {
     const stub = resultEnvelopeStore.buildStubEnvelope(REVIEW_ID, 'failed')
     expect(stub.scores.plainEnglish).toBe(0)
     expect(stub.scores.clarity).toBe(0)
-    expect(stub.scores.overall).toBe(0)
+    expect(stub.scores.accessibility).toBe(0)
   })
 
   it('sets processedAt to null and tokenUsed to 0', () => {
@@ -288,58 +260,6 @@ describe('buildStubEnvelope — additional', () => {
     const result = resultEnvelopeStore.buildStubEnvelope(REVIEW_ID, 'failed')
     expect(result.status).toBe('failed')
     expect(result.issueCount).toBe(0)
-  })
-})
-
-// ── _hasRefFields ─────────────────────────────────────────────────────────────
-
-describe('_hasRefFields', () => {
-  it('returns true when all issues and at least one improvement have ref', () => {
-    const issues = [
-      { ref: 1, absStart: 0, absEnd: 5 },
-      { ref: 2, absStart: 10, absEnd: 15 }
-    ]
-    const improvements = [
-      { ref: 1, severity: 'high' },
-      { ref: 2, severity: 'medium' }
-    ]
-    expect(resultEnvelopeStore._hasRefFields(issues, improvements)).toBe(true)
-  })
-
-  it('returns false when issues array is empty', () => {
-    expect(resultEnvelopeStore._hasRefFields([], [{ ref: 1 }])).toBe(false)
-  })
-
-  it('returns false when any issue is missing ref', () => {
-    const issues = [
-      { ref: 1, absStart: 0, absEnd: 5 },
-      { absStart: 10, absEnd: 15 }
-    ]
-    const improvements = [{ ref: 1 }]
-    expect(resultEnvelopeStore._hasRefFields(issues, improvements)).toBe(false)
-  })
-
-  it('returns false when all improvements are missing ref', () => {
-    const issues = [{ ref: 1, absStart: 0, absEnd: 5 }]
-    const improvements = [{ severity: 'high' }]
-    expect(resultEnvelopeStore._hasRefFields(issues, improvements)).toBe(false)
-  })
-
-  it('returns false when improvements array is empty', () => {
-    const issues = [{ ref: 1, absStart: 0, absEnd: 5 }]
-    expect(resultEnvelopeStore._hasRefFields(issues, [])).toBe(false)
-  })
-
-  it('returns true when only one improvement has ref among several', () => {
-    const issues = [{ ref: 1, absStart: 0, absEnd: 5 }]
-    const improvements = [{ severity: 'high' }, { ref: 1, severity: 'medium' }]
-    expect(resultEnvelopeStore._hasRefFields(issues, improvements)).toBe(true)
-  })
-
-  it('returns false when issue ref is Number.NaN', () => {
-    const issues = [{ ref: Number.NaN, absStart: 0, absEnd: 5 }]
-    const improvements = [{ ref: 1 }]
-    expect(resultEnvelopeStore._hasRefFields(issues, improvements)).toBe(false)
   })
 })
 
@@ -681,7 +601,7 @@ describe('_buildAnnotatedSections — single issue, no displayText', () => {
   it('splits into [plain, highlight, plain] for a mid-string issue', () => {
     const text = 'The department should utilise all resources.'
     // "utilise" = chars 22–29
-    const issues = [{ absStart: 22, absEnd: 29, category: 'plain-english' }]
+    const issues = [{ start: 22, end: 29, category: 'plain-english' }]
     const sections = resultEnvelopeStore._buildAnnotatedSections(text, issues)
     expect(sections).toHaveLength(3)
     expect(sections[0]).toEqual({
@@ -703,7 +623,7 @@ describe('_buildAnnotatedSections — single issue, no displayText', () => {
 
   it('produces only [highlight, plain] when issue starts at offset 0', () => {
     const text = 'utilise all resources.'
-    const issues = [{ absStart: 0, absEnd: 7, category: 'clarity' }]
+    const issues = [{ start: 0, end: 7, category: 'clarity' }]
     const sections = resultEnvelopeStore._buildAnnotatedSections(text, issues)
     expect(sections).toHaveLength(2)
     expect(sections[0]).toEqual({
@@ -720,7 +640,7 @@ describe('_buildAnnotatedSections — single issue, no displayText', () => {
 
   it('produces only [plain, highlight] when issue ends at text end', () => {
     const text = 'All resources utilise'
-    const issues = [{ absStart: 14, absEnd: 21, category: 'plain-english' }]
+    const issues = [{ start: 14, end: 21, category: 'plain-english' }]
     const sections = resultEnvelopeStore._buildAnnotatedSections(text, issues)
     expect(sections).toHaveLength(2)
     expect(sections[0]).toEqual({
@@ -751,7 +671,7 @@ describe('_buildAnnotatedSections — with linkMap (URL sources)', () => {
       }
     ]
     // Issue covers "the guidance" in canonicalText (chars 4–16)
-    const issues = [{ absStart: 4, absEnd: 16, category: 'clarity' }]
+    const issues = [{ start: 4, end: 16, category: 'clarity' }]
 
     const sections = resultEnvelopeStore._buildAnnotatedSections(
       canonicalText,
@@ -780,7 +700,7 @@ describe('_buildAnnotatedSections — with linkMap (URL sources)', () => {
       { start: 6, end: 14, display: '[the site](https://example.com)' }
     ]
     // "plain words" in canonicalText: starts at 23, ends at 34
-    const issues = [{ absStart: 23, absEnd: 34, category: 'plain-english' }]
+    const issues = [{ start: 23, end: 34, category: 'plain-english' }]
 
     const sections = resultEnvelopeStore._buildAnnotatedSections(
       canonicalText,
@@ -807,7 +727,7 @@ describe('_buildAnnotatedSections — with linkMap (URL sources)', () => {
       }
     ]
     // Issue covers "simple words" (chars 4–16)
-    const issues = [{ absStart: 4, absEnd: 16, category: 'plain-english' }]
+    const issues = [{ start: 4, end: 16, category: 'plain-english' }]
 
     const sections = resultEnvelopeStore._buildAnnotatedSections(
       canonicalText,
@@ -831,7 +751,7 @@ describe('_buildAnnotatedSections — with linkMap (URL sources)', () => {
         display: '[planning permission](https://www.gov.uk/planning)'
       }
     ]
-    const issues = [{ absStart: 16, absEnd: 35, category: 'govuk-style' }]
+    const issues = [{ start: 16, end: 35, category: 'govuk-style' }]
 
     const sections = resultEnvelopeStore._buildAnnotatedSections(
       canonicalText,
@@ -848,7 +768,7 @@ describe('_buildAnnotatedSections — with linkMap (URL sources)', () => {
 
   it('falls back to canonicalText for all spans when linkMap is null', () => {
     const canonicalText = 'The department should utilise all resources.'
-    const issues = [{ absStart: 22, absEnd: 29, category: 'plain-english' }]
+    const issues = [{ start: 22, end: 29, category: 'plain-english' }]
 
     const sections = resultEnvelopeStore._buildAnnotatedSections(
       canonicalText,
@@ -865,7 +785,7 @@ describe('_buildAnnotatedSections — with linkMap (URL sources)', () => {
 
   it('falls back to canonicalText for all spans when linkMap is undefined', () => {
     const canonicalText = 'The department should utilise all resources.'
-    const issues = [{ absStart: 22, absEnd: 29, category: 'plain-english' }]
+    const issues = [{ start: 22, end: 29, category: 'plain-english' }]
     // Calling without the third argument
     const sections = resultEnvelopeStore._buildAnnotatedSections(
       canonicalText,
@@ -898,8 +818,8 @@ describe('_buildAnnotatedSections — with linkMap (URL sources)', () => {
     const beforeIdx = canonicalText.indexOf('before you start')
     const issues = [
       {
-        absStart: beforeIdx,
-        absEnd: beforeIdx + 16,
+        start: beforeIdx,
+        end: beforeIdx + 16,
         category: 'clarity'
       }
     ]

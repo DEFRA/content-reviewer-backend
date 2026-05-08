@@ -9,7 +9,9 @@ import { redactPIIFromReview } from './review-repository-pii.js'
 import {
   deleteUploadedContent,
   deleteReviewMetadataFile,
-  deleteOldReviews as deleteOldReviewsHelper
+  deleteOldReviews as deleteOldReviewsHelper,
+  deleteOldPositionsFiles as deleteOldPositionsFilesHelper,
+  deleteOldContentUploads as deleteOldContentUploadsHelper
 } from './review-repository-deletion.js'
 import {
   preserveImmutableFields,
@@ -330,30 +332,32 @@ class ReviewRepositoryS3 {
   }
 
   /**
-   * Save the position-based review data (issue positions) as a separate S3 object.
+   * Save the raw LLM response as a debug artefact.
    * Stored at: positions/{reviewId}.json
    * @param {string} reviewId - Review ID
-   * @param {Object} reviewedContent - The reviewedContent object from the parsed Bedrock response
-   *   e.g. { plainText: string, issues: Array<{start, end, type, text}> }
+   * @param {{ rawResponse: string }} rawResponseOrObj - Object containing the raw LLM text
    * @returns {Promise<void>}
    */
-  async savePositions(reviewId, reviewedContent) {
+  async savePositions(reviewId, rawResponseOrObj) {
     const key = `positions/${reviewId}.json`
+
+    const rawResponse =
+      typeof rawResponseOrObj === 'string'
+        ? rawResponseOrObj
+        : (rawResponseOrObj?.rawResponse ?? '')
 
     const payload = {
       reviewId,
       savedAt: new Date().toISOString(),
-      plainText: reviewedContent.plainText || '',
-      issues: reviewedContent.issues || []
+      rawResponse
     }
 
     logger.info(
       {
         reviewId,
-        s3Key: key,
-        issueCount: payload.issues.length
+        s3Key: key
       },
-      `Saving position-based review data to S3 at ${key}`
+      `Saving raw LLM response to S3 at ${key}`
     )
 
     const command = new PutObjectCommand({
@@ -362,8 +366,7 @@ class ReviewRepositoryS3 {
       Body: JSON.stringify(payload, null, 2),
       ContentType: 'application/json',
       Metadata: {
-        reviewId,
-        issueCount: String(payload.issues.length)
+        reviewId
       }
     })
 
@@ -388,7 +391,7 @@ class ReviewRepositoryS3 {
    * @param {string|Error} error - Error message or Error object
    * @returns {Promise<void>}
    */
-  async saveReviewError(reviewId, error) {
+  async saveReviewError(reviewId, error, extraData = {}) {
     const errorMessage = typeof error === 'string' ? error : error.message
     const errorStack = typeof error === 'string' ? null : error.stack
 
@@ -406,7 +409,8 @@ class ReviewRepositoryS3 {
         error: {
           message: errorMessage,
           stack: errorStack
-        }
+        },
+        ...extraData
       })
 
       logger.info(
@@ -582,6 +586,34 @@ class ReviewRepositoryS3 {
       this.bucket,
       this.prefix,
       this.getRecentReviews.bind(this),
+      maxAgeInDays
+    )
+  }
+
+  /**
+   * Delete positions files older than specified number of days by listing S3 directly.
+   * Cleans up orphaned files whose parent review has already been deleted.
+   * @param {number} maxAgeInDays - Maximum age of files to keep (default 5 days)
+   * @returns {Promise<number>} Number of files deleted
+   */
+  async deleteOldPositionsFiles(maxAgeInDays = 5) {
+    return deleteOldPositionsFilesHelper(
+      this.s3Client,
+      this.bucket,
+      maxAgeInDays
+    )
+  }
+
+  /**
+   * Delete content-uploads files older than specified number of days by listing S3 directly.
+   * Cleans up orphaned files whose parent review has already been deleted.
+   * @param {number} maxAgeInDays - Maximum age of files to keep (default 5 days)
+   * @returns {Promise<number>} Number of files deleted
+   */
+  async deleteOldContentUploads(maxAgeInDays = 5) {
+    return deleteOldContentUploadsHelper(
+      this.s3Client,
+      this.bucket,
       maxAgeInDays
     )
   }

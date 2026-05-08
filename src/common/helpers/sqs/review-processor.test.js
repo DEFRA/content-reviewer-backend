@@ -55,8 +55,7 @@ vi.mock('./bedrock-processor.js', () => ({
         bedrockDuration: 100,
         bedrockResponse: {
           usage: {},
-          stopReason: 'end_turn',
-          guardrailAssessment: []
+          stopReason: 'end_turn'
         }
       }
     }

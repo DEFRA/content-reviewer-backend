@@ -169,7 +169,6 @@ describe('ReviewProcessor - saveReviewToRepository', () => {
     const bedrockResult = {
       bedrockResponse: {
         usage: { totalTokens: 100 },
-        guardrailAssessment: null,
         stopReason: 'end_turn'
       },
       bedrockDuration: 500
@@ -188,11 +187,12 @@ describe('ReviewProcessor - saveReviewToRepository', () => {
       bedrockResult.bedrockResponse.usage,
       'canonical text',
       'completed',
-      null // displayText — null for non-URL sources
+      null, // linkMap — null for non-URL sources
+      null // sourceMap — null when not provided
     )
     expect(mockSaveReviewResult).toHaveBeenCalledWith(
       'review_123',
-      expect.objectContaining({ reviewData: parseResult.parsedReview }),
+      expect.objectContaining({ completedAt: expect.any(Date) }),
       bedrockResult.bedrockResponse.usage,
       expect.objectContaining({ status: 'completed' })
     )
@@ -215,7 +215,6 @@ describe('ReviewProcessor - saveReviewToRepository', () => {
     const bedrockResult = {
       bedrockResponse: {
         usage: { totalTokens: 100 },
-        guardrailAssessment: null,
         stopReason: 'end_turn'
       },
       bedrockDuration: 500
@@ -239,18 +238,17 @@ describe('ReviewProcessor - saveReviewToRepository', () => {
     )
   })
 
-  test('skips savePositions when reviewedContent is null', async () => {
+  test('skips savePositions when finalReviewContent is null', async () => {
     const { reviewRepository } = await import('../review-repository.js')
 
     const parseResult = {
       parsedReview: { reviewedContent: null },
-      finalReviewContent: 'text',
+      finalReviewContent: null,
       parseDuration: 50
     }
     const bedrockResult = {
       bedrockResponse: {
         usage: {},
-        guardrailAssessment: null,
         stopReason: 'end_turn'
       },
       bedrockDuration: 300
@@ -263,7 +261,12 @@ describe('ReviewProcessor - saveReviewToRepository', () => {
       'text'
     )
     await new Promise((r) => setTimeout(r, 10))
-    expect(reviewRepository.savePositions).not.toHaveBeenCalled()
+    expect(reviewRepository.savePositions).toHaveBeenCalledWith(
+      'review_789',
+      expect.objectContaining({
+        rawResponse: 'text'
+      })
+    )
   })
 
   test('throws when saveReviewResult fails', async () => {
@@ -277,7 +280,6 @@ describe('ReviewProcessor - saveReviewToRepository', () => {
     const bedrockResult = {
       bedrockResponse: {
         usage: {},
-        guardrailAssessment: null,
         stopReason: 'end_turn'
       },
       bedrockDuration: 300

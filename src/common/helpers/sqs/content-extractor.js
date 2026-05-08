@@ -96,7 +96,7 @@ export class ContentExtractor {
         downloadedBytes: buffer.length,
         durationMs: s3Duration
       },
-      `S3 file downloaded in ${s3Duration}ms`
+      `[RESPONSE TIME] S3 file downloaded in ${s3Duration}ms`
     )
 
     logger.info(
@@ -123,22 +123,22 @@ export class ContentExtractor {
         wordCount: textExtractor.countWords(textContent),
         durationMs: extractDuration
       },
-      `Text extracted successfully in ${extractDuration}ms`
+      `[RESPONSE TIME] Text extracted successfully in ${extractDuration}ms`
     )
 
     return textContent
   }
 
   /**
-   * Parse a canonical document JSON string and return { canonicalText, linkMap }.
-   * Falls back to { canonicalText: rawString, linkMap: null } on parse errors or
-   * when the expected fields are absent.
+   * Parse a canonical document JSON string and return { canonicalText, linkMap, sourceMap }.
+   * Falls back to { canonicalText: rawString, linkMap: null, sourceMap: null } on parse
+   * errors or when the expected fields are absent.
    *
    * @param {string} rawString   - raw UTF-8 content read from S3
    * @param {string} reviewId
    * @param {string} s3Key
    * @param {number} s3Duration  - download time in ms (for logging)
-   * @returns {{ canonicalText: string, linkMap: Array|null }}
+   * @returns {{ canonicalText: string, linkMap: Array|null, sourceMap: Array|null }}
    */
   _processCanonicalJson(rawString, reviewId, s3Key, s3Duration) {
     let canonicalDoc
@@ -149,7 +149,7 @@ export class ContentExtractor {
         { reviewId, s3Key, error: parseError.message },
         'Failed to parse canonical document JSON — falling back to raw text'
       )
-      return { canonicalText: rawString, linkMap: null }
+      return { canonicalText: rawString, linkMap: null, sourceMap: null }
     }
 
     const canonicalText = canonicalDoc.canonicalText
@@ -164,7 +164,7 @@ export class ContentExtractor {
         },
         'Canonical document missing canonicalText field — falling back to raw document JSON'
       )
-      return { canonicalText: rawString, linkMap: null }
+      return { canonicalText: rawString, linkMap: null, sourceMap: null }
     }
 
     logger.info(
@@ -179,14 +179,23 @@ export class ContentExtractor {
         linkMapEntries: Array.isArray(canonicalDoc.linkMap)
           ? canonicalDoc.linkMap.length
           : 0,
+        hasSourceMap: Array.isArray(canonicalDoc.sourceMap),
+        sourceMapEntries: Array.isArray(canonicalDoc.sourceMap)
+          ? canonicalDoc.sourceMap.length
+          : 0,
         durationMs: s3Duration
       },
-      `Canonical document read successfully in ${s3Duration}ms — using canonicalText (${canonicalDoc.charCount} chars)`
+      `[RESPONSE TIME] Canonical document read successfully in ${s3Duration}ms — using canonicalText (${canonicalDoc.charCount} chars)`
     )
 
     return {
       canonicalText,
-      linkMap: Array.isArray(canonicalDoc.linkMap) ? canonicalDoc.linkMap : null
+      linkMap: Array.isArray(canonicalDoc.linkMap)
+        ? canonicalDoc.linkMap
+        : null,
+      sourceMap: Array.isArray(canonicalDoc.sourceMap)
+        ? canonicalDoc.sourceMap
+        : null
     }
   }
 
@@ -238,7 +247,7 @@ export class ContentExtractor {
         contentLength: rawString.length,
         durationMs: s3Duration
       },
-      `Legacy plain-text S3 content read in ${s3Duration}ms`
+      `[RESPONSE TIME] Legacy plain-text S3 content read in ${s3Duration}ms`
     )
 
     return { canonicalText: rawString, linkMap: null }
@@ -272,7 +281,7 @@ export class ContentExtractor {
         contentLength: textContent.length,
         durationMs: s3Duration
       },
-      `S3 text content downloaded in ${s3Duration}ms`
+      `[RESPONSE TIME] S3 text content downloaded in ${s3Duration}ms`
     )
 
     return textContent

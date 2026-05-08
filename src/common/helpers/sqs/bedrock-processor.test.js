@@ -154,21 +154,36 @@ describe('BedrockReviewProcessor - sendBedrockRequest - Failure Cases', () => {
   })
 
   test('Should handle blocked content by guardrails', async () => {
+    const mockGuardrailAssessment = { allAssessments: [{ pii: true }] }
+    const mockPolicyBreakdown = [
+      {
+        assessmentIndex: 0,
+        sensitiveInformationPolicy: {
+          piiEntityTypes: [{ type: 'NAME', action: 'BLOCKED' }]
+        }
+      }
+    ]
     const mockResponse = {
       success: false,
       blocked: true,
       reason: 'Content contains inappropriate material',
-      content: ''
+      content: '',
+      guardrailAssessment: mockGuardrailAssessment,
+      policyBreakdown: mockPolicyBreakdown
     }
     mockSendMessage.mockResolvedValueOnce(mockResponse)
 
-    await expect(
-      processor.sendBedrockRequest(
+    const err = await processor
+      .sendBedrockRequest(
         'review-blocked',
         'Inappropriate content',
         TEST_SYSTEM_PROMPT
       )
-    ).rejects.toThrow('Content blocked by guardrails')
+      .catch((e) => e)
+
+    expect(err.message).toBe('Content blocked by guardrails')
+    expect(err.guardrailAssessment).toEqual(mockGuardrailAssessment)
+    expect(err.policyBreakdown).toEqual(mockPolicyBreakdown)
 
     expect(mockLoggerError).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -435,7 +450,7 @@ describe('BedrockReviewProcessor - parseBedrockResponseData - Edge Cases - Score
 
     expect(mockLoggerInfo).toHaveBeenCalledWith(
       expect.objectContaining({
-        parsedIssueCount: 0
+        parsedImprovementCount: 3
       }),
       expect.any(String)
     )
@@ -503,6 +518,10 @@ describe('BedrockReviewProcessor - parseBedrockResponseData - Edge Cases - Impro
 })
 
 describe('BedrockReviewProcessor - buildUserPrompt - document size thresholds', () => {
+  const LARGE_DOC_CHARS = 40000
+  const MEDIUM_DOC_CHARS = 10000
+  const SMALL_DOC_CHARS = 100
+
   let processor
 
   beforeEach(() => {
@@ -510,18 +529,27 @@ describe('BedrockReviewProcessor - buildUserPrompt - document size thresholds', 
     processor = new BedrockReviewProcessor()
   })
 
-  test('sets min_issues_per_third = 3 for large documents (>= 40000 chars)', () => {
-    const prompt = processor.buildUserPrompt('x'.repeat(40000))
-    expect(prompt).toContain('min_issues_per_third = 3')
+  test('includes SCAN GUIDANCE with correct offsets for large documents (>= 40000 chars)', () => {
+    const prompt = processor.buildUserPrompt('x'.repeat(LARGE_DOC_CHARS))
+    expect(prompt).toContain('SCAN GUIDANCE')
+    expect(prompt).toContain('chars 0\u201313333')
+    expect(prompt).toContain('chars 13333\u201326666')
+    expect(prompt).toContain(`chars 26666\u2013${LARGE_DOC_CHARS}`)
   })
 
-  test('sets min_issues_per_third = 2 for medium documents (>= 10000 and < 40000 chars)', () => {
-    const prompt = processor.buildUserPrompt('x'.repeat(10000))
-    expect(prompt).toContain('min_issues_per_third = 2')
+  test('includes SCAN GUIDANCE with correct offsets for medium documents (>= 10000 chars)', () => {
+    const prompt = processor.buildUserPrompt('x'.repeat(MEDIUM_DOC_CHARS))
+    expect(prompt).toContain('SCAN GUIDANCE')
+    expect(prompt).toContain('chars 0\u20133333')
+    expect(prompt).toContain('chars 3333\u20136666')
+    expect(prompt).toContain(`chars 6666\u2013${MEDIUM_DOC_CHARS}`)
   })
 
-  test('sets min_issues_per_third = 1 for small documents (< 10000 chars)', () => {
-    const prompt = processor.buildUserPrompt('x'.repeat(100))
-    expect(prompt).toContain('min_issues_per_third = 1')
+  test('includes SCAN GUIDANCE with correct offsets for small documents (< 10000 chars)', () => {
+    const prompt = processor.buildUserPrompt('x'.repeat(SMALL_DOC_CHARS))
+    expect(prompt).toContain('SCAN GUIDANCE')
+    expect(prompt).toContain('chars 0\u201333')
+    expect(prompt).toContain('chars 33\u201366')
+    expect(prompt).toContain(`chars 66\u2013${SMALL_DOC_CHARS}`)
   })
 })

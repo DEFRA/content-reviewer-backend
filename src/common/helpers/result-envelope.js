@@ -3,18 +3,70 @@ import { createLogger } from './logging/logger.js'
 import {
   mapIssue,
   mapImprovement,
-  sortAndAlignPairs,
-  findNearestOccurrence,
-  resolveIssuePosition,
   snapToWordBoundary,
-  hasRefFields
+  normalizeCategoryDisplay,
+  sortAndAlignPairs
 } from './result-envelope-issue-mappers.js'
+import {
+  findNearestOccurrence,
+  resolveIssuePosition
+} from './result-envelope-position-resolver.js'
 import {
   buildAnnotatedSections,
   mapScores
 } from './result-envelope-sections.js'
 
 const logger = createLogger()
+
+/**
+ * Build preliminary issue/improvement pairs from raw LLM output.
+ * Pre-pairs each rawIssue with its corresponding parsedImprovement (by ref
+ * first, index fallback) so mapIssue can use improvement.current as a
+ * fallback text for position resolution.
+ */
+function buildPrelimPairs(
+  rawIssues,
+  parsedImprovements,
+  canonicalText,
+  sourceMap
+) {
+  // When the LLM returns no reviewedContent.issues (improvements-only response),
+  // synthesize a placeholder raw issue for each improvement that has a non-empty
+  // `current` field so resolveIssuePosition can locate it via text search.
+  // Improvements with an empty `current` are skipped and will be discarded.
+  const effectiveRawIssues =
+    rawIssues.length > 0
+      ? rawIssues
+      : parsedImprovements
+          .filter((imp) => imp.current && imp.current.trim().length > 0)
+          .map((imp, idx) => ({
+            start: 0,
+            end: 0,
+            text: imp.current,
+            ref: imp.ref !== undefined ? imp.ref : idx
+          }))
+
+  const improvByRef = new Map()
+  for (const imp of parsedImprovements) {
+    if (imp.ref !== undefined && !improvByRef.has(imp.ref)) {
+      improvByRef.set(imp.ref, imp)
+    }
+  }
+
+  const prelimIssues = effectiveRawIssues.map((rawIssue, idx) => {
+    const pairedImp =
+      rawIssue.ref === undefined
+        ? (parsedImprovements[idx] ?? null)
+        : (improvByRef.get(rawIssue.ref) ?? parsedImprovements[idx] ?? null)
+    return mapIssue(rawIssue, pairedImp, idx, canonicalText, sourceMap)
+  })
+
+  const prelimImprovements = parsedImprovements.map((parsedImprovement) =>
+    mapImprovement(parsedImprovement, `issue-orphan-${randomUUID()}`)
+  )
+
+  return { prelimIssues, prelimImprovements }
+}
 
 /**
  * Builds the spec-compliant result envelope.
@@ -27,40 +79,37 @@ const logger = createLogger()
  *   status:            string   - "pending" | "processing" | "completed" | "failed"
  *   processedAt:       string   - ISO 8601
  *   tokenUsed:         number   - total tokens consumed by Bedrock
- *   issueCount:        number   - total issues found
+ *   issueCount:        number   - total improvements found and located
  *   canonicalText:     string   - full normalised text (user content)
- *   annotatedSections: Array    - the canonical text split into plain/highlighted spans:
+ *   annotatedSections: Array    - canonical text split into plain/highlighted spans:
  *     [{ text: string, issueIdx: number|null, category: string|null }]
- *     issueIdx is the 0-based index into issues[] for highlighted spans, null for plain text.
- *   issues: [
- *     {
- *       issueId:   string  - uuid
- *       absStart:  number  - char offset in canonicalText
- *       absEnd:    number  - char offset in canonicalText
- *       category:  string  - e.g. "clarity"
- *       severity:  string  - e.g. "medium"
- *       why:       string  - explanation
- *       suggested: string  - replacement text
- *       evidence:  string  - the exact problematic span (slice of canonicalText)
- *       chunkIdx:  number  - 0-based index
- *     }
- *   ],
+ *     issueIdx is the 0-based index into improvements[] for highlighted spans.
  *   improvements: [
  *     {
- *       issueId:   string  - matches issues[i].issueId
- *       severity:  string
- *       category:  string
+ *       issueId:   string  - uuid
+ *       issueIdx:  number  - 0-based index, matches annotatedSections issueIdx
+ *       severity:  string  - e.g. "high"
+ *       category:  string  - display name, e.g. "Plain English"
  *       issue:     string  - short title
  *       why:       string  - explanation
- *       current:   string  - problematic text
+ *       current:   string  - exact problematic text found in document
  *       suggested: string  - replacement text
+ *       start:     number  - resolved char offset in canonicalText
+ *       end:       number  - resolved char offset in canonicalText (exclusive)
+ *       ref:       number  - 1-based ref from LLM output
  *     }
  *   ],
  *   scores: {
- *     accessibility: number,   (0-100)
- *     style:         number,
- *     tone:          number,
- *     overall:       number
+ *     plainEnglish: number,   (1-5)
+ *     plainEnglishNote: string,
+ *     clarity: number,
+ *     clarityNote: string,
+ *     accessibility: number,
+ *     accessibilityNote: string,
+ *     govukStyle: number,
+ *     govukStyleNote: string,
+ *     completeness: number,
+ *     completenessNote: string
  *   }
  * }
  */
@@ -70,26 +119,31 @@ class ResultEnvelopeStore {
   _mapScores(rawScores) {
     return mapScores(rawScores)
   }
-  _hasRefFields(issues, improvements) {
-    return hasRefFields(issues, improvements)
-  }
   _findNearestOccurrence(searchText, canonicalText, hintMid) {
     return findNearestOccurrence(searchText, canonicalText, hintMid)
   }
-  _resolveIssuePosition(start, end, issueText, canonicalText, fallbackText) {
+  _resolveIssuePosition(
+    start,
+    end,
+    issueText,
+    canonicalText,
+    fallbackText,
+    sourceMap = null
+  ) {
     return resolveIssuePosition(
       start,
       end,
       issueText,
       canonicalText,
-      fallbackText
+      fallbackText,
+      sourceMap
     )
   }
   _snapToWordBoundary(text, start, end) {
     return snapToWordBoundary(text, start, end)
   }
-  _buildAnnotatedSections(canonicalText, sortedIssues, linkMap) {
-    return buildAnnotatedSections(canonicalText, sortedIssues, linkMap)
+  _buildAnnotatedSections(canonicalText, sortedImprovements, linkMap) {
+    return buildAnnotatedSections(canonicalText, sortedImprovements, linkMap)
   }
   _sortAndAlignPairs(canonicalText, issues, improvements) {
     return sortAndAlignPairs(canonicalText, issues, improvements)
@@ -98,13 +152,21 @@ class ResultEnvelopeStore {
   /**
    * Build the full result envelope from the parsed Bedrock output.
    *
+   * Improvements are the single source of truth — derived directly from the
+   * LLM [IMPROVEMENTS] block. Character offsets are corrected by locating the
+   * CURRENT text in the document, overriding any hallucinated START/END values
+   * from the model.
+   *
    * @param {string}     reviewId
-   * @param {Object}     parsedReview   - { scores, reviewedContent, improvements }
+   * @param {Object}     parsedReview   - { scores, improvements }
    * @param {Object}     bedrockUsage   - { totalTokens, inputTokens, outputTokens }
    * @param {string}     canonicalText  - normalised full text from documents/{reviewId}.json
    * @param {string}     [status]       - defaults to "completed"
    * @param {Array|null} [linkMap]      - array of { start, end, display } entries for URL
    *                                      sources; null for file/text sources without links.
+   * @param {Array|null} [sourceMap]    - per-line offset entries from the canonical document;
+   *                                      used to resolve imprecise LLM offsets via normalised
+   *                                      line-region search.
    * @returns {Object} spec-compliant envelope
    */
   buildEnvelope(
@@ -113,7 +175,8 @@ class ResultEnvelopeStore {
     bedrockUsage,
     canonicalText,
     status = 'completed',
-    linkMap = null
+    linkMap = null,
+    sourceMap = null
   ) {
     const {
       scores = {},
@@ -123,39 +186,25 @@ class ResultEnvelopeStore {
 
     const rawIssues = reviewedContent.issues || []
 
-    // Step 1: Build preliminary spec issue objects (original AI order).
-    // Pre-pair each rawIssue with its corresponding parsedImprovement (by ref
-    // first, index fallback) so that mapIssue can use improvement.current as
-    // a fallback text for position resolution.
-    const improvByRef = new Map()
-    for (const imp of parsedImprovements) {
-      if (imp.ref !== undefined && !improvByRef.has(imp.ref)) {
-        improvByRef.set(imp.ref, imp)
-      }
-    }
-
-    const prelimIssues = rawIssues.map((rawIssue, idx) => {
-      const pairedImp =
-        rawIssue.ref === undefined
-          ? (parsedImprovements[idx] ?? null)
-          : (improvByRef.get(rawIssue.ref) ?? parsedImprovements[idx] ?? null)
-      return mapIssue(rawIssue, pairedImp, idx, canonicalText)
-    })
-
-    const prelimImprovements = parsedImprovements.map((parsedImprovement) =>
-      mapImprovement(parsedImprovement, `issue-orphan-${randomUUID()}`)
+    // Step 1: Build preliminary spec issue objects (original AI order),
+    // pre-paired with their corresponding improvements for position resolution.
+    const { prelimIssues, prelimImprovements } = buildPrelimPairs(
+      rawIssues,
+      parsedImprovements,
+      canonicalText,
+      sourceMap
     )
 
     // Step 2: Sort both arrays together by text position, deduplicate overlaps,
     // and re-index sequentially.
-    const { sortedIssues, sortedImprovements } = canonicalText
+    const { sortedImprovements } = canonicalText
       ? sortAndAlignPairs(canonicalText, prelimIssues, prelimImprovements)
-      : { sortedIssues: prelimIssues, sortedImprovements: prelimImprovements }
+      : { sortedImprovements: prelimImprovements }
 
     // Step 3: Build annotated sections using the sorted, re-indexed issues
     const annotatedSections = buildAnnotatedSections(
       canonicalText,
-      sortedIssues,
+      sortedImprovements,
       linkMap
     )
 
@@ -164,16 +213,11 @@ class ResultEnvelopeStore {
     logger.info(
       {
         reviewId,
-        rawIssueCount: rawIssues.length,
-        rawImprovementCount: parsedImprovements.length,
-        alignedIssueCount: sortedIssues.length,
-        alignedImprovementCount: sortedImprovements.length,
-        unmatchedImprovements: sortedImprovements.filter((i) => i.unmatched)
-          .length,
+        improvementCount: sortedImprovements.length,
         sectionCount: annotatedSections.length,
         scoreKeys: Object.keys(scores)
       },
-      '[result-envelope] Envelope built — issues and improvements are 1:1 aligned'
+      '[result-envelope] Envelope built — improvements are single source of truth'
     )
 
     return {
@@ -181,10 +225,9 @@ class ResultEnvelopeStore {
       status,
       processedAt: new Date().toISOString(),
       tokenUsed: bedrockUsage?.totalTokens ?? 0,
-      issueCount: sortedIssues.length,
+      issueCount: sortedImprovements.length,
       canonicalText: canonicalText || '',
       annotatedSections,
-      issues: sortedIssues,
       improvements: sortedImprovements,
       scores: mappedScores
     }
@@ -206,7 +249,6 @@ class ResultEnvelopeStore {
       issueCount: 0,
       canonicalText: '',
       annotatedSections: [],
-      issues: [],
       improvements: [],
       scores: {
         plainEnglish: 0,
@@ -218,10 +260,7 @@ class ResultEnvelopeStore {
         govukStyle: 0,
         govukStyleNote: '',
         completeness: 0,
-        completenessNote: '',
-        overall: 0,
-        style: 0,
-        tone: 0
+        completenessNote: ''
       }
     }
   }

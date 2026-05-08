@@ -204,7 +204,7 @@ export async function uploadTextToS3(content, reviewId, title, logger) {
       contentLength: content.length,
       durationMs: s3UploadDuration
     },
-    `[STEP 2/6] Raw text content uploaded to S3 (content-uploads/${reviewId}) - COMPLETED in ${s3UploadDuration}ms`
+    `[RESPONSE TIME] [STEP 2/6] Raw text content uploaded to S3 (content-uploads/${reviewId}) - COMPLETED in ${s3UploadDuration}ms`
   )
 
   return { s3Result, s3UploadDuration }
@@ -254,7 +254,7 @@ export async function createReviewRecord(
       filename: title || CONTENT_DEFAULTS.TITLE,
       durationMs: dbCreateDuration
     },
-    `[STEP 4/6] Review record created in S3 repository - COMPLETED in ${dbCreateDuration}ms`
+    `[RESPONSE TIME] [STEP 4/6] Review record created in S3 repository - COMPLETED in ${dbCreateDuration}ms`
   )
 
   return dbCreateDuration
@@ -305,7 +305,7 @@ export async function queueReviewJob(
         sqsQueue: 'content_review_queue',
         durationMs: sqsSendDuration
       },
-      `[STEP 5/6] SQS message sent successfully (pointing to canonical document) - COMPLETED in ${sqsSendDuration}ms`
+      `[RESPONSE TIME] [STEP 5/6] SQS message sent successfully (pointing to canonical document) - COMPLETED in ${sqsSendDuration}ms`
     )
 
     return sqsSendDuration
@@ -382,7 +382,7 @@ export async function createCanonicalDocument(
       rawS3Key: rawS3Key || null,
       durationMs: canonicalDuration
     },
-    `[STEP 3/6] Canonical document created in S3 (documents/${reviewId}.json) - COMPLETED in ${canonicalDuration}ms`
+    `[RESPONSE TIME] [STEP 3/6] Canonical document created in S3 (documents/${reviewId}.json) - COMPLETED in ${canonicalDuration}ms`
   )
 
   return { canonicalResult, canonicalDuration }

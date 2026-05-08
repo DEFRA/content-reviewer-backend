@@ -3,17 +3,17 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 const REVIEW_ID = 'review_test-123'
 const S3_BUCKET = 'test-bucket'
 const S3_KEY = `reviews/${REVIEW_ID}.json`
-const AWS_REGION = 'eu-west-2'
-const AWS_ENDPOINT = 'http://localhost:4566'
 const STATUS_PENDING = 'pending'
 const STATUS_COMPLETED = 'completed'
 const ERROR_REVIEW_NOT_FOUND = 'Review not found'
-const REVIEW_LIMIT = 50
+const REVIEW_LIMIT = 10
 const PAGE_LIMIT = 3
-const PAGE_SKIP = 2
-const REVIEW_COUNT = 42
-const DELETED_COUNT = 5
+const PAGE_SKIP = 0
+const REVIEW_COUNT = 5
 const RETENTION_DAYS = 30
+const DELETED_COUNT = 3
+const AWS_REGION = 'eu-west-2'
+const AWS_ENDPOINT = 'http://localhost:4566'
 
 const { MOCK_S3_SEND } = vi.hoisted(() => ({ MOCK_S3_SEND: vi.fn() }))
 
@@ -54,7 +54,9 @@ vi.mock('./review-repository-pii.js', () => ({
 vi.mock('./review-repository-deletion.js', () => ({
   deleteUploadedContent: vi.fn(),
   deleteReviewMetadataFile: vi.fn(),
-  deleteOldReviews: vi.fn().mockResolvedValue(0)
+  deleteOldReviews: vi.fn().mockResolvedValue(0),
+  deleteOldPositionsFiles: vi.fn().mockResolvedValue(0),
+  deleteOldContentUploads: vi.fn().mockResolvedValue(0)
 }))
 
 vi.mock('./review-repository-helpers.js', () => ({
@@ -80,11 +82,6 @@ vi.mock('./review-repository-search.js', () => ({
 import { reviewRepository } from './review-repository.js'
 import { redactPIIFromReview } from './review-repository-pii.js'
 import {
-  deleteUploadedContent,
-  deleteReviewMetadataFile,
-  deleteOldReviews as deleteOldReviewsHelper
-} from './review-repository-deletion.js'
-import {
   getRecentReviews as getRecentReviewsHelper,
   getReviewCount as getReviewCountHelper
 } from './review-repository-queries.js'
@@ -94,6 +91,11 @@ import {
   sanitizeAdditionalData,
   updateProcessingTimestamps
 } from './review-repository-helpers.js'
+import {
+  deleteUploadedContent,
+  deleteReviewMetadataFile,
+  deleteOldReviews as deleteOldReviewsHelper
+} from './review-repository-deletion.js'
 
 function buildReviewData(overrides = {}) {
   return {
@@ -417,6 +419,28 @@ describe('reviewRepository.saveReviewError', () => {
     )
   })
 
+  it('merges extraData into the failed status update', async () => {
+    const stored = buildStoredReview()
+    MOCK_S3_SEND.mockResolvedValueOnce(makeS3GetResponse(stored))
+    MOCK_S3_SEND.mockResolvedValueOnce({})
+    const guardrailData = {
+      guardrailAssessment: { allAssessments: [] },
+      policyBreakdown: []
+    }
+
+    await reviewRepository.saveReviewError(REVIEW_ID, 'Blocked', guardrailData)
+
+    expect(sanitizeAdditionalData).toHaveBeenCalledWith(
+      expect.objectContaining({
+        error: expect.objectContaining({ message: 'Blocked' }),
+        guardrailAssessment: guardrailData.guardrailAssessment,
+        policyBreakdown: guardrailData.policyBreakdown
+      }),
+      expect.any(String),
+      expect.any(Object)
+    )
+  })
+
   it('rethrows when updateReviewStatus fails', async () => {
     const noSuchKey = new Error('NoSuchKey')
     noSuchKey.name = 'NoSuchKey'
@@ -646,15 +670,13 @@ describe('reviewRepository.deleteOldReviews', () => {
 // ============ savePositions ============
 
 describe('reviewRepository.savePositions', () => {
-  it('saves position data to S3 under positions/{reviewId}.json', async () => {
+  it('saves raw response to S3 under positions/{reviewId}.json', async () => {
     MOCK_S3_SEND.mockResolvedValueOnce({})
 
-    const reviewedContent = {
-      plainText: 'Some content',
-      issues: [{ start: 0, end: 4, type: 'clarity', text: 'Some' }]
-    }
-
-    await reviewRepository.savePositions(REVIEW_ID, reviewedContent)
+    await reviewRepository.savePositions(
+      REVIEW_ID,
+      '[SCORES]\nPlain English: 3/5 - Some issues'
+    )
 
     expect(MOCK_S3_SEND).toHaveBeenCalledTimes(1)
     const command = MOCK_S3_SEND.mock.calls[0][0]
@@ -662,42 +684,35 @@ describe('reviewRepository.savePositions', () => {
     expect(command.Bucket).toBe(S3_BUCKET)
   })
 
-  it('includes plainText and issues in the saved payload', async () => {
+  it('includes rawResponse and reviewId in the saved payload', async () => {
     MOCK_S3_SEND.mockResolvedValueOnce({})
 
-    const reviewedContent = {
-      plainText: 'My review text',
-      issues: [{ start: 3, end: 9, type: 'plain-english', text: 'review' }]
-    }
+    const rawResponse =
+      '[SCORES]\nPlain English: 4/5 - Good\n[IMPROVEMENTS]\n[/IMPROVEMENTS]'
 
-    await reviewRepository.savePositions(REVIEW_ID, reviewedContent)
+    await reviewRepository.savePositions(REVIEW_ID, rawResponse)
 
     const command = MOCK_S3_SEND.mock.calls[0][0]
     const body = JSON.parse(command.Body)
-    expect(body.plainText).toBe('My review text')
-    expect(body.issues).toHaveLength(1)
+    expect(body.rawResponse).toBe(rawResponse)
     expect(body.reviewId).toBe(REVIEW_ID)
   })
 
-  it('handles empty issues array gracefully', async () => {
+  it('defaults rawResponse to empty string when undefined is passed', async () => {
     MOCK_S3_SEND.mockResolvedValueOnce({})
 
-    await reviewRepository.savePositions(REVIEW_ID, {
-      plainText: 'text',
-      issues: []
-    })
+    await reviewRepository.savePositions(REVIEW_ID, undefined)
 
     const command = MOCK_S3_SEND.mock.calls[0][0]
     const body = JSON.parse(command.Body)
-    expect(body.issues).toHaveLength(0)
-    expect(command.Metadata.issueCount).toBe('0')
+    expect(body.rawResponse).toBe('')
   })
 
   it('throws when S3 send fails', async () => {
     MOCK_S3_SEND.mockRejectedValueOnce(new Error('S3 write failed'))
 
     await expect(
-      reviewRepository.savePositions(REVIEW_ID, { plainText: '', issues: [] })
+      reviewRepository.savePositions(REVIEW_ID, 'some response')
     ).rejects.toThrow('S3 write failed')
   })
 })

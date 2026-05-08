@@ -227,6 +227,12 @@ const config = convict({
       format: String,
       default: 'content-uploads',
       env: 'RAW_S3_PATH'
+    },
+    requestTimeoutMs: {
+      doc: 'S3 client request timeout in milliseconds. Applied to PutObject calls (text-content upload). 30 s is generous for a text payload over a VPC-internal connection; prevents silent hangs when S3 is degraded.',
+      format: Number,
+      default: 30000,
+      env: 'S3_REQUEST_TIMEOUT_MS'
     }
   },
   aws: {
@@ -277,9 +283,9 @@ const config = convict({
       env: 'SQS_WAIT_TIME_SECONDS'
     },
     visibilityTimeout: {
-      doc: 'Message visibility timeout in seconds. Set to 300s (5 min) — after a failed processing attempt the message becomes visible again for SQS retry.',
+      doc: 'Message visibility timeout in seconds. Must exceed BEDROCK_TIMEOUT_MS (120 s). Set to 180 s (3 min) — gives Bedrock its full 2-min window plus a 60 s safety margin. On failure the processor explicitly resets this window to 180 s from failure time so the retry is always delayed by the full 3 minutes.',
       format: Number,
-      default: 300,
+      default: 180,
       env: 'SQS_VISIBILITY_TIMEOUT'
     },
     maxConcurrentRequests: {
@@ -344,12 +350,6 @@ const config = convict({
       format: Number,
       default: 1,
       env: 'BEDROCK_TOP_P'
-    },
-    enforceDistribution: {
-      doc: 'Fire follow-up Bedrock calls for any document third that has no issues. Disable to reduce Bedrock usage during testing.',
-      format: Boolean,
-      default: false,
-      env: 'BEDROCK_ENFORCE_DISTRIBUTION'
     }
   },
   mockMode: {
@@ -376,7 +376,7 @@ const config = convict({
     intervalHours: {
       doc: 'Interval in hours between cleanup runs',
       format: Number,
-      default: 1,
+      default: 24,
       env: 'CLEANUP_INTERVAL_HOURS'
     },
     retentionDays: {

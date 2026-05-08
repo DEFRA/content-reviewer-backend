@@ -28,6 +28,7 @@ const mockLoggerError = vi.fn()
 const mockUpdateReviewStatus = vi.fn()
 const mockSaveReviewResult = vi.fn()
 const mockSaveReviewError = vi.fn()
+const mockSavePositions = vi.fn().mockResolvedValue()
 const mockFormatErrorForUI = vi.fn()
 const mockHandleSaveErrorFailure = vi.fn()
 const mockTruncateReceiptHandle = vi.fn()
@@ -45,7 +46,7 @@ vi.mock('../review-repository.js', () => ({
     updateReviewStatus: (...args) => mockUpdateReviewStatus(...args),
     saveReviewResult: (...args) => mockSaveReviewResult(...args),
     saveReviewError: (...args) => mockSaveReviewError(...args),
-    savePositions: vi.fn().mockResolvedValue()
+    savePositions: (...args) => mockSavePositions(...args)
   }
 }))
 
@@ -204,7 +205,6 @@ describe('ReviewProcessor - saveReviewToRepository', () => {
       }
       const bedrockResult = {
         bedrockResponse: {
-          guardrailAssessment: null,
           stopReason: 'end_turn',
           usage: { inputTokens: 100, outputTokens: 50 }
         }
@@ -217,18 +217,23 @@ describe('ReviewProcessor - saveReviewToRepository', () => {
         parseResult,
         bedrockResult
       )
+      // Flush microtasks so the fire-and-forget savePositions promise resolves
+      await Promise.resolve()
 
       expect(mockSaveReviewResult).toHaveBeenCalledWith(
         TEST_REVIEW_ID,
         expect.objectContaining({
-          reviewData: { score: 90 },
-          rawResponse: TEST_REVIEW_CONTENT,
-          guardrailAssessment: null,
           stopReason: 'end_turn',
           completedAt: expect.any(Date)
         }),
         { inputTokens: 100, outputTokens: 50 },
         expect.objectContaining({ status: 'completed' })
+      )
+      expect(mockSavePositions).toHaveBeenCalledWith(
+        TEST_REVIEW_ID,
+        expect.objectContaining({
+          rawResponse: TEST_REVIEW_CONTENT
+        })
       )
       expect(mockLoggerInfo).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -267,7 +272,8 @@ describe('ReviewProcessor - logReviewCompletion', () => {
           reviewId: TEST_REVIEW_ID,
           totalDurationMs: expect.any(Number),
           bedrockDurationMs: 3000,
-          parseDurationMs: 500
+          parseDurationMs: 500,
+          envelopeDurationMs: expect.any(Number)
         },
         expect.stringContaining(
           '[STEP 6/6] Content review processing COMPLETED'
@@ -313,7 +319,8 @@ describe('ReviewProcessor - handleReviewProcessingError', () => {
       expect(mockFormatErrorForUI).toHaveBeenCalledWith(error)
       expect(mockSaveReviewError).toHaveBeenCalledWith(
         TEST_REVIEW_ID,
-        TEST_USER_FRIENDLY_ERROR
+        TEST_USER_FRIENDLY_ERROR,
+        {}
       )
       expect(mockLoggerInfo).toHaveBeenCalledWith(
         {
@@ -322,6 +329,56 @@ describe('ReviewProcessor - handleReviewProcessingError', () => {
           originalError: TEST_PROCESSING_FAILED
         },
         'Review error saved to database - status updated to failed'
+      )
+    })
+
+    test('Should pass populated guardrailData when error has guardrailAssessment', async () => {
+      const error = new Error(TEST_PROCESSING_FAILED)
+      error.stack = 'Error stack trace'
+      error.guardrailAssessment = { allAssessments: [{ pii: true }] }
+      error.policyBreakdown = [{ assessmentIndex: 0 }]
+      const processingStartTime = performance.now() - PROCESSING_TIME_2000
+
+      mockFormatErrorForUI.mockReturnValue(TEST_USER_FRIENDLY_ERROR)
+      mockSaveReviewError.mockResolvedValue()
+
+      await processor.handleReviewProcessingError(
+        TEST_REVIEW_ID,
+        error,
+        processingStartTime
+      )
+
+      expect(mockSaveReviewError).toHaveBeenCalledWith(
+        TEST_REVIEW_ID,
+        TEST_USER_FRIENDLY_ERROR,
+        {
+          guardrailAssessment: error.guardrailAssessment,
+          policyBreakdown: error.policyBreakdown
+        }
+      )
+    })
+
+    test('Should pass populated guardrailData when error has only policyBreakdown', async () => {
+      const error = new Error(TEST_PROCESSING_FAILED)
+      error.policyBreakdown = [{ assessmentIndex: 0 }]
+      const processingStartTime = performance.now() - PROCESSING_TIME_2000
+
+      mockFormatErrorForUI.mockReturnValue(TEST_USER_FRIENDLY_ERROR)
+      mockSaveReviewError.mockResolvedValue()
+
+      await processor.handleReviewProcessingError(
+        TEST_REVIEW_ID,
+        error,
+        processingStartTime
+      )
+
+      expect(mockSaveReviewError).toHaveBeenCalledWith(
+        TEST_REVIEW_ID,
+        TEST_USER_FRIENDLY_ERROR,
+        {
+          guardrailAssessment: null,
+          policyBreakdown: error.policyBreakdown
+        }
       )
     })
 

@@ -1,145 +1,22 @@
-import { createRequire } from 'node:module'
-import { pathToFileURL } from 'node:url'
-import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs'
-import mammoth from 'mammoth'
 import { createLogger } from './logging/logger.js'
 import { textNormaliser } from './text-normaliser.js'
-
-// pdfjs-dist v5 requires an explicit path to the worker — empty string no longer accepted.
-// createRequire resolves the absolute path in node_modules; pathToFileURL converts it to
-// a file:// URL that the Node.js Worker thread loader can consume on any OS/environment.
-pdfjsLib.GlobalWorkerOptions.workerSrc = pathToFileURL(
-  createRequire(import.meta.url).resolve(
-    'pdfjs-dist/legacy/build/pdf.worker.mjs'
-  )
-).href
+import { extractPdfWithLinks } from './pdf-text-extractor.js'
+import { extractDocxText } from './docx-text-extractor.js'
 
 const logger = createLogger()
 
 // ─────────────────────────────────────────────────────────────────────────────
-// PDF link extraction helpers (pdfjs-dist)
+// Constants
 // ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * Check whether two axis-aligned rectangles overlap.
- * PDF rectangles are [x1, y1, x2, y2] in bottom-left origin coordinates.
- *
- * @param {number[]} rect - annotation rectangle [x1,y1,x2,y2]
- * @param {number[]} bbox - text-item transform bounding box [x, y, w, h]
- *                          where x,y is the bottom-left corner of the glyph.
- * @returns {boolean}
- */
-function rectsOverlap(rect, bbox) {
-  const [rx1, ry1, rx2, ry2] = rect
-  const [tx, ty] = bbox
-  // Treat each text item as a point (its baseline anchor) for matching —
-  // sufficient because PDF annotation rects are drawn tightly around the
-  // visible link text.
-  return tx >= rx1 && tx <= rx2 && ty >= ry1 && ty <= ry2
-}
+const PDF_MIME = 'application/pdf'
+const DOCX_MIME =
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+const LEGACY_DOC_MIME = 'application/msword'
+const TEXT_PLAIN_MIME = 'text/plain'
 
-/**
- * Extract text from a single PDF page, weaving in hyperlink URLs wherever
- * link annotations spatially overlap with text items.
- *
- * Result format for linked spans:  anchorText [url]
- * This is then post-processed by reassemblePdfText() into proper Markdown.
- *
- * @param {import('pdfjs-dist').PDFPageProxy} page
- * @returns {Promise<string>} Plain text for the page, links as [anchor](url)
- */
-async function extractPageTextWithLinks(page) {
-  const [textContent, annotations] = await Promise.all([
-    page.getTextContent(),
-    page.getAnnotations()
-  ])
-
-  // Build lookup: only URI-type link annotations with a real URL
-  const linkAnnotations = annotations.filter(
-    (ann) => ann.subtype === 'Link' && ann.url?.startsWith('http')
-  )
-
-  if (linkAnnotations.length === 0) {
-    // Fast path: no links on this page — join text items as normal
-    return textContent.items.map((item) => item.str).join('')
-  }
-
-  // For each text item, check if it falls inside a link annotation rect.
-  // pdfjs transform = [scaleX, skewY, skewX, scaleY, tx, ty]
-  // Index 4 = tx (horizontal position), index 5 = ty (vertical position)
-  const TX_INDEX = 4
-  const TY_INDEX = 5
-  const parts = []
-  // Track which annotation is currently "open" so multi-item links are grouped
-  let currentLink = null
-  let currentAnchor = []
-
-  const flush = (nextLink) => {
-    if (currentLink && currentAnchor.length > 0) {
-      const anchorText = currentAnchor.join('').trim()
-      if (anchorText) {
-        parts.push(`[${anchorText}](${currentLink})`)
-      }
-      currentAnchor = []
-    }
-    currentLink = nextLink
-  }
-
-  for (const item of textContent.items) {
-    const tx = item.transform[TX_INDEX]
-    const ty = item.transform[TY_INDEX]
-
-    // Find which link annotation (if any) this item's anchor point falls in
-    const matchedLink = linkAnnotations.find((ann) =>
-      rectsOverlap(ann.rect, [tx, ty])
-    )
-    const matchedUrl = matchedLink ? matchedLink.url : null
-
-    if (matchedUrl !== currentLink) {
-      flush(matchedUrl)
-    }
-
-    if (matchedUrl) {
-      currentAnchor.push(item.str)
-    } else {
-      parts.push(item.str)
-    }
-  }
-
-  flush(null) // close any trailing link
-
-  return parts.join('')
-}
-
-/**
- * Extract all text from a PDF buffer, preserving hyperlinks as
- * Markdown [anchor text](url) inline syntax.
- *
- * @param {Buffer} buffer
- * @returns {Promise<string>}
- */
-async function extractPdfWithLinks(buffer) {
-  const data = new Uint8Array(buffer)
-  const loadingTask = pdfjsLib.getDocument({
-    data,
-    // Suppress pdfjs console noise about missing CMap / standard fonts
-    verbosity: 0
-  })
-
-  const doc = await loadingTask.promise
-  const pageTexts = []
-
-  for (let i = 1; i <= doc.numPages; i++) {
-    const page = await doc.getPage(i)
-    const pageText = await extractPageTextWithLinks(page)
-    pageTexts.push(pageText)
-    page.cleanup()
-  }
-
-  await doc.cleanup()
-
-  return pageTexts.join('\n\n')
-}
+// Default character count for text previews.
+const DEFAULT_PREVIEW_LENGTH = 500
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TextExtractor class
@@ -167,38 +44,12 @@ class TextExtractor {
    * @returns {Promise<string>} Normalised text with links as [anchor](url)
    */
   async extractText(buffer, mimeType, fileName = 'unknown') {
-    logger.info(
-      `Extracting text from file: ${fileName} with MIME type: ${mimeType}`
-    )
+    logger.info({ fileName, mimeType }, 'Extracting text from file')
 
     try {
-      let text = ''
-
-      switch (mimeType) {
-        case 'application/pdf':
-          text = await this.extractFromPDF(buffer)
-          break
-
-        case 'application/vnd.openxmlformats-officedocument.wordprocessingml.document':
-          text = await this.extractFromDocx(buffer)
-          break
-
-        case 'application/msword':
-          throw new Error(
-            'Legacy .doc format is not supported. Please use .docx format.'
-          )
-
-        case 'text/plain':
-          text = buffer.toString('utf-8')
-          break
-
-        default:
-          throw new Error(`Unsupported file type: ${mimeType}`)
-      }
-
-      // Pass through the normaliser: cleans artefacts while preserving
-      // all [anchor](url) tokens, headings, bullets and paragraph breaks.
-      text = this.cleanText(text)
+      const text = this.cleanText(
+        await this.dispatchExtraction(buffer, mimeType)
+      )
 
       logger.info(
         { extractedLength: text.length, fileName },
@@ -220,14 +71,31 @@ class TextExtractor {
   }
 
   /**
+   * Dispatch to the right extractor based on MIME type.
+   * @private
+   */
+  async dispatchExtraction(buffer, mimeType) {
+    switch (mimeType) {
+      case PDF_MIME:
+        return this.extractFromPDF(buffer)
+      case DOCX_MIME:
+        return this.extractFromDocx(buffer)
+      case LEGACY_DOC_MIME:
+        throw new Error(
+          'Legacy .doc format is not supported. Please use .docx format.'
+        )
+      case TEXT_PLAIN_MIME:
+        return buffer.toString('utf-8')
+      default:
+        throw new Error(`Unsupported file type: ${mimeType}`)
+    }
+  }
+
+  /**
    * Extract text from a PDF buffer.
    *
-   * Uses pdfjs-dist to read both the text content layer and the annotation
-   * layer.  Any URI link annotation whose rectangle overlaps a text-item
-   * anchor point is rendered as inline Markdown: [anchor text](url).
-   *
-   * This ensures the LLM sees the actual destination URL and does NOT treat
-   * hyperlinked anchor text as a missing reference.
+   * Delegates to pdf-text-extractor; returns block-structured output that the
+   * normaliser flattens into Markdown-with-links.
    *
    * @param {Buffer} buffer
    * @returns {Promise<string>}
@@ -235,48 +103,25 @@ class TextExtractor {
   async extractFromPDF(buffer) {
     try {
       const text = await extractPdfWithLinks(buffer)
-
       logger.info(
-        `PDF text + hyperlinks extracted via pdfjs-dist with length: ${text.length}`
+        { extractedLength: text.length },
+        'PDF text + hyperlinks extracted via pdfjs-dist'
       )
-
       return text
     } catch (error) {
-      logger.error(`PDF extraction failed: ${error.message}`)
+      logger.error({ error: error.message }, 'PDF extraction failed')
       throw new Error(`Failed to extract text from PDF: ${error.message}`)
     }
   }
 
   /**
-   * Extract text from a DOCX buffer.
-   *
-   * Uses mammoth.convertToMarkdown() (instead of extractRawText) so that
-   * hyperlinks are emitted as [anchor text](url) Markdown inline syntax,
-   * and headings/bullets are rendered as ATX Markdown (#, -, *).
+   * Extract text from a DOCX buffer. Delegates to docx-text-extractor.
    *
    * @param {Buffer} buffer
    * @returns {Promise<string>}
    */
   async extractFromDocx(buffer) {
-    try {
-      const arrayBuffer = buffer.buffer.slice(
-        buffer.byteOffset,
-        buffer.byteOffset + buffer.byteLength
-      )
-      // convertToMarkdown preserves: headings, bullets, bold, links
-      const result = await mammoth.convertToMarkdown({ arrayBuffer })
-
-      if (result.messages && result.messages.length > 0) {
-        logger.warn(
-          `DOCX extraction had warnings: ${result.messages.map((m) => m.message).join('; ')}`
-        )
-      }
-
-      return result.value
-    } catch (error) {
-      logger.error(`DOCX extraction failed: ${error.message}`)
-      throw new Error(`Failed to extract text from DOCX: ${error.message}`)
-    }
+    return extractDocxText(buffer)
   }
 
   /**
@@ -301,11 +146,11 @@ class TextExtractor {
    * @param {number} [maxLength=500]
    * @returns {string}
    */
-  getPreview(text, maxLength = 500) {
+  getPreview(text, maxLength = DEFAULT_PREVIEW_LENGTH) {
     if (!text || text.length <= maxLength) {
       return text
     }
-    return text.substring(0, maxLength) + '...'
+    return `${text.substring(0, maxLength)}...`
   }
 
   /**
