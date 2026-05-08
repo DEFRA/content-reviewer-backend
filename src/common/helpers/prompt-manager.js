@@ -66,7 +66,7 @@ The input is **plain text only** — no formatting is preserved. You cannot see 
 ## MANDATORY RULES
 
 **Score–issue consistency:**
-- Each category scoring below 5 MUST have at least one issue and one improvement
+- Each category you score below 5 MUST have at least one [PRIORITY] block where CATEGORY: exactly matches that category name — this is a hard requirement; do not output [/IMPROVEMENTS] without satisfying it
 - Categories scoring 5 MUST have zero issues
 - A score of 5 requires no locatable issues anywhere in the document — only assign after reading the entire content
 
@@ -86,7 +86,7 @@ The input is **plain text only** — no formatting is preserved. You cannot see 
 - Never raise the same issue twice for the same word, phrase, or pattern
 
 **Proportionality:**
-- Issue count must reflect actual content quality — do not manufacture issues to fill space; if you exceed 30, prioritise by severity without cutting genuine issues
+- Issue count must reflect actual content quality — do not manufacture issues to fill space. Distribute issues across the full document: aim for at least one-third of your issues from each scan section. If you have found fewer than 3 genuine issues from any scan section by the time you reach 20 total, pause and re-read that section before continuing.
 
 ---
 
@@ -102,8 +102,10 @@ The input is **plain text only** — no formatting is preserved. You cannot see 
 - Do not flag "(opens in new tab)" in link text — GOV.UK explicitly requires it
 
 **Acronym / term check:**
-- An acronym is explained if its expansion appears at or before its first use, in either direction ("Full Name (ACRONYM)" or "ACRONYM (Full Name)"). If the expansion appears after the first use, flag the first occurrence. Exception: commonly understood terms (UK, EU, VAT, NHS, etc.) do not need explaining
-- If the expansion already appears in your CURRENT: text, it is a false positive — omit the issue
+- Before flagging any acronym, read the **full sentence** that contains its first use. If that sentence already includes the expansion — in either pattern ("Full Name (ACRONYM)" or "ACRONYM (Full Name)") — the acronym is explained; do NOT flag it
+- Only flag if the acronym's first use appears in a sentence that contains no expansion, AND no expansion has appeared in any earlier sentence
+- Exception: commonly understood terms (UK, EU, VAT, NHS, etc.) do not need explaining
+- If the expansion appears anywhere in the sentence from which CURRENT is drawn, it is a false positive — omit the issue
 
 **Date handling:**
 - Self-check before flagging any date: note TODAY=[date from user prompt] and FLAGGED=[date in document], then compare year, month, and day numerically. Only flag if FLAGGED is strictly after TODAY. If you cannot complete this check, do not flag the date.
@@ -122,7 +124,7 @@ Return structured plain text only. Two sections, in order:
 - Content Completeness: X/5 – note
 - 5=Excellent (no issues), 4=Good (minor), 3=Acceptable (several), 2=Needs Work (major), 1=Poor (blocks publication)
 
-**[IMPROVEMENTS]** — one \`[PRIORITY: severity]\` block per issue (critical/high/medium/low), ordered most critical first. Each block ends at the next \`[PRIORITY:\` or \`[/IMPROVEMENTS]\`:
+**[IMPROVEMENTS]** — one \`[PRIORITY: severity]\` block per issue (critical/high/medium/low), ordered most critical first. Each block ends at the next \`[PRIORITY:\` or \`[/IMPROVEMENTS]\`. Do NOT write a closing \`[/PRIORITY]\` tag — the next opening tag or \`[/IMPROVEMENTS]\` is the delimiter. As you write each block, track which of the five categories you have covered — every category you scored below 5 must have at least one block before you close [/IMPROVEMENTS]:
 - \`REF:\` — 1-based integer, unique per issue
 - \`CATEGORY:\` — one of the five categories
 - \`START:\` — 0-based char offset from start of text inside \`<content_to_review>\`
@@ -133,9 +135,9 @@ Return structured plain text only. Two sections, in order:
 - \`SUGGESTED:\` — concrete rewrite that differs from CURRENT; no placeholders like "[insert term]"
 
 **Before writing [/IMPROVEMENTS], self-check:**
-1. For every category you scored below 5, confirm at least one [IMPROVEMENTS] block exists with that CATEGORY value. If any are missing, re-read that section of the document and add a genuine issue before closing.
+1. **Coverage gate:** Go through each of the five categories. For every one you scored below 5, count how many [PRIORITY] blocks you have written with that exact CATEGORY: value. If the count is zero for any sub-5 category, you MUST add at least one block for it now. Do NOT write [/IMPROVEMENTS] until every sub-5 category has at least one block.
 2. Confirm every block has CURRENT ≠ SUGGESTED. Remove any block where they are identical.
-3. Confirm issues span all three SCAN GUIDANCE sections (first third, middle third, final third). If all issues fall in only one or two sections, re-read the uncovered section(s) and add any genuine issues found.
+3. Count how many issues come from each scan section (first third / middle third / final third). If any section has zero issues, you MUST re-read it and add at least one genuine issue from it before closing [/IMPROVEMENTS]. If the document is long (over 20,000 characters), aim for at least 3 issues per section.
 
 **Example:**
 \`\`\`
