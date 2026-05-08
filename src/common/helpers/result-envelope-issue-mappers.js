@@ -257,16 +257,6 @@ export function dedupeOverlaps(sortedPairs) {
   let cursor = 0
   for (const pair of sortedPairs) {
     if (pair.issue.absStart < cursor) {
-      logger.warn(
-        {
-          absStart: pair.issue.absStart,
-          absEnd: pair.issue.absEnd,
-          cursor,
-          originalIdx: pair.originalIdx,
-          ref: pair.issue.ref
-        },
-        '[result-envelope] Dropping overlapping issue span'
-      )
       continue
     }
     deduped.push(pair)
@@ -300,7 +290,7 @@ export function isValidImprovement(improvement) {
  * @param {boolean} useRefMatching
  * @returns {{ sortedIssues: Array, sortedImprovements: Array }}
  */
-export function buildSortedResults(deduped, improvements, useRefMatching) {
+export function buildSortedResults(deduped) {
   const validPairs = deduped.filter((pair) =>
     isValidImprovement(pair.improvement)
   )
@@ -324,26 +314,6 @@ export function buildSortedResults(deduped, improvements, useRefMatching) {
     start: pair.issue.absStart,
     end: pair.issue.absEnd
   }))
-
-  const matchedRefs = new Set(
-    validPairs
-      .filter((p) => p.improvement !== null)
-      .map((p) =>
-        useRefMatching ? p.issue.ref : improvements.indexOf(p.improvement)
-      )
-  )
-  const unmatchedCount = useRefMatching
-    ? improvements.filter(
-        (imp) => imp.ref !== undefined && !matchedRefs.has(imp.ref)
-      ).length
-    : Math.max(0, improvements.length - deduped.length)
-
-  if (unmatchedCount > 0) {
-    logger.warn(
-      { unmatchedCount, useRefMatching },
-      '[result-envelope] Unmatched improvements discarded (no corresponding highlight in text)'
-    )
-  }
 
   return { sortedIssues, sortedImprovements }
 }
@@ -377,5 +347,5 @@ export function sortAndAlignPairs(canonicalText, issues, improvements) {
     refMap
   )
   const deduped = dedupeOverlaps(pairs)
-  return buildSortedResults(deduped, improvements, useRefMatching)
+  return buildSortedResults(deduped)
 }

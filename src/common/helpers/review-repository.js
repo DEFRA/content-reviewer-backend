@@ -265,17 +265,7 @@ class ReviewRepositoryS3 {
       throw new Error(`Review not found: ${reviewId}`)
     }
 
-    logger.info(
-      {
-        reviewId,
-        statusBefore: review.status,
-        statusAfter: status,
-        fileNameBefore: review.fileName,
-        createdAtBefore: review.createdAt
-      },
-      'Updating review status'
-    )
-
+    const statusBefore = review.status
     const now = new Date().toISOString()
     const preservedFields = preserveImmutableFields(review)
 
@@ -300,9 +290,10 @@ class ReviewRepositoryS3 {
     logger.info(
       {
         reviewId,
-        status: review.status,
-        fileNameAfter: review.fileName,
-        createdAtAfter: review.createdAt,
+        statusBefore,
+        statusAfter: review.status,
+        fileName: review.fileName,
+        createdAt: review.createdAt,
         updatedAt: review.updatedAt
       },
       'Updating review status'

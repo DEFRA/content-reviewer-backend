@@ -33,7 +33,7 @@ const adminRoutes = {
             if (!isAuthorised(request)) {
               logger.warn(
                 { path: request.path },
-                'Unauthorised access attempt to admin endpoint'
+                'POST /admin/prompt/upload - Unauthorised access attempt'
               )
               return h
                 .response({ error: 'Unauthorized' })
@@ -41,7 +41,9 @@ const adminRoutes = {
             }
             try {
               await promptManager.uploadPrompt()
-              logger.info('System prompt uploaded to S3 via admin endpoint')
+              logger.info(
+                'POST /admin/prompt/upload - System prompt uploaded to S3'
+              )
               return h
                 .response({
                   message: 'System prompt uploaded to S3 successfully',
@@ -51,7 +53,7 @@ const adminRoutes = {
             } catch (error) {
               logger.error(
                 { error: error.message },
-                'Failed to upload system prompt via admin endpoint'
+                'POST /admin/prompt/upload - Failed to upload system prompt'
               )
               return h
                 .response({
@@ -69,14 +71,16 @@ const adminRoutes = {
             if (!isAuthorised(request)) {
               logger.warn(
                 { path: request.path },
-                'Unauthorised access attempt to admin endpoint'
+                'POST /admin/prompt/cache/clear - Unauthorised access attempt'
               )
               return h
                 .response({ error: 'Unauthorized' })
                 .code(HTTP_UNAUTHORIZED)
             }
             promptManager.clearCache()
-            logger.info('System prompt cache cleared via admin endpoint')
+            logger.info(
+              'POST /admin/prompt/cache/clear - System prompt cache cleared'
+            )
             return h
               .response({
                 message:
