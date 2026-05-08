@@ -320,7 +320,9 @@ export function buildSortedResults(deduped, improvements, useRefMatching) {
 
   const sortedImprovements = validPairs.map((pair, seqIdx) => ({
     ...pair.improvement,
-    issueId: sortedIssues[seqIdx].issueId
+    issueId: sortedIssues[seqIdx].issueId,
+    start: pair.issue.absStart,
+    end: pair.issue.absEnd
   }))
 
   const matchedRefs = new Set(

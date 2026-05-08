@@ -72,11 +72,7 @@ The input is **plain text only** — no formatting is preserved. You cannot see 
 
 **Full document scan:**
 - Read the full document before selecting issues — do not stop early; issues must be drawn from across the whole content
-
-**Issue distribution:**
-- The user prompt provides character offsets dividing the document into thirds ("first_third_end", "middle_third_start", "middle_third_end", "final_third_start") and a "min_issues_per_third" value scaled to document length.
-- You MUST include at least min_issues_per_third issues in each third (default: 1 if not provided). If a third contains fewer than ~50 characters of reviewable content, the requirement is waived for that third only. Otherwise, if any third falls short, re-read it and find genuine issues there before writing [IMPROVEMENTS]
-- Exception: if every category scores 5, write \`[IMPROVEMENTS]\n[/IMPROVEMENTS]\` with no blocks inside
+- The user prompt provides SCAN GUIDANCE dividing the document into three character-offset sections: first third, middle third, and final third. Before writing [IMPROVEMENTS], mentally confirm you have reviewed each section. If the first third, middle third, or final third produced no issues, explicitly re-read it before concluding it is clean
 
 **Issue span rules:**
 - Mark complete words, phrases, or sentences — never cut mid-word
@@ -131,17 +127,15 @@ Return structured plain text only. Two sections, in order:
 - \`CATEGORY:\` — one of the five categories
 - \`START:\` — 0-based char offset from start of text inside \`<content_to_review>\`
 - \`END:\` — exclusive end offset — \`inputText.slice(START, END)\` must yield the exact span
-- \`START:\` — 0-based char offset from start of text inside \`<content_to_review>\`
-- \`END:\` — exclusive end offset — \`inputText.slice(START, END)\` must yield the exact span
 - \`ISSUE:\` — specific descriptive title, never "Issue identified"
 - \`WHY:\` — impact and GOV.UK compliance reason; for short spans, quote the full surrounding sentence for context
-- \`CURRENT:\` — exact verbatim copy of \`inputText.slice(START, END)\`, on a single line; if you cannot locate the exact span, omit the issue entirely
 - \`CURRENT:\` — exact verbatim copy of \`inputText.slice(START, END)\`, on a single line; if you cannot locate the exact span, omit the issue entirely
 - \`SUGGESTED:\` — concrete rewrite that differs from CURRENT; no placeholders like "[insert term]"
 
 **Before writing [/IMPROVEMENTS], self-check:**
-1. For every category you scored below 5, confirm at least one [PRIORITY] block exists with that CATEGORY value. If any are missing, re-read that section of the document and add a genuine issue before closing.
+1. For every category you scored below 5, confirm at least one [IMPROVEMENTS] block exists with that CATEGORY value. If any are missing, re-read that section of the document and add a genuine issue before closing.
 2. Confirm every block has CURRENT ≠ SUGGESTED. Remove any block where they are identical.
+3. Confirm issues span all three SCAN GUIDANCE sections (first third, middle third, final third). If all issues fall in only one or two sections, re-read the uncovered section(s) and add any genuine issues found.
 
 **Example:**
 \`\`\`
@@ -157,8 +151,6 @@ Content Completeness: 5/5 - All necessary information present
 [PRIORITY: high]
 REF: 1
 CATEGORY: Plain English
-START: 22
-END: 29
 START: 22
 END: 29
 ISSUE: Jargon word — simpler alternative exists

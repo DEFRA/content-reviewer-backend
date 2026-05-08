@@ -1,17 +1,10 @@
 import { createLogger } from './logging/logger.js'
-import {
-  parseIssuePositions,
-  parseReviewedContent,
-  locateTextInDocument
-} from './review-parser-issues.js'
+import { locateTextInDocument } from './review-parser-issues.js'
 import { parseImprovements } from './review-parser-improvements.js'
 
 const logger = createLogger()
 
 const SCORES_TAG = '[SCORES]'
-const REVIEWED_CONTENT_TAG = '[REVIEWED_CONTENT]'
-const ISSUE_POSITIONS_TAG = '[ISSUE_POSITIONS]'
-const ISSUE_POSITIONS_CLOSE_TAG = '[/ISSUE_POSITIONS]'
 const IMPROVEMENTS_TAG = '[IMPROVEMENTS]'
 const TYPE_PLAIN_ENGLISH = 'plain-english'
 
@@ -152,37 +145,6 @@ function extractScores(bedrockResponse) {
   return {}
 }
 
-function extractReviewedContent(bedrockResponse, originalText) {
-  const issuePositionsStart = bedrockResponse.indexOf(ISSUE_POSITIONS_TAG)
-  const issuePositionsEnd = bedrockResponse.indexOf(ISSUE_POSITIONS_CLOSE_TAG)
-  if (
-    issuePositionsStart !== -1 &&
-    issuePositionsEnd !== -1 &&
-    issuePositionsEnd > issuePositionsStart
-  ) {
-    return parseIssuePositions(
-      bedrockResponse.substring(
-        issuePositionsStart + ISSUE_POSITIONS_TAG.length,
-        issuePositionsEnd
-      ),
-      originalText
-    )
-  }
-
-  const contentStart = bedrockResponse.indexOf(REVIEWED_CONTENT_TAG)
-  const contentEnd = bedrockResponse.indexOf('[/REVIEWED_CONTENT]')
-  if (contentStart !== -1 && contentEnd !== -1 && contentEnd > contentStart) {
-    return parseReviewedContent(
-      bedrockResponse.substring(
-        contentStart + REVIEWED_CONTENT_TAG.length,
-        contentEnd
-      )
-    )
-  }
-
-  return { plainText: originalText, issues: [] }
-}
-
 function extractImprovements(bedrockResponse, originalText = '') {
   const improvementsStart = bedrockResponse.indexOf(IMPROVEMENTS_TAG)
   const improvementsEnd = bedrockResponse.indexOf('[/IMPROVEMENTS]')
@@ -235,17 +197,8 @@ function buildIssuesFromImprovements(improvements, originalText) {
 function parseMarkerBasedReview(bedrockResponse, originalText = '') {
   const scores = extractScores(bedrockResponse)
   const improvements = extractImprovements(bedrockResponse, originalText)
-
-  let reviewedContent
-  if (
-    bedrockResponse.includes(ISSUE_POSITIONS_TAG) ||
-    bedrockResponse.includes(REVIEWED_CONTENT_TAG)
-  ) {
-    reviewedContent = extractReviewedContent(bedrockResponse, originalText)
-  } else {
-    const issues = buildIssuesFromImprovements(improvements, originalText)
-    reviewedContent = { plainText: originalText, issues }
-  }
+  const issues = buildIssuesFromImprovements(improvements, originalText)
+  const reviewedContent = { plainText: originalText, issues }
 
   logger.info(
     {
@@ -286,8 +239,6 @@ export function parseBedrockResponse(
 
     const hasMarkers =
       responseToParse.includes(SCORES_TAG) ||
-      responseToParse.includes(REVIEWED_CONTENT_TAG) ||
-      responseToParse.includes(ISSUE_POSITIONS_TAG) ||
       responseToParse.includes(IMPROVEMENTS_TAG)
 
     if (hasMarkers) {

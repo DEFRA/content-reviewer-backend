@@ -93,7 +93,7 @@ describe('buildEnvelope — null canonicalText (ternary false branch, line 153)'
     )
     expect(envelope.documentId).toBe(REVIEW_ID)
     expect(envelope.status).toBe('completed')
-    expect(Array.isArray(envelope.issues)).toBe(true)
+    expect(Array.isArray(envelope.improvements)).toBe(true)
   })
 })
 
@@ -104,7 +104,8 @@ describe('buildEnvelope — null canonicalText (ternary false branch, line 153)'
 describe('buildEnvelope — reviewedContent without issues (line 124 || [] branch)', () => {
   it('treats rawIssues as empty array when reviewedContent.issues is absent', () => {
     const parsedReview = makeParsedReview({
-      reviewedContent: {} // no `issues` key → triggers || []
+      reviewedContent: {}, // no `issues` key → triggers || []
+      improvements: []
     })
     const envelope = resultEnvelopeStore.buildEnvelope(
       REVIEW_ID,
@@ -113,8 +114,8 @@ describe('buildEnvelope — reviewedContent without issues (line 124 || [] branc
       null
     )
     expect(envelope.documentId).toBe(REVIEW_ID)
-    expect(Array.isArray(envelope.issues)).toBe(true)
-    expect(envelope.issues).toHaveLength(0)
+    expect(Array.isArray(envelope.improvements)).toBe(true)
+    expect(envelope.improvements).toHaveLength(0)
   })
 })
 
@@ -149,7 +150,7 @@ describe('buildEnvelope — rawIssue without ref, no improvements (line 140 ?? n
       null
     )
     expect(envelope.documentId).toBe(REVIEW_ID)
-    expect(Array.isArray(envelope.issues)).toBe(true)
+    expect(Array.isArray(envelope.improvements)).toBe(true)
   })
 })
 
@@ -176,6 +177,6 @@ describe('buildEnvelope — rawIssue with unknown ref, no improvements (line 141
       null
     )
     expect(envelope.documentId).toBe(REVIEW_ID)
-    expect(Array.isArray(envelope.issues)).toBe(true)
+    expect(Array.isArray(envelope.improvements)).toBe(true)
   })
 })

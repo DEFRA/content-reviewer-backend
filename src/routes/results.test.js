@@ -18,19 +18,6 @@ vi.mock('../common/helpers/logging/logger.js', () => ({
   }))
 }))
 
-vi.mock('../config.js', () => {
-  const configValues = {
-    's3.bucket': 'test-bucket',
-    'cors.origin': ['*'],
-    'cors.credentials': true
-  }
-  return {
-    config: {
-      get: vi.fn((key) => configValues[key] ?? null)
-    }
-  }
-})
-
 import { reviewRepository } from '../common/helpers/review-repository.js'
 import { results } from './results.js'
 
@@ -50,208 +37,16 @@ function createMockRequest(params = {}, query = {}) {
   }
 }
 
-function buildCompletedReview(overrides = {}) {
-  return {
-    status: 'completed',
-    result: { reviewData: { scores: {} }, originalText: 'hello' },
-    s3Key: 'reviews/job-123/result.json',
-    fileName: 'test.pdf',
-    createdAt: new Date('2024-01-01'),
-    processingCompletedAt: new Date('2024-01-02'),
-    error: null,
-    ...overrides
-  }
-}
-
 describe('results plugin', () => {
   it('exports a hapi plugin named results', () => {
     expect(results.plugin.name).toBe('results')
     expect(typeof results.plugin.register).toBe('function')
   })
 
-  it('registers two routes on the server', () => {
+  it('registers one route on the server', () => {
     const server = { route: vi.fn() }
     results.plugin.register(server)
-    expect(server.route).toHaveBeenCalledTimes(2)
-  })
-})
-
-function getResultRouteHandler() {
-  const routes = []
-  const server = { route: vi.fn((r) => routes.push(r)) }
-  results.plugin.register(server)
-  return routes.find(
-    (r) => r.path === '/api/results/{jobId}' && r.method === 'GET'
-  ).handler
-}
-
-describe('getResultHandler - validation', () => {
-  let getResultHandler
-
-  beforeEach(async () => {
-    vi.resetAllMocks()
-    getResultHandler = getResultRouteHandler()
-  })
-
-  it('returns 400 when jobId is missing', async () => {
-    const req = createMockRequest({ jobId: '' })
-    const h = createMockH()
-
-    await getResultHandler(req, h)
-
-    expect(h.response).toHaveBeenCalledWith(
-      expect.objectContaining({ success: false, error: 'Job ID is required' })
-    )
-    expect(h._responseMock.code).toHaveBeenCalledWith(HTTP_BAD_REQUEST)
-  })
-
-  it('returns 400 when jobId is whitespace only', async () => {
-    const req = createMockRequest({ jobId: '   ' })
-    const h = createMockH()
-
-    await getResultHandler(req, h)
-
-    expect(h._responseMock.code).toHaveBeenCalledWith(HTTP_BAD_REQUEST)
-  })
-})
-
-describe('getResultHandler - result fetching', () => {
-  let getResultHandler
-
-  beforeEach(async () => {
-    vi.resetAllMocks()
-    getResultHandler = getResultRouteHandler()
-  })
-
-  it('returns processing response when review not found', async () => {
-    reviewRepository.getReview.mockResolvedValueOnce(null)
-    const req = createMockRequest({ jobId: 'job-404' })
-    const h = createMockH()
-
-    await getResultHandler(req, h)
-
-    expect(h.response).toHaveBeenCalledWith(
-      expect.objectContaining({
-        success: true,
-        data: expect.objectContaining({ status: 'processing' })
-      })
-    )
-    expect(h._responseMock.code).not.toHaveBeenCalled()
-  })
-
-  it('returns review result with s3 metadata when review found', async () => {
-    const review = buildCompletedReview()
-    reviewRepository.getReview.mockResolvedValueOnce(review)
-    const req = createMockRequest({ jobId: 'job-123' })
-    const h = createMockH()
-
-    await getResultHandler(req, h)
-
-    expect(h.response).toHaveBeenCalledWith(
-      expect.objectContaining({
-        success: true,
-        data: expect.objectContaining({
-          jobId: 'job-123',
-          status: 'completed',
-          s3ResultLocation: 'test-bucket/reviews/job-123/result.json',
-          metadata: {
-            bucket: 'test-bucket',
-            s3Key: 'reviews/job-123/result.json'
-          }
-        })
-      })
-    )
-  })
-
-  it('returns null s3 metadata when review has no s3Key', async () => {
-    const review = buildCompletedReview({ s3Key: null })
-    reviewRepository.getReview.mockResolvedValueOnce(review)
-    const req = createMockRequest({ jobId: 'job-125' })
-    const h = createMockH()
-
-    await getResultHandler(req, h)
-
-    expect(h.response).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({
-          s3ResultLocation: null,
-          metadata: null
-        })
-      })
-    )
-  })
-
-  it('returns 500 when repository throws', async () => {
-    reviewRepository.getReview.mockRejectedValueOnce(new Error('DB error'))
-    const req = createMockRequest({ jobId: 'job-err' })
-    const h = createMockH()
-
-    await getResultHandler(req, h)
-
-    expect(h.response).toHaveBeenCalledWith(
-      expect.objectContaining({ success: false })
-    )
-    expect(h._responseMock.code).toHaveBeenCalledWith(
-      HTTP_INTERNAL_SERVER_ERROR
-    )
-  })
-})
-
-describe('getResultHandler - response field fallbacks', () => {
-  let getResultHandler
-
-  beforeEach(async () => {
-    vi.resetAllMocks()
-    getResultHandler = getResultRouteHandler()
-  })
-
-  it('sets failedAt from review.updatedAt when status is failed', async () => {
-    const updatedAt = new Date('2024-01-05T00:00:00Z')
-    const review = buildCompletedReview({ status: 'failed', updatedAt })
-    reviewRepository.getReview.mockResolvedValueOnce(review)
-    const req = createMockRequest({ jobId: 'job-failed' })
-    const h = createMockH()
-
-    await getResultHandler(req, h)
-
-    expect(h.response).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({ failedAt: updatedAt })
-      })
-    )
-  })
-
-  it('returns null originalText, empty issues, null summary and metrics when result fields are absent', async () => {
-    const review = buildCompletedReview({ result: {} })
-    reviewRepository.getReview.mockResolvedValueOnce(review)
-    const req = createMockRequest({ jobId: 'job-minimal' })
-    const h = createMockH()
-
-    await getResultHandler(req, h)
-
-    expect(h.response).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({
-          originalText: null,
-          issues: [],
-          summary: null,
-          metrics: null
-        })
-      })
-    )
-  })
-
-  it('uses empty reviewDataKeys array when result has no reviewData', async () => {
-    const review = buildCompletedReview({ result: { originalText: 'hello' } })
-    reviewRepository.getReview.mockResolvedValueOnce(review)
-    const req = createMockRequest({ jobId: 'job-no-rdata' })
-    const h = createMockH()
-
-    await getResultHandler(req, h)
-
-    expect(h.response).toHaveBeenCalledWith(
-      expect.objectContaining({ success: true })
-    )
+    expect(server.route).toHaveBeenCalledTimes(1)
   })
 })
 

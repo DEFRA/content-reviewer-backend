@@ -29,15 +29,18 @@ async function getResultEnvelopeHandler(request, h) {
       .code(HTTP_BAD_REQUEST)
   }
 
+  const startTime = performance.now()
   logger.info({ reviewId }, '[result-envelope] GET request received')
 
   try {
+    const s3Start = performance.now()
     const review = await reviewRepository.getReview(reviewId)
+    const s3Duration = Math.round(performance.now() - s3Start)
 
     if (!review) {
       // Review not yet created — very early in the pipeline
       logger.info(
-        { reviewId },
+        { reviewId, s3DurationMs: s3Duration },
         '[result-envelope] Review not found — returning pending stub'
       )
       return h.response({
@@ -48,21 +51,30 @@ async function getResultEnvelopeHandler(request, h) {
 
     // Completed review — return the stored envelope
     if (review.status === 'completed' && review.envelope) {
+      const completedDuration = Math.round(performance.now() - startTime)
       logger.info(
         {
           reviewId,
           status: review.envelope.status,
-          issueCount: review.envelope.issueCount
+          issueCount: review.envelope.issueCount,
+          s3DurationMs: s3Duration,
+          totalDurationMs: completedDuration
         },
-        '[result-envelope] Returning completed envelope'
+        `[RESPONSE TIME] [result-envelope] Completed envelope returned in ${completedDuration}ms (S3: ${s3Duration}ms)`
       )
       return h.response({ success: true, data: review.envelope })
     }
 
     // Still processing or failed — return a stub with the current status
+    const totalDuration = Math.round(performance.now() - startTime)
     logger.info(
-      { reviewId, status: review.status },
-      '[result-envelope] Returning status stub'
+      {
+        reviewId,
+        status: review.status,
+        s3DurationMs: s3Duration,
+        totalDurationMs: totalDuration
+      },
+      `[RESPONSE TIME] [result-envelope] Status stub returned in ${totalDuration}ms (status: ${review.status})`
     )
     const stub = resultEnvelopeStore.buildStubEnvelope(reviewId, review.status)
     if (review.status === 'failed' && review.error?.message) {
@@ -70,8 +82,14 @@ async function getResultEnvelopeHandler(request, h) {
     }
     return h.response({ success: true, data: stub })
   } catch (error) {
+    const totalDuration = Math.round(performance.now() - startTime)
     logger.error(
-      { reviewId, error: error.message, stack: error.stack },
+      {
+        reviewId,
+        error: error.message,
+        stack: error.stack,
+        totalDurationMs: totalDuration
+      },
       '[result-envelope] Failed to read result envelope'
     )
 

@@ -1,5 +1,4 @@
 import { createLogger } from './logging/logger.js'
-import { SCORE_SCALE_FACTOR } from './result-envelope-issue-mappers.js'
 
 const logger = createLogger()
 
@@ -80,16 +79,16 @@ export function buildPlainSpan(canonicalText, links, from, to) {
 
 /**
  * Split the canonical text into a sequence of plain and highlighted spans
- * based on the issue offsets.  Issues MUST already be sorted by absStart
- * and free of overlaps (i.e. produced by sortAndAlignPairs).
+ * based on improvement offsets. Improvements MUST already be sorted by start
+ * and free of overlaps (i.e. produced by buildEnvelope).
  * @param {string}       canonicalText
- * @param {Array}        sortedIssues
+ * @param {Array}        sortedImprovements
  * @param {Array|null}   [linkMap]
  * @returns {Array}
  */
 export function buildAnnotatedSections(
   canonicalText,
-  sortedIssues,
+  sortedImprovements,
   linkMap = null
 ) {
   if (!canonicalText) {
@@ -100,24 +99,24 @@ export function buildAnnotatedSections(
   const sections = []
   let cursor = 0
 
-  for (let seqIdx = 0; seqIdx < sortedIssues.length; seqIdx++) {
-    const { absStart, absEnd, category } = sortedIssues[seqIdx]
+  for (let seqIdx = 0; seqIdx < sortedImprovements.length; seqIdx++) {
+    const { start, end, category } = sortedImprovements[seqIdx]
 
-    if (absStart > cursor) {
+    if (start > cursor) {
       sections.push({
-        text: buildPlainSpan(canonicalText, links, cursor, absStart),
+        text: buildPlainSpan(canonicalText, links, cursor, start),
         issueIdx: null,
         category: null
       })
     }
 
     sections.push({
-      text: canonicalText.slice(absStart, absEnd),
+      text: canonicalText.slice(start, end),
       issueIdx: seqIdx,
       category
     })
 
-    cursor = absEnd
+    cursor = end
   }
 
   if (cursor < canonicalText.length) {
@@ -132,7 +131,8 @@ export function buildAnnotatedSections(
 }
 
 /**
- * Derive the flat 0-100 scores object from Bedrock's scored map.
+ * Derive the flat scores object from Bedrock's scored map.
+ * Values are stored as 1–5 matching the LLM output and the frontend display.
  * @param {Object} rawScores
  * @returns {Object}
  */
@@ -141,10 +141,7 @@ export function mapScores(rawScores) {
 
   for (const [key, val] of Object.entries(rawScores || {})) {
     const lk = key.toLowerCase()
-    scoreMap[lk] = {
-      value: Math.round((val.score || 0) * SCORE_SCALE_FACTOR),
-      note: val.note || ''
-    }
+    scoreMap[lk] = { value: val.score || 0, note: val.note || '' }
   }
 
   const pick = (keys) => {
@@ -168,15 +165,6 @@ export function mapScores(rawScores) {
   ])
   const completeness = pick(['content completeness', 'completeness'])
 
-  const all = [plainEnglish, clarity, accessibility, govukStyle, completeness]
-  const nonZero = all.filter((s) => s.value > 0)
-  const overallValue =
-    nonZero.length > 0
-      ? Math.round(
-          nonZero.reduce((sum, s) => sum + s.value, 0) / nonZero.length
-        )
-      : 0
-
   return {
     plainEnglish: plainEnglish.value,
     plainEnglishNote: plainEnglish.note,
@@ -187,9 +175,6 @@ export function mapScores(rawScores) {
     govukStyle: govukStyle.value,
     govukStyleNote: govukStyle.note,
     completeness: completeness.value,
-    completenessNote: completeness.note,
-    overall: overallValue,
-    style: govukStyle.value,
-    tone: clarity.value
+    completenessNote: completeness.note
   }
 }
