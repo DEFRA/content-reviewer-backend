@@ -50,7 +50,11 @@ function extractSuggestedField(block) {
   }
 
   const valueStart = suggestedStart + SUGGESTED_MARKER.length
-  return block.substring(valueStart).trim()
+  const text = block.substring(valueStart)
+  // Strip any trailing [/PRIORITY...] tag the LLM may have appended on its own line
+  const closingTagIndex = text.indexOf('[/PRIORITY')
+  const valueEnd = closingTagIndex === -1 ? text.length : closingTagIndex
+  return text.substring(0, valueEnd).trim()
 }
 
 function currentTextExistsInDocument(current, originalText) {
@@ -136,7 +140,7 @@ export function parseImprovements(improvementsText, originalText = '') {
   const improvements = []
 
   for (const rawBlock of blocks) {
-    const block = rawBlock.replaceAll('[/PRIORITY]', '')
+    const block = rawBlock.replace(/\[\/PRIORITY[^\]]*\]/g, '')
     const improvement = parseImprovementBlock(block, originalText)
     if (improvement) {
       improvements.push(improvement)
