@@ -175,7 +175,8 @@ function buildHeuristicLineText(runs) {
 function buildLineRuns(line, findUrlForItem) {
   const runs = []
   for (const it of line.items) {
-    const text = String(it.str || '')
+    let text = String(it.str || '')
+    text = text.replace(/\u00A0/g, ' ').replace(/\s+/g, ' ')
     if (!text || text.trim() === '') {
       continue
     }
