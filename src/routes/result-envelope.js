@@ -30,7 +30,7 @@ async function getResultEnvelopeHandler(request, h) {
   }
 
   const startTime = performance.now()
-  logger.info({ reviewId }, '[result-envelope] GET request received')
+  logger.info({ reviewId }, 'GET /api/result/{reviewId} request received')
 
   try {
     const s3Start = performance.now()
@@ -41,7 +41,7 @@ async function getResultEnvelopeHandler(request, h) {
       // Review not yet created — very early in the pipeline
       logger.info(
         { reviewId, s3DurationMs: s3Duration },
-        '[result-envelope] Review not found — returning pending stub'
+        'GET /api/result/{reviewId} - Review not found — returning pending stub'
       )
       return h.response({
         success: true,
@@ -60,7 +60,7 @@ async function getResultEnvelopeHandler(request, h) {
           s3DurationMs: s3Duration,
           totalDurationMs: completedDuration
         },
-        `[RESPONSE TIME] [result-envelope] Completed envelope returned in ${completedDuration}ms (S3: ${s3Duration}ms)`
+        `[RESPONSE TIME] GET /api/result/{reviewId} completed envelope returned in ${completedDuration}ms (S3: ${s3Duration}ms)`
       )
       return h.response({ success: true, data: review.envelope })
     }
@@ -74,7 +74,7 @@ async function getResultEnvelopeHandler(request, h) {
         s3DurationMs: s3Duration,
         totalDurationMs: totalDuration
       },
-      `[RESPONSE TIME] [result-envelope] Status stub returned in ${totalDuration}ms (status: ${review.status})`
+      `[RESPONSE TIME] GET /api/result/{reviewId} status stub returned in ${totalDuration}ms (status: ${review.status})`
     )
     const stub = resultEnvelopeStore.buildStubEnvelope(reviewId, review.status)
     if (review.status === 'failed' && review.error?.message) {
@@ -90,7 +90,7 @@ async function getResultEnvelopeHandler(request, h) {
         stack: error.stack,
         totalDurationMs: totalDuration
       },
-      '[result-envelope] Failed to read result envelope'
+      'GET /api/result/{reviewId} failed to read result envelope'
     )
 
     return h

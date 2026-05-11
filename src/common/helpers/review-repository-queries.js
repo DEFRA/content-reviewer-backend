@@ -102,15 +102,6 @@ export async function getRecentReviews(
     // Sort reviews by lastModified for most accurate ordering
     sortReviewsByLastModified(reviews)
 
-    logger.info(
-      {
-        fetchedCount: response.Contents.length,
-        requestedLimit: limit,
-        returnedCount: reviews.length
-      },
-      'Retrieved and sorted reviews from S3'
-    )
-
     return {
       reviews,
       hasMore: response.IsTruncated || false,

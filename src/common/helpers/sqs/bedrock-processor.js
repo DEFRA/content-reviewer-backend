@@ -175,6 +175,19 @@ export class BedrockReviewProcessor {
     )
 
     const { systemPrompt } = await this.loadSystemPrompt(reviewId)
+
+    const systemPromptTokens = Math.round(systemPrompt.length / CHARS_PER_TOKEN)
+    const estimatedTotalInputTokens = userPromptTokens + systemPromptTokens
+    logger.info(
+      {
+        reviewId,
+        estimatedTotalInputTokens,
+        userPromptTokens,
+        systemPromptTokens
+      },
+      `Estimated total input tokens: ~${estimatedTotalInputTokens} (user: ~${userPromptTokens}, system: ~${systemPromptTokens}) | ReviewId: ${reviewId}`
+    )
+
     return this.sendBedrockRequest(reviewId, userPrompt, systemPrompt)
   }
 
