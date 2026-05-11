@@ -69,8 +69,11 @@ function buildServerConfig() {
         xframe: true
       },
       timeout: {
-        socket: 90000, // 90 seconds - must be less than nginx timeout
-        server: 85000 // 85 seconds - allow time for response before socket closes
+        // Socket timeout: keeps the connection alive while a request is in-flight.
+        // Server timeout fires first (5 s earlier) so a clean 503 reaches the client
+        // before the socket is dropped. Both are set in cdp-app-config per environment.
+        socket: config.get('hapi.socketTimeoutMs'),
+        server: config.get('hapi.serverTimeoutMs')
       }
     },
     router: {
