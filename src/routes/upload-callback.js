@@ -25,7 +25,7 @@ const uploadCallbackController = {
         numberOfRejectedFiles: Joi.number().integer().required()
       }),
       failAction: (request, h, err) => {
-        request.logger.error(err, 'Upload callback validation failed')
+        request.logger.error(err, 'POST /upload-callback validation failed')
         return h
           .response({ success: false, message: err.message })
           .code(HTTP_STATUS_BAD_REQUEST)
@@ -38,13 +38,16 @@ const uploadCallbackController = {
       request.payload
 
     request.logger.info(
-      { uploadStatus, metadata, numberOfRejectedFiles },
+      { uploadStatus, numberOfRejectedFiles },
       'Upload callback received from CDP Uploader'
     )
 
     // Check if upload is ready
     if (uploadStatus !== 'ready') {
-      request.logger.warn({ uploadStatus }, 'Upload not ready yet')
+      request.logger.warn(
+        { uploadStatus },
+        'POST /upload-callback - Upload not ready yet'
+      )
       return h
         .response({ success: false, message: 'Upload not ready' })
         .code(HTTP_STATUS_OK)
@@ -54,7 +57,7 @@ const uploadCallbackController = {
     if (numberOfRejectedFiles > 0) {
       request.logger.error(
         { numberOfRejectedFiles },
-        'Files rejected during scan'
+        'POST /upload-callback - Files rejected during scan'
       )
       return h
         .response({
@@ -68,7 +71,10 @@ const uploadCallbackController = {
     // Get file details from form
     const fileField = form.file
     if (fileField?.fileStatus !== 'complete') {
-      request.logger.error({ fileField }, 'File not complete or missing')
+      request.logger.error(
+        { fileField },
+        'POST /upload-callback - File not complete or missing'
+      )
       return h
         .response({
           success: false,
@@ -81,7 +87,7 @@ const uploadCallbackController = {
     if (fileField.hasError) {
       request.logger.error(
         { errorMessage: fileField.errorMessage },
-        'File rejected with error'
+        'POST /upload-callback - File rejected with error'
       )
       return h
         .response({
