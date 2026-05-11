@@ -158,12 +158,16 @@ function readDocxNodeText(node) {
 
   // helper to handle a single child value
   const extractChild = (key, val) => {
-    if (val == null) return ''
-    if (Array.isArray(val) || typeof val === 'object')
+    if (val == null) {
+      return ''
+    }
+    if (Array.isArray(val) || typeof val === 'object') {
       return readDocxNodeText(val)
+    }
     // accept plain strings only when key explicitly denotes text (defensive)
-    if (key === 'w:t' || key === 'w:instrText' || key === '#text')
+    if (key === 'w:t' || key === 'w:instrText' || key === '#text') {
       return String(val)
+    }
     return ''
   }
 

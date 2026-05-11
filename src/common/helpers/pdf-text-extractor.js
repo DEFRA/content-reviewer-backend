@@ -367,7 +367,9 @@ function flattenPageBlocks(pageBlocks) {
  * Decide whether to insert a space between two text fragments when concatenating.
  */
 function shouldInsertSpace(prevText, nextText) {
-  if (!prevText || !nextText) return false
+  if (!prevText || !nextText) {
+    return false
+  }
   const end = prevText.slice(-1)
   const start = nextText.charAt(0)
   if (/\s/.test(end) || /\s/.test(start)) {
