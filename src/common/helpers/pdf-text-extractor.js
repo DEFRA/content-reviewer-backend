@@ -176,7 +176,7 @@ function buildLineRuns(line, findUrlForItem) {
   const runs = []
   for (const it of line.items) {
     let text = String(it.str || '')
-    text = text.replace(/\u00A0/g, ' ').replace(/\s+/g, ' ')
+    text = text.replaceAll('\u00A0', ' ').replaceAll(/\s+/g, ' ')
     if (!text || text.trim() === '') {
       continue
     }
