@@ -38,8 +38,8 @@ const uploadCallbackController = {
       request.payload
 
     request.logger.info(
-      { uploadStatus, metadata, numberOfRejectedFiles },
-      'POST /upload-callback received from CDP Uploader'
+      { uploadStatus, numberOfRejectedFiles },
+      'Upload callback received from CDP Uploader'
     )
 
     // Check if upload is ready
@@ -104,7 +104,7 @@ const uploadCallbackController = {
 
     request.logger.info(
       { userId, reviewId, contentType, s3Key, filename },
-      'POST /upload-callback - Processing uploaded file for review'
+      'Processing uploaded file for review'
     )
     return h
       .response({
