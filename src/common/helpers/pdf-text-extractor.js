@@ -363,6 +363,23 @@ function flattenPageBlocks(pageBlocks) {
   return allBlocks
 }
 
+/**
+ * Decide whether to insert a space between two text fragments when concatenating.
+ */
+function shouldInsertSpace(prevText, nextText) {
+  if (!prevText || !nextText) return false
+  const end = prevText.slice(-1)
+  const start = nextText.charAt(0)
+  if (/\s/.test(end) || /\s/.test(start)) return false
+  // avoid inserting space around punctuation that should stick to word
+  if (
+    /[-\u2013\u2014\/(\[.,:;)]/.test(start) ||
+    /[-\u2013\u2014\/(\[.,:;)]/.test(end)
+  )
+    return false
+  return true
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Block → Markdown string serialisation
 // ─────────────────────────────────────────────────────────────────────────────
@@ -377,6 +394,9 @@ function groupRunsByHref(runs) {
   let current = null
   for (const r of runs) {
     if (r.href && current?.href === r.href) {
+      if (shouldInsertSpace(current.text, r.text)) {
+        current.text += ' '
+      }
       current.text += r.text
     } else {
       current = { text: r.text, href: r.href }
@@ -405,7 +425,11 @@ function renderBlock(block) {
   if (block.type === 'sep') {
     return ''
   }
-  const text = groupRunsByHref(block.runs).map(renderGroupedRun).join('').trim()
+  const text = groupRunsByHref(block.runs)
+    .map(renderGroupedRun)
+    .join(' ')
+    .replaceAll(/\s+/g, ' ')
+    .trim()
   if (!text) {
     return ''
   }
