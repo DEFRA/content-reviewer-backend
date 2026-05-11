@@ -33,14 +33,13 @@ const handleTextReview = async (request, h) => {
 
     request.logger.info(
       {
-        endpoint: ENDPOINTS.REVIEW_TEXT,
         hasContent: !!content,
         contentLength: content?.length,
         hasTitle: !!title,
         title: title || 'untitled',
         titleLength: title?.length
       },
-      `Text review request received with title: "${title || 'NO TITLE PROVIDED'}"`
+      `POST ${ENDPOINTS.REVIEW_TEXT} request received with title: "${title || 'NO TITLE PROVIDED'}"`
     )
 
     // Validate text content
@@ -70,10 +69,9 @@ const handleTextReview = async (request, h) => {
         contentLength: content.length,
         s3Key: s3Result.key,
         totalDurationMs: requestDuration,
-        ...timings,
-        endpoint: ENDPOINTS.REVIEW_TEXT
+        ...timings
       },
-      `[RESPONSE TIME] [UPLOAD PHASE] Text review queued successfully - TOTAL: ${requestDuration}ms (S3: ${timings.s3UploadDuration}ms, DB: ${timings.dbCreateDuration}ms, SQS: ${timings.sqsSendDuration}ms)`
+      `[RESPONSE TIME] POST ${ENDPOINTS.REVIEW_TEXT} queued successfully - TOTAL: ${requestDuration}ms (S3: ${timings.s3UploadDuration}ms, DB: ${timings.dbCreateDuration}ms, SQS: ${timings.sqsSendDuration}ms)`
     )
 
     return h
@@ -95,7 +93,7 @@ const handleTextReview = async (request, h) => {
         stack: error.stack,
         durationMs: requestDuration
       },
-      `Failed to queue text review after ${requestDuration}ms`
+      `POST ${ENDPOINTS.REVIEW_TEXT} failed to queue text review after ${requestDuration}ms`
     )
 
     return h
@@ -117,21 +115,16 @@ const handleGetReview = async (request, h) => {
     const { id } = request.params
 
     request.logger.info(
-      {
-        reviewId: id,
-        endpoint: ENDPOINTS.REVIEW_BY_ID
-      },
-      'Review status request received'
+      { reviewId: id },
+      `GET ${ENDPOINTS.REVIEW_BY_ID} request received`
     )
 
     const review = await reviewRepository.getReview(id)
 
     if (!review) {
       request.logger.warn(
-        {
-          reviewId: id
-        },
-        'Review not found'
+        { reviewId: id },
+        `GET ${ENDPOINTS.REVIEW_BY_ID} - Review not found`
       )
 
       return h
@@ -154,7 +147,7 @@ const handleGetReview = async (request, h) => {
         hasError: !!review.error,
         durationMs: requestDuration
       },
-      `[RESPONSE TIME] Review status retrieved in ${requestDuration}ms`
+      `[RESPONSE TIME] GET ${ENDPOINTS.REVIEW_BY_ID} status retrieved in ${requestDuration}ms`
     )
 
     // Return review without internal fields
@@ -175,7 +168,7 @@ const handleGetReview = async (request, h) => {
         reviewId: request.params.id,
         durationMs: requestDuration
       },
-      `Failed to retrieve review after ${requestDuration}ms`
+      `GET ${ENDPOINTS.REVIEW_BY_ID} failed to retrieve review after ${requestDuration}ms`
     )
 
     return h
@@ -205,27 +198,13 @@ async function fetchAllReviewsData(query, logger) {
   )
   const userId = query.userId || null
 
-  logger.info(
-    { limit, skip, userId: userId || 'all' },
-    'Fetching reviews from S3 repository'
-  )
-
   const s3ListStart = performance.now()
   const reviews = await reviewRepository.getAllReviews(limit, skip, userId)
   const s3ListDuration = Math.round(performance.now() - s3ListStart)
-  logger.info(
-    {
-      count: reviews.length,
-      reviewIds: reviews.map((r) => r.id),
-      statuses: reviews.map((r) => r.status)
-    },
-    `Retrieved ${reviews.length} reviews from S3`
-  )
 
   const countStart = performance.now()
   const totalCount = await reviewRepository.getReviewCount(userId)
   const countDuration = Math.round(performance.now() - countStart)
-  logger.info({ totalCount }, 'Retrieved total review count from S3')
 
   return {
     limit,
@@ -244,10 +223,6 @@ async function fetchAllReviewsData(query, logger) {
  */
 const handleGetAllReviews = async (request, h) => {
   const requestStartTime = performance.now()
-  request.logger.info(
-    { query: request.query },
-    `${ENDPOINTS.REVIEWS_LIST} request received`
-  )
 
   try {
     const {
@@ -276,7 +251,7 @@ const handleGetAllReviews = async (request, h) => {
         countDurationMs: countDuration,
         totalDurationMs: requestDuration
       },
-      `[RESPONSE TIME] Reviews list returned in ${requestDuration}ms (S3 list: ${s3ListDuration}ms, count: ${countDuration}ms)`
+      `[RESPONSE TIME] GET /api/reviews returned in ${requestDuration}ms (S3 list: ${s3ListDuration}ms, count: ${countDuration}ms, reviewCount: ${formattedReviews.length})`
     )
 
     return h
@@ -302,7 +277,7 @@ const handleGetAllReviews = async (request, h) => {
         requestId: error.$metadata?.requestId,
         durationMs: requestDuration
       },
-      'Failed to get reviews'
+      `GET ${ENDPOINTS.REVIEWS_LIST} failed to get reviews`
     )
     return h
       .response({ success: false, error: 'Failed to retrieve reviews' })
@@ -337,7 +312,7 @@ const handleDeleteReview = async (request, h) => {
         deleteDurationMs: deleteDuration,
         totalDurationMs: totalDuration
       },
-      `[RESPONSE TIME] Review deleted in ${totalDuration}ms (S3: ${deleteDuration}ms, ${result.deletedCount} keys removed)`
+      `[RESPONSE TIME] DELETE ${ENDPOINTS.REVIEWS_DELETE} deleted in ${totalDuration}ms (S3: ${deleteDuration}ms, ${result.deletedCount} keys removed)`
     )
 
     return h
@@ -358,7 +333,7 @@ const handleDeleteReview = async (request, h) => {
         stack: error.stack,
         durationMs: totalDuration
       },
-      'Failed to delete review'
+      `DELETE ${ENDPOINTS.REVIEWS_DELETE} failed to delete review`
     )
 
     // Return appropriate error code

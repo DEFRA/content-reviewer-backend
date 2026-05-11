@@ -293,18 +293,9 @@ class BedrockClient {
     logger.info(
       {
         responseLength: responseText.length,
-        inputTokens: usage.inputTokens,
         stopReason: response.stopReason
       },
-      `Bedrock response received — ${responseText.length} chars, input: ${usage.inputTokens} tokens`
-    )
-
-    logger.info(
-      {
-        outputTokens: usage.outputTokens,
-        totalTokens: usage.totalTokens
-      },
-      `Bedrock output: ${usage.outputTokens} tokens (total: ${usage.totalTokens})`
+      `Bedrock response received — ${responseText.length} chars`
     )
 
     // Guardrail blocking is signalled by stopReason === 'guardrail_intervened'.
