@@ -370,13 +370,16 @@ function shouldInsertSpace(prevText, nextText) {
   if (!prevText || !nextText) return false
   const end = prevText.slice(-1)
   const start = nextText.charAt(0)
-  if (/\s/.test(end) || /\s/.test(start)) return false
+  if (/\s/.test(end) || /\s/.test(start)) {
+    return false
+  }
   // avoid inserting space around punctuation that should stick to word
   if (
-    /[-\u2013\u2014\/(\[.,:;)]/.test(start) ||
-    /[-\u2013\u2014\/(\[.,:;)]/.test(end)
-  )
+    /[-\u2013\u2014/([.,:;)]/.test(start) ||
+    /[-\u2013\u2014/([.,:;)]/.test(end)
+  ) {
     return false
+  }
   return true
 }
 

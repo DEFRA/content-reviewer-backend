@@ -135,42 +135,41 @@ function readDocxNodeText(node) {
     return ''
   }
 
-  // prefer explicit instruction text (field codes) but strip known keywords
-  if (node['w:instrText'] !== undefined) {
-    const raw =
-      typeof node['w:instrText'] === 'string'
-        ? node['w:instrText']
-        : node['w:instrText']['#text'] || ''
+  const cleanInstr = (instr) => {
+    const raw = typeof instr === 'string' ? instr : instr['#text'] || ''
     return String(raw)
-      .replace(
+      .replaceAll(
         /(?:\bPAGEREF\b|_Toc|\\h|\bbegin\b|\bend\b|MERGEFORMAT|\{|\})/gi,
         ''
       )
-      .replace(/\u00A0/g, ' ')
+      .replaceAll('\u00A0', ' ')
   }
 
+  // fast-path explicit nodes
+  if (node['w:instrText'] !== undefined) {
+    return cleanInstr(node['w:instrText'])
+  }
   if (node['w:t'] !== undefined) {
-    return readWtValue(node['w:t']).replace(/\u00A0/g, ' ')
+    return readWtValue(node['w:t']).replaceAll('\u00A0', ' ')
   }
-
   if (node['#text'] !== undefined) {
     return String(node['#text'])
   }
 
-  // Descend only into child objects/arrays. Skip plain string attribute values.
+  // helper to handle a single child value
+  const extractChild = (key, val) => {
+    if (val == null) return ''
+    if (Array.isArray(val) || typeof val === 'object')
+      return readDocxNodeText(val)
+    // accept plain strings only when key explicitly denotes text (defensive)
+    if (key === 'w:t' || key === 'w:instrText' || key === '#text')
+      return String(val)
+    return ''
+  }
+
   let text = ''
   for (const k of Object.keys(node)) {
-    const val = node[k]
-    if (val == null) continue
-    if (Array.isArray(val) || typeof val === 'object') {
-      text += readDocxNodeText(val)
-    } else {
-      // accept plain string only if it is explicitly a text node key (defensive)
-      if (k === 'w:t' || k === 'w:instrText' || k === '#text') {
-        text += String(val)
-      }
-      // otherwise skip attribute-like strings (rsid, ids, etc.)
-    }
+    text += extractChild(k, node[k])
   }
   return text
 }
@@ -294,13 +293,13 @@ function processDocxParagraph(p, rels) {
   if (isToc && runs.length > 0) {
     const cleaned = runs
       .map((r) => {
-        let t = (r.text || '')
+        const t = (r.text || '')
           // remove long digit sequences (>5 digits) likely internal IDs
-          .replace(/\b\d{6,}\b/g, '')
+          .replaceAll(/\b\d{6,}\b/g, '')
           // remove hex-like control tokens e.g. 00AF001C
-          .replace(/\b00[A-Fa-f0-9]{2}(?:[A-Fa-f0-9]{2})*\b/g, '')
+          .replaceAll(/\b00[A-Fa-f0-9]{2}(?:[A-Fa-f0-9]{2})*\b/g, '')
           // collapse excess whitespace
-          .replace(/\s{2,}/g, ' ')
+          .replaceAll(/\s{2,}/g, ' ')
           .trim()
         return { ...r, text: t }
       })
