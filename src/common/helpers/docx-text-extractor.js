@@ -669,6 +669,7 @@ export function docxXmlToParagraphObjects(documentXml, relsXml) {
           ''
         )
         .replace(/<\/?[^>]+>/g, '')
+        .replace(/[<>]/g, '')
       out = safe
     }
 
