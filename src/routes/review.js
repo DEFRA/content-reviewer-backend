@@ -240,19 +240,25 @@ const handleGetAllReviews = async (request, h) => {
     )
 
     const requestDuration = Math.round(performance.now() - requestStartTime)
-    request.logger.info(
-      {
-        count: formattedReviews.length,
-        totalCount,
-        limit,
-        skip,
-        userId: userId || 'all',
-        s3ListDurationMs: s3ListDuration,
-        countDurationMs: countDuration,
-        totalDurationMs: requestDuration
-      },
-      `[RESPONSE TIME] GET /api/reviews returned in ${requestDuration}ms (S3 list: ${s3ListDuration}ms, count: ${countDuration}ms, reviewCount: ${formattedReviews.length})`
-    )
+    const lastKnownCount = Number.parseInt(request.query.lastKnownCount, 10)
+    const countChanged =
+      Number.isNaN(lastKnownCount) || lastKnownCount !== formattedReviews.length
+
+    if (countChanged) {
+      request.logger.info(
+        {
+          count: formattedReviews.length,
+          totalCount,
+          limit,
+          skip,
+          userId: userId || 'all',
+          s3ListDurationMs: s3ListDuration,
+          countDurationMs: countDuration,
+          totalDurationMs: requestDuration
+        },
+        `[RESPONSE TIME] GET /api/reviews returned in ${requestDuration}ms (S3 list: ${s3ListDuration}ms, count: ${countDuration}ms, reviewCount: ${formattedReviews.length})`
+      )
+    }
 
     return h
       .response({
