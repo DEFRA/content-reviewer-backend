@@ -123,7 +123,8 @@ describe('BedrockReviewProcessor - sendBedrockRequest - Success Cases', () => {
     expect(mockSendMessage).toHaveBeenCalledWith(
       'User prompt content',
       [],
-      'System prompt content'
+      'System prompt content',
+      null
     )
   })
 
@@ -274,7 +275,8 @@ describe('BedrockReviewProcessor - performBedrockReview', () => {
       expect(mockSendMessage).toHaveBeenCalledWith(
         expect.stringContaining('<content_to_review>'),
         expect.any(Array),
-        expect.any(String)
+        expect.any(String),
+        null
       )
     })
 

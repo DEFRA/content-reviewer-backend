@@ -18,8 +18,7 @@ const mockUpdateReviewStatus = vi.fn()
 const mockSaveReviewResult = vi.fn()
 const mockDeleteMessage = vi.fn()
 const mockExtractTextContent = vi.fn()
-const mockPerformBedrockReview = vi.fn()
-const mockParseBedrockResponseData = vi.fn()
+const mockPerformChunkedReview = vi.fn()
 
 vi.mock('../logging/logger.js', () => ({
   createLogger: () => ({
@@ -57,9 +56,7 @@ vi.mock('./content-extractor.js', () => ({
 vi.mock('./bedrock-processor.js', () => ({
   BedrockReviewProcessor: vi.fn(function () {
     return {
-      performBedrockReview: (...args) => mockPerformBedrockReview(...args),
-      parseBedrockResponseData: (...args) =>
-        mockParseBedrockResponseData(...args)
+      performChunkedReview: (...args) => mockPerformChunkedReview(...args)
     }
   })
 }))
@@ -104,17 +101,19 @@ describe('ReviewProcessor - processMessage - successful processing', () => {
         canonicalText: TEST_SAMPLE_TEXT,
         displayText: null
       })
-      mockPerformBedrockReview.mockResolvedValue({
-        bedrockResponse: {
-          usage: { inputTokens: 100, outputTokens: 50 },
-          stopReason: 'end_turn'
-        },
-        bedrockDuration: 1500
-      })
-      mockParseBedrockResponseData.mockResolvedValue({
+      mockPerformChunkedReview.mockResolvedValue({
         parsedReview: { score: 85 },
+        parseDuration: 200,
         finalReviewContent: TEST_REVIEW_CONTENT,
-        parseDuration: 200
+        bedrockResult: {
+          bedrockResponse: {
+            usage: { inputTokens: 100, outputTokens: 50 },
+            stopReason: 'end_turn'
+          },
+          bedrockDuration: 1500
+        },
+        bedrockDuration: 1500,
+        chunks: []
       })
       mockUpdateReviewStatus.mockResolvedValue()
       mockSaveReviewResult.mockResolvedValue()
@@ -250,18 +249,20 @@ describe('ReviewProcessor - processMessage - heartbeat', () => {
 
     // Resolve the pending promise with the correct { canonicalText, displayText } shape
     resolveProcessing({ canonicalText: TEST_SAMPLE_TEXT, displayText: null })
-    mockPerformBedrockReview.mockResolvedValue({
-      bedrockResponse: {
-        usage: {},
-        guardrailAssessment: null,
-        stopReason: 'end_turn'
-      },
-      bedrockDuration: 0
-    })
-    mockParseBedrockResponseData.mockResolvedValue({
+    mockPerformChunkedReview.mockResolvedValue({
       parsedReview: {},
+      parseDuration: 0,
       finalReviewContent: '',
-      parseDuration: 0
+      bedrockResult: {
+        bedrockResponse: {
+          usage: {},
+          guardrailAssessment: null,
+          stopReason: 'end_turn'
+        },
+        bedrockDuration: 0
+      },
+      bedrockDuration: 0,
+      chunks: []
     })
     mockUpdateReviewStatus.mockResolvedValue()
     mockSaveReviewResult.mockResolvedValue()
