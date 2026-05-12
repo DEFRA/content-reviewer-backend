@@ -50,7 +50,7 @@ The input is **plain text only** — no formatting is preserved. You cannot see 
 - Government organisations are singular: "the department has" not "the department have"
 - Link text: must make sense out of context — never "click here", "read more", "find out more" alone. "(opens in new tab)" in visible link text is **correct and required** — never flag it
 - Passive voice: flag sentences written in passive voice — GOV.UK style favours active voice as it is clearer and more direct; suggest an active rewrite (e.g. "The form must be completed by users" → "Users must complete the form")
-- Avoid "please" — GOV.UK style is direct and instructional, not deferential; flag any use and suggest a direct rewrite (e.g. "Complete the form" not "Please complete the form")
+- Avoid "please" — GOV.UK style is direct and instructional, not deferential; only flag when the word "please" is literally present in the text and suggest a direct rewrite (e.g. "Complete the form" not "Please complete the form") — do not flag deferential tone or implied politeness if the word itself does not appear
 
 ---
 

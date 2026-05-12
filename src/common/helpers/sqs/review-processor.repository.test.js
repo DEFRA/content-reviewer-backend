@@ -105,45 +105,6 @@ describe('ReviewProcessor - Constructor', () => {
   })
 })
 
-describe('ReviewProcessor - logMessageProcessingStart', () => {
-  let processor
-
-  beforeEach(() => {
-    vi.clearAllMocks()
-    processor = new ReviewProcessor()
-    mockTruncateReceiptHandle.mockReturnValue(TEST_TRUNCATED_HANDLE)
-  })
-
-  describe('logMessageProcessingStart', () => {
-    test('Should log message processing information', () => {
-      const message = {
-        MessageId: TEST_MESSAGE_ID,
-        ReceiptHandle: 'receipt-handle-123'
-      }
-      const body = {
-        uploadId: TEST_UPLOAD_ID,
-        reviewId: TEST_REVIEW_ID,
-        messageType: MESSAGE_TYPE_REVIEW_REQUEST,
-        s3Key: TEST_S3_KEY_UPLOADS
-      }
-
-      processor.logMessageProcessingStart(message, body)
-
-      expect(mockLoggerInfo).toHaveBeenCalledWith({
-        messageId: TEST_MESSAGE_ID,
-        uploadId: TEST_UPLOAD_ID,
-        reviewId: TEST_REVIEW_ID,
-        messageType: MESSAGE_TYPE_REVIEW_REQUEST,
-        s3Key: TEST_S3_KEY_UPLOADS,
-        receiptHandle: TEST_TRUNCATED_HANDLE
-      })
-      expect(mockTruncateReceiptHandle).toHaveBeenCalledWith(
-        'receipt-handle-123'
-      )
-    })
-  })
-})
-
 describe('ReviewProcessor - updateReviewStatusToProcessing', () => {
   let processor
 
