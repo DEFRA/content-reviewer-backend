@@ -154,27 +154,16 @@ export function mapScores(rawScores) {
   }
 
   const plainEnglish = pick(['plain english', 'plain-english'])
-  const clarity = pick(['clarity & structure', 'clarity', 'structure'])
-  const accessibility = pick(['accessibility', 'accessible'])
   const govukStyle = pick([
     'gov.uk style compliance',
     'govuk style compliance',
-    'govuk style',
-    'style',
-    'formatting'
+    'govuk style'
   ])
-  const completeness = pick(['content completeness', 'completeness'])
 
   return {
     plainEnglish: plainEnglish.value,
     plainEnglishNote: plainEnglish.note,
-    clarity: clarity.value,
-    clarityNote: clarity.note,
-    accessibility: accessibility.value,
-    accessibilityNote: accessibility.note,
     govukStyle: govukStyle.value,
-    govukStyleNote: govukStyle.note,
-    completeness: completeness.value,
-    completenessNote: completeness.note
+    govukStyleNote: govukStyle.note
   }
 }
