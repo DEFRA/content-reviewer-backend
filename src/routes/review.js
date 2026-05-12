@@ -184,7 +184,7 @@ const handleGetReview = async (request, h) => {
  * Parse pagination params and fetch reviews + total count from the repository,
  * returning per-operation durations for response-time logging.
  */
-async function fetchAllReviewsData(query, logger) {
+async function fetchAllReviewsData(query) {
   const limit = Math.min(
     Math.max(
       Number.parseInt(query.limit, 10) || PAGINATION_DEFAULTS.LIMIT,
@@ -233,7 +233,7 @@ const handleGetAllReviews = async (request, h) => {
       totalCount,
       s3ListDuration,
       countDuration
-    } = await fetchAllReviewsData(request.query, request.logger)
+    } = await fetchAllReviewsData(request.query)
 
     const formattedReviews = reviews.map((review) =>
       formatReviewForList(review, request.logger)

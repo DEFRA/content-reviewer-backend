@@ -11,9 +11,11 @@ const ERROR_MESSAGES = {
   SERIALIZE_ERROR: 'Could not serialize full error'
 }
 
-// 120 seconds (2 minutes) — Bedrock responses should arrive within 30 s under
-// normal load; 120 s is the hard upper limit before we surface a timeout error.
-const BEDROCK_TIMEOUT_MS = 120_000
+// Bedrock Converse request timeout is sourced from `bedrock.timeoutMs`
+// (BEDROCK_TIMEOUT_MS) — set in cdp-app-config per environment. The default
+// of 120 s gives Bedrock its full 2-minute window before we surface a
+// timeout error. Must remain less than `sqs.heartbeatIntervalMs` so the
+// heartbeat fires first and prevents duplicate SQS delivery.
 
 /**
  * CDP-Compliant Bedrock Client
@@ -41,7 +43,7 @@ class BedrockClient {
     this.maxTokens = config.get('bedrock.maxTokens')
     this.temperature = config.get('bedrock.temperature')
     this.topP = config.get('bedrock.topP')
-    this.timeout = BEDROCK_TIMEOUT_MS
+    this.timeout = config.get('bedrock.timeoutMs')
 
     this.client = new BedrockRuntimeClient({
       region: this.region,
@@ -143,13 +145,14 @@ class BedrockClient {
     }
 
     if (error.name === 'TimeoutError' || error.code === 'ETIMEDOUT') {
+      const timeoutMs = config.get('bedrock.timeoutMs')
       logger.error(
         {
           errorName: error.name,
           errorCode: error.code,
-          timeoutMs: BEDROCK_TIMEOUT_MS
+          timeoutMs
         },
-        `[TIMEOUT] Bedrock API request timed out after ${BEDROCK_TIMEOUT_MS / 1000}s`
+        `[TIMEOUT] Bedrock API request timed out after ${timeoutMs / 1000}s`
       )
       throw new Error(
         'Bedrock API request timed out. The request took too long to process.'
