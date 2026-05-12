@@ -378,10 +378,22 @@ const config = convict({
       env: 'BEDROCK_TOP_P'
     },
     timeoutMs: {
-      doc: 'Bedrock Converse request timeout in ms. Bedrock typically responds within 30 s for normal documents; 120 s is the hard upper limit before we surface a timeout error. Must remain less than `sqs.visibilityTimeout` (180 s) and `sqs.heartbeatIntervalMs` (90 s) so the heartbeat fires first and the message is not redelivered during a slow call.',
+      doc: 'Bedrock Converse request timeout in ms. With chunking, each 25k-char chunk typically responds within 30-60 s; 120 s is the hard upper limit before we surface a timeout error. Must remain less than `sqs.visibilityTimeout` (180 s) so the heartbeat fires first and the message is not redelivered during a slow call.',
       format: Number,
       default: 120_000,
       env: 'BEDROCK_TIMEOUT_MS'
+    },
+    chunkSizeChars: {
+      doc: 'Maximum characters per Bedrock chunk. Keeps each call within the CDP shared token quota — 25,000 chars (~6,250 content tokens) + ~3,000 system prompt + ~400 overhead = ~9,650 input tokens per chunk. With maxCharLength=100,000 this produces 4 chunks processed in parallel.',
+      format: Number,
+      default: 25000,
+      env: 'BEDROCK_CHUNK_SIZE_CHARS'
+    },
+    maxTokensPerChunk: {
+      doc: 'Maximum output tokens per Bedrock chunk call. A 25k-char chunk produces ~500-2,000 output tokens; 4,096 provides safe headroom while capping each of the 4 parallel calls well below the full-document limit of 8,192.',
+      format: Number,
+      default: 4096,
+      env: 'BEDROCK_MAX_TOKENS_PER_CHUNK'
     }
   },
   mockMode: {

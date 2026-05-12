@@ -365,11 +365,12 @@ class BedrockClient {
 
   /**
    * Build inference configuration
+   * @param {number|null} maxTokensOverride - Per-call override; falls back to config default.
    * @private
    */
-  _buildInferenceConfig() {
+  _buildInferenceConfig(maxTokensOverride = null) {
     return {
-      maxTokens: this.maxTokens,
+      maxTokens: maxTokensOverride ?? this.maxTokens,
       temperature: this.temperature,
       topP: this.topP
     }
@@ -411,7 +412,8 @@ class BedrockClient {
   async sendMessage(
     userMessage,
     conversationHistory = [],
-    systemPrompt = null
+    systemPrompt = null,
+    maxTokens = null
   ) {
     if (!this.enabled) {
       throw new Error('Bedrock AI is not enabled')
@@ -424,7 +426,7 @@ class BedrockClient {
 
     const messages = this._buildMessages(userMessage, conversationHistory)
     const guardrailConfig = this._buildGuardrailConfig()
-    const inferenceConfig = this._buildInferenceConfig()
+    const inferenceConfig = this._buildInferenceConfig(maxTokens)
 
     const commandInput = {
       modelId: this.inferenceProfileArn,
