@@ -10,13 +10,8 @@ const TYPE_PLAIN_ENGLISH = 'plain-english'
 
 const CATEGORY_TO_TYPE = {
   'plain english': TYPE_PLAIN_ENGLISH,
-  clarity: 'clarity',
-  'clarity & structure': 'clarity',
-  accessibility: 'accessibility',
   'govuk style compliance': 'govuk-style',
-  'gov.uk style compliance': 'govuk-style',
-  'content completeness': 'completeness',
-  completeness: 'completeness'
+  'gov.uk style compliance': 'govuk-style'
 }
 
 // ─── Score parsing ────────────────────────────────────────────────────────────

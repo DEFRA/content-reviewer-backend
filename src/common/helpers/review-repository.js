@@ -337,10 +337,22 @@ class ReviewRepositoryS3 {
         ? rawResponseOrObj
         : (rawResponseOrObj?.rawResponse ?? '')
 
+    // Spread any extra fields from the input object (e.g. chunkCount, chunks[])
+    // so callers can enrich the debug artefact without changing this method signature.
+    const extraFields =
+      typeof rawResponseOrObj === 'object' && rawResponseOrObj !== null
+        ? Object.fromEntries(
+            Object.entries(rawResponseOrObj).filter(
+              ([k]) => k !== 'rawResponse'
+            )
+          )
+        : {}
+
     const payload = {
       reviewId,
       savedAt: new Date().toISOString(),
-      rawResponse
+      rawResponse,
+      ...extraFields
     }
 
     logger.info(

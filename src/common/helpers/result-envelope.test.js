@@ -27,9 +27,7 @@ const CATEGORY_UTILISE_TEXT = 'utilise'
 
 // Display name constants (Title Case labels shown in the UI)
 const DISPLAY_PLAIN_ENGLISH = 'Plain English'
-const DISPLAY_CLARITY = 'Clarity & Structure'
 const DISPLAY_GOVUK_STYLE = 'GOV.UK Style Compliance'
-const DISPLAY_COMPLETENESS = 'Content Completeness'
 
 // Single-issue fixture data — named to avoid repeated literal duplication
 const FIXTURE_ISSUE = {
@@ -54,10 +52,7 @@ function makeParsedReview(overrides = {}) {
   return {
     scores: {
       [DISPLAY_PLAIN_ENGLISH]: { score: 4, note: 'Good use of plain language' },
-      [DISPLAY_CLARITY]: { score: 3, note: 'Could be clearer' },
-      Accessibility: { score: 5, note: 'Excellent' },
-      'GovUK Style Compliance': { score: 4, note: GOVUK_NOTE },
-      [DISPLAY_COMPLETENESS]: { score: 3, note: 'Missing some details' }
+      [DISPLAY_GOVUK_STYLE]: { score: 4, note: GOVUK_NOTE }
     },
     reviewedContent: { issues: [FIXTURE_ISSUE] },
     improvements: [FIXTURE_IMPROVEMENT],
@@ -72,20 +67,14 @@ beforeEach(() => {
 // ── _mapScores ────────────────────────────────────────────────────────────────
 
 describe('_mapScores', () => {
-  it('maps all five canonical categories (raw 1-5 scores, no scaling)', () => {
+  it('maps both canonical categories (raw 1-5 scores, no scaling)', () => {
     const raw = {
       [DISPLAY_PLAIN_ENGLISH]: { score: 4, note: 'Good' },
-      [DISPLAY_CLARITY]: { score: 3, note: 'OK' },
-      Accessibility: { score: 5, note: 'Excellent' },
-      'GovUK Style Compliance': { score: 2, note: 'Needs work' },
-      [DISPLAY_COMPLETENESS]: { score: 1, note: 'Incomplete' }
+      [DISPLAY_GOVUK_STYLE]: { score: 2, note: 'Needs work' }
     }
     const result = resultEnvelopeStore._mapScores(raw)
     expect(result.plainEnglish).toBe(4)
-    expect(result.clarity).toBe(3)
-    expect(result.accessibility).toBe(5)
     expect(result.govukStyle).toBe(2)
-    expect(result.completeness).toBe(1)
   })
 
   it('stores note strings alongside scaled values', () => {
@@ -99,8 +88,7 @@ describe('_mapScores', () => {
   it('returns all zeros when scores object is empty', () => {
     const result = resultEnvelopeStore._mapScores({})
     expect(result.plainEnglish).toBe(0)
-    expect(result.clarity).toBe(0)
-    expect(result.accessibility).toBe(0)
+    expect(result.govukStyle).toBe(0)
   })
 
   it('maps GOV.UK Style Compliance key as output by Bedrock prompt template', () => {
@@ -110,15 +98,6 @@ describe('_mapScores', () => {
     const result = resultEnvelopeStore._mapScores(raw)
     expect(result.govukStyle).toBe(3)
     expect(result.govukStyleNote).toBe(GOVUK_NOTE)
-  })
-
-  it('falls back to legacy "style" key alias for govukStyle', () => {
-    const raw = {
-      Style: { score: 3, note: '' }
-    }
-    const result = resultEnvelopeStore._mapScores(raw)
-    expect(result.govukStyle).toBe(3)
-    expect(typeof result.clarity).toBe('number')
   })
 })
 
@@ -140,8 +119,7 @@ describe('buildStubEnvelope', () => {
   it('has all score fields set to 0', () => {
     const stub = resultEnvelopeStore.buildStubEnvelope(REVIEW_ID, 'failed')
     expect(stub.scores.plainEnglish).toBe(0)
-    expect(stub.scores.clarity).toBe(0)
-    expect(stub.scores.accessibility).toBe(0)
+    expect(stub.scores.govukStyle).toBe(0)
   })
 
   it('sets processedAt to null and tokenUsed to 0', () => {
@@ -512,16 +490,6 @@ describe('buildEnvelope — category normalization in improvements', () => {
     expect(envelope.improvements[0].category).toBe(DISPLAY_PLAIN_ENGLISH)
   })
 
-  it('normalizes clarity key to "Clarity & Structure"', () => {
-    const envelope = resultEnvelopeStore.buildEnvelope(
-      REVIEW_ID,
-      buildReviewWithCategory('clarity'),
-      CATEGORY_NORMALIZATION_USAGE,
-      CANONICAL_TEXT_BUILD
-    )
-    expect(envelope.improvements[0].category).toBe(DISPLAY_CLARITY)
-  })
-
   it('normalizes govuk-style key to "GOV.UK Style Compliance"', () => {
     const envelope = resultEnvelopeStore.buildEnvelope(
       REVIEW_ID,
@@ -530,26 +498,6 @@ describe('buildEnvelope — category normalization in improvements', () => {
       CANONICAL_TEXT_BUILD
     )
     expect(envelope.improvements[0].category).toBe(DISPLAY_GOVUK_STYLE)
-  })
-
-  it('normalizes completeness key to "Content Completeness"', () => {
-    const envelope = resultEnvelopeStore.buildEnvelope(
-      REVIEW_ID,
-      buildReviewWithCategory('completeness'),
-      CATEGORY_NORMALIZATION_USAGE,
-      CANONICAL_TEXT_BUILD
-    )
-    expect(envelope.improvements[0].category).toBe(DISPLAY_COMPLETENESS)
-  })
-
-  it('normalizes accessibility key to "Accessibility"', () => {
-    const envelope = resultEnvelopeStore.buildEnvelope(
-      REVIEW_ID,
-      buildReviewWithCategory('accessibility'),
-      CATEGORY_NORMALIZATION_USAGE,
-      CANONICAL_TEXT_BUILD
-    )
-    expect(envelope.improvements[0].category).toBe('Accessibility')
   })
 
   it('passes through unknown category values unchanged', () => {
@@ -960,7 +908,7 @@ describe('buildEnvelope — deriveEvidence fallback (line 22)', () => {
   it('falls back to issue.text when start equals end', () => {
     // start === end → deriveEvidence skips slice and returns fallbackText
     const parsedReview = {
-      scores: { clarity: 4 },
+      scores: { 'plain english': 4 },
       reviewedContent: {
         plainText: 'The department should utilise all resources.',
         issues: [{ start: 5, end: 5, type: 'plain-english', text: 'utilise' }]
@@ -991,7 +939,7 @@ describe('buildEnvelope — deriveEvidence fallback (line 22)', () => {
   it('returns empty string evidence when canonicalText is falsy and issue.text is absent', () => {
     // canonicalText = '' (falsy) → deriveEvidence returns fallbackText || ''
     const parsedReview = {
-      scores: { clarity: 4 },
+      scores: { 'plain english': 4 },
       reviewedContent: {
         plainText: 'content',
         issues: [{ start: 0, end: 5, type: 'plain-english', text: undefined }]
@@ -1032,7 +980,7 @@ describe('buildEnvelope — _snapToWordBoundary whitespace trimming (line 352)',
     // so e stays at 6.  Then text[e-1]=text[5]=' ' IS whitespace → e-- fires.
     const testCanonicalText = 'hello \nworld is great'
     const parsedReview = {
-      scores: { clarity: 4 },
+      scores: { 'plain english': 4 },
       reviewedContent: {
         plainText: testCanonicalText,
         issues: [{ start: 0, end: 6, type: 'plain-english', text: 'hello ' }]
@@ -1087,7 +1035,7 @@ describe('buildEnvelope — _snapToWordBoundary whitespace trimming (line 352)',
 describe('buildEnvelope — _isValidLinkEntry filtering (lines 707, 710)', () => {
   const linkTestCanonical = 'Visit the site for more information.'
   const baseParsedReview = {
-    scores: { clarity: 4 },
+    scores: { 'plain english': 4 },
     reviewedContent: { plainText: linkTestCanonical, issues: [] },
     improvements: []
   }

@@ -22,10 +22,7 @@ function makeParsedReview(overrides = {}) {
   return {
     scores: {
       'Plain English': { score: 4, note: 'Good' },
-      'Clarity & Structure': { score: 3, note: 'OK' },
-      Accessibility: { score: 5, note: 'Excellent' },
-      'GovUK Style Compliance': { score: 4, note: 'Mostly compliant' },
-      'Content Completeness': { score: 3, note: 'Missing some details' }
+      'GOV.UK Style Compliance': { score: 4, note: 'Mostly compliant' }
     },
     reviewedContent: {
       issues: [

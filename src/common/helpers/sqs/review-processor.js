@@ -68,20 +68,6 @@ export class ReviewProcessor {
   }
 
   /**
-   * Log message processing start
-   */
-  logMessageProcessingStart(message, body) {
-    logger.info({
-      messageId: message.MessageId,
-      uploadId: body.uploadId,
-      reviewId: body.reviewId,
-      messageType: body.messageType,
-      s3Key: body.s3Key,
-      receiptHandle: truncateReceiptHandle(message.ReceiptHandle)
-    })
-  }
-
-  /**
    * Check whether a message has exceeded the maximum receive count and, if so,
    * mark the review as permanently failed and delete the message.
    * Returns true when the message should be skipped (dead-lettered by the app).
@@ -191,8 +177,6 @@ export class ReviewProcessor {
         return
       }
 
-      this.logMessageProcessingStart(message, body)
-
       await this.processContentReview(body)
       clearInterval(heartbeat)
       await messageHandler.deleteMessage(message.ReceiptHandle)
@@ -286,15 +270,23 @@ export class ReviewProcessor {
       const { canonicalText, linkMap, sourceMap } =
         await this.contentExtractor.extractTextContent(reviewId, messageBody)
       this.validateExtractedContent(reviewId, canonicalText, messageBody)
-      const bedrockResult = await this.bedrockProcessor.performBedrockReview(
-        reviewId,
-        canonicalText
-      )
-      const parseResult = await this.bedrockProcessor.parseBedrockResponseData(
-        reviewId,
+      // performChunkedReview splits the text into chunks of bedrock.chunkSizeChars,
+      // fires all chunks to Bedrock in parallel, then collates scores (averaged)
+      // and improvements (merged with adjusted offsets) into a single result.
+      // If any chunk fails, Promise.all rejects here and the review is marked failed.
+      const {
+        parsedReview,
+        parseDuration,
+        finalReviewContent,
         bedrockResult,
+        chunks
+      } = await this.bedrockProcessor.performChunkedReview(
+        reviewId,
         canonicalText
       )
+
+      const parseResult = { parsedReview, parseDuration, finalReviewContent }
+
       // Pass canonicalText, linkMap, and sourceMap so the result envelope can
       // build accurate annotated sections, restore clickable links in plain
       // sections, and resolve imprecise LLM offsets via normalised line-region search.
@@ -304,7 +296,8 @@ export class ReviewProcessor {
         bedrockResult,
         canonicalText,
         linkMap,
-        sourceMap
+        sourceMap,
+        chunks
       )
 
       this.logReviewCompletion(
@@ -389,6 +382,8 @@ export class ReviewProcessor {
    *                                     (null for file/text sources)
    * @param {Array|null} sourceMap      - per-line offset entries from the canonical document;
    *                                     used to narrow position resolution for imprecise LLM offsets
+   * @param {{ index: number, startOffset: number, rawResponse: string }[]} chunks
+   *                                   - per-chunk raw LLM responses for debug artefacts
    */
   async saveReviewToRepository(
     reviewId,
@@ -396,7 +391,8 @@ export class ReviewProcessor {
     bedrockResult,
     canonicalText = '',
     linkMap = null,
-    sourceMap = null
+    sourceMap = null,
+    chunks = []
   ) {
     // Build the spec-compliant envelope (annotatedSections, scores, improvements, etc.)
     // and embed it directly into reviews/{reviewId}.json — no separate S3 file needed.
@@ -439,11 +435,21 @@ export class ReviewProcessor {
       `[RESPONSE TIME] Review result saved to S3 in ${saveDuration}ms`
     )
 
-    // Save raw LLM response as a debug artefact at positions/{reviewId}.json.
+    // Save a single debug artefact at positions/{reviewId}.json.
+    // For multi-chunk reviews the file includes a top-level `chunks` array so
+    // each chunk's raw LLM response and start offset can be inspected individually.
     // Non-critical — never blocks the main result.
     reviewRepository
       .savePositions(reviewId, {
-        rawResponse: parseResult.finalReviewContent || canonicalText
+        rawResponse: parseResult.finalReviewContent || canonicalText,
+        chunkCount: chunks.length,
+        ...(chunks.length > 1 && {
+          chunks: chunks.map(({ index, startOffset, rawResponse }) => ({
+            index,
+            startOffset,
+            rawResponse
+          }))
+        })
       })
       .catch((err) => {
         logger.error(

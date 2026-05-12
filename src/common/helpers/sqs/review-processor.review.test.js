@@ -23,8 +23,7 @@ const mockUpdateReviewStatus = vi.fn()
 const mockSaveReviewResult = vi.fn()
 const mockSaveReviewError = vi.fn()
 const mockExtractTextContent = vi.fn()
-const mockPerformBedrockReview = vi.fn()
-const mockParseBedrockResponseData = vi.fn()
+const mockPerformChunkedReview = vi.fn()
 const mockFormatErrorForUI = vi.fn()
 
 vi.mock('../logging/logger.js', () => ({
@@ -62,9 +61,7 @@ vi.mock('./content-extractor.js', () => ({
 vi.mock('./bedrock-processor.js', () => ({
   BedrockReviewProcessor: vi.fn(function () {
     return {
-      performBedrockReview: (...args) => mockPerformBedrockReview(...args),
-      parseBedrockResponseData: (...args) =>
-        mockParseBedrockResponseData(...args)
+      performChunkedReview: (...args) => mockPerformChunkedReview(...args)
     }
   })
 }))
@@ -106,17 +103,19 @@ describe('ReviewProcessor - processContentReview - uploadId processing', () => {
         canonicalText: TEST_SAMPLE_TEXT,
         displayText: null
       })
-      mockPerformBedrockReview.mockResolvedValue({
-        bedrockResponse: {
-          usage: { inputTokens: 100, outputTokens: 50 },
-          stopReason: 'end_turn'
-        },
-        bedrockDuration: 1500
-      })
-      mockParseBedrockResponseData.mockResolvedValue({
+      mockPerformChunkedReview.mockResolvedValue({
         parsedReview: { score: 85 },
+        parseDuration: 200,
         finalReviewContent: TEST_REVIEW_CONTENT,
-        parseDuration: 200
+        bedrockResult: {
+          bedrockResponse: {
+            usage: { inputTokens: 100, outputTokens: 50 },
+            stopReason: 'end_turn'
+          },
+          bedrockDuration: 1500
+        },
+        bedrockDuration: 1500,
+        chunks: []
       })
       mockSaveReviewResult.mockResolvedValue()
 
@@ -135,7 +134,7 @@ describe('ReviewProcessor - processContentReview - uploadId processing', () => {
         TEST_UPLOAD_ID,
         messageBody
       )
-      expect(mockPerformBedrockReview).toHaveBeenCalledWith(
+      expect(mockPerformChunkedReview).toHaveBeenCalledWith(
         TEST_UPLOAD_ID,
         TEST_SAMPLE_TEXT
       )
@@ -165,17 +164,19 @@ describe('ReviewProcessor - processContentReview - reviewId processing', () => {
         canonicalText: TEST_SAMPLE_TEXT,
         displayText: null
       })
-      mockPerformBedrockReview.mockResolvedValue({
-        bedrockResponse: {
-          usage: {},
-          stopReason: 'end_turn'
-        },
-        bedrockDuration: 1500
-      })
-      mockParseBedrockResponseData.mockResolvedValue({
+      mockPerformChunkedReview.mockResolvedValue({
         parsedReview: { score: 85 },
+        parseDuration: 200,
         finalReviewContent: TEST_REVIEW_CONTENT,
-        parseDuration: 200
+        bedrockResult: {
+          bedrockResponse: {
+            usage: {},
+            stopReason: 'end_turn'
+          },
+          bedrockDuration: 1500
+        },
+        bedrockDuration: 1500,
+        chunks: []
       })
       mockSaveReviewResult.mockResolvedValue()
 
@@ -221,7 +222,7 @@ describe('ReviewProcessor - processContentReview - error handling', () => {
         canonicalText: TEST_SAMPLE_TEXT,
         displayText: null
       })
-      mockPerformBedrockReview.mockRejectedValue(error)
+      mockPerformChunkedReview.mockRejectedValue(error)
       mockFormatErrorForUI.mockReturnValue(TEST_USER_FRIENDLY_ERROR)
       mockSaveReviewError.mockResolvedValue()
 
