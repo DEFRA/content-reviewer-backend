@@ -66,6 +66,7 @@ vi.mock('./review-helpers.js', () => ({
   getCorsConfig: () => ({}),
   createCanonicalDocument: vi.fn(),
   createReviewRecord: vi.fn(),
+  createFailedUploadRecord: vi.fn(),
   queueReviewJob: vi.fn()
 }))
 
@@ -187,6 +188,26 @@ it('returns 200 with success:false when fileField.hasError is truthy', async () 
     success: false,
     message: 'virus-detected'
   })
+})
+
+it('returns 200 with success:false when fileField.hasError is truthy and userId is absent from metadata', async () => {
+  const request = {
+    payload: {
+      metadata: { reviewId: 'review-no-user' },
+      form: {
+        file: {
+          hasError: true,
+          errorMessage: 'invalid-type',
+          filename: 'bad.exe'
+        }
+      }
+    },
+    logger: makeLogger()
+  }
+  const res = await storedRoutes[ROUTE_CALLBACK].handler(request, makeH())
+
+  expect(res.statusCode).toBe(HTTP_OK)
+  expect(res.payload).toMatchObject({ success: false, message: 'invalid-type' })
 })
 
 it('fetches S3 object and parses PDF text successfully', async () => {
