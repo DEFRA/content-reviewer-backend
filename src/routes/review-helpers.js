@@ -260,6 +260,44 @@ export async function createReviewRecord(
   return dbCreateDuration
 }
 
+/**
+ * Create an S3 review record with failed status for a rejected file upload.
+ * Used when CDP Uploader rejects the file (virus scan failure, invalid type, etc.)
+ * so that the auto-refresh poll surfaces a Failed entry rather than silently losing it.
+ * @param {string} reviewId
+ * @param {string} fileName
+ * @param {string|null} userId
+ * @param {string} errorMessage
+ * @param {Object} logger
+ */
+export async function createFailedUploadRecord(
+  reviewId,
+  fileName,
+  userId,
+  errorMessage,
+  logger
+) {
+  await reviewRepository.createReview({
+    id: reviewId,
+    sourceType: 'file',
+    fileName: fileName || 'unknown',
+    fileSize: null,
+    mimeType: null,
+    s3Key: null,
+    userId: userId || null
+  })
+  await reviewRepository.updateReviewStatus(reviewId, REVIEW_STATUSES.FAILED, {
+    error: {
+      message: errorMessage || 'File rejected by upload service',
+      timestamp: new Date().toISOString()
+    }
+  })
+  logger.info(
+    { reviewId, fileName, errorMessage },
+    '[UPLOAD] Failed upload record created in S3 repository'
+  )
+}
+
 // ============ SQS QUEUE HELPERS ============
 
 /**

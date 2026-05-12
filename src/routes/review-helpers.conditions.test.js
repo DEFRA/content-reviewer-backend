@@ -56,7 +56,8 @@ import {
   formatReviewForResponse,
   formatReviewForList,
   processTextReviewSubmission,
-  queueReviewJob
+  queueReviewJob,
+  createFailedUploadRecord
 } from './review-helpers.js'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -350,6 +351,101 @@ describe('processTextReviewSubmission - null title uses default', () => {
     // Line 282: queueReviewJob / sqsClient receives default title as filename
     expect(sqsClient.sendMessage).toHaveBeenCalledWith(
       expect.objectContaining({ filename: 'Text Content' })
+    )
+  })
+})
+
+// ── createFailedUploadRecord ──────────────────────────────────────────────────
+
+describe('createFailedUploadRecord - happy path', () => {
+  it('calls createReview and updateReviewStatus with provided values', async () => {
+    reviewRepository.createReview.mockResolvedValueOnce({})
+    reviewRepository.updateReviewStatus.mockResolvedValueOnce({})
+    const logger = createLogger()
+
+    await createFailedUploadRecord(
+      'rev-fail-1',
+      'doc.pdf',
+      'user-42',
+      'virus detected',
+      logger
+    )
+
+    expect(reviewRepository.createReview).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'rev-fail-1',
+        sourceType: 'file',
+        fileName: 'doc.pdf',
+        userId: 'user-42'
+      })
+    )
+    expect(reviewRepository.updateReviewStatus).toHaveBeenCalledWith(
+      'rev-fail-1',
+      'failed',
+      expect.objectContaining({
+        error: expect.objectContaining({ message: 'virus detected' })
+      })
+    )
+    expect(logger.info).toHaveBeenCalled()
+  })
+})
+
+describe('createFailedUploadRecord - fileName fallback', () => {
+  it('uses "unknown" when fileName is null', async () => {
+    reviewRepository.createReview.mockResolvedValueOnce({})
+    reviewRepository.updateReviewStatus.mockResolvedValueOnce({})
+    const logger = createLogger()
+
+    await createFailedUploadRecord(
+      'rev-fail-2',
+      null,
+      'user-1',
+      'scan failed',
+      logger
+    )
+
+    expect(reviewRepository.createReview).toHaveBeenCalledWith(
+      expect.objectContaining({ fileName: 'unknown' })
+    )
+  })
+})
+
+describe('createFailedUploadRecord - userId fallback', () => {
+  it('sets userId to null when userId is not provided', async () => {
+    reviewRepository.createReview.mockResolvedValueOnce({})
+    reviewRepository.updateReviewStatus.mockResolvedValueOnce({})
+    const logger = createLogger()
+
+    await createFailedUploadRecord(
+      'rev-fail-3',
+      'file.pdf',
+      null,
+      'scan failed',
+      logger
+    )
+
+    expect(reviewRepository.createReview).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: null })
+    )
+  })
+})
+
+describe('createFailedUploadRecord - errorMessage fallback', () => {
+  it('uses default error message when errorMessage is null', async () => {
+    reviewRepository.createReview.mockResolvedValueOnce({})
+    reviewRepository.updateReviewStatus.mockResolvedValueOnce({})
+    const logger = createLogger()
+
+    await createFailedUploadRecord('rev-fail-4', 'file.pdf', 'u1', null, logger)
+
+    expect(reviewRepository.updateReviewStatus).toHaveBeenCalledWith(
+      'rev-fail-4',
+      'failed',
+      expect.objectContaining({
+        error: expect.objectContaining({
+          message: 'File rejected by upload service'
+        })
+      })
     )
   })
 })
