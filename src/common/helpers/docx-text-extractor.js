@@ -1,4 +1,3 @@
-// ...existing code...
 import mammoth from 'mammoth'
 import JSZip from 'jszip'
 import { XMLParser } from 'fast-xml-parser'
@@ -84,6 +83,53 @@ function isArtifactRunText(text) {
   }
   // Long strings without any whitespace are almost always base64/binary blobs.
   return text.length > DOCX_BINARY_BLOB_MIN_LENGTH && !/\s/.test(text)
+}
+
+/* Heuristic: decide whether to insert a space between adjacent fragments */
+function shouldInsertSpace(prevText, nextText) {
+  if (prevText == null || nextText == null) return false
+  const a = String(prevText)
+  const b = String(nextText)
+  if (a.length === 0 || b.length === 0) return false
+
+  const end = a.slice(-1)
+  const start = b.charAt(0)
+
+  // preserve explicit whitespace
+  if (/\s/.test(end) || /\s/.test(start)) return false
+
+  // don't insert before opening punctuation
+  if (/^[('"“‘\[\{]/u.test(start)) return false
+
+  // don't insert around explicit joining characters
+  if (/[-\u2013\u2014\/]$/.test(end) || /^[-\u2013\u2014\/]/.test(start))
+    return false
+
+  const isLetter = (ch) => /\p{L}/u.test(ch)
+  const isDigit = (ch) => /\p{N}/u.test(ch)
+  const isAlphaNum = (ch) => isLetter(ch) || isDigit(ch)
+
+  // If punctuation (like period/comma) at end followed by alnum, insert space
+  if (/[.,:;)]$/.test(end) && isAlphaNum(start)) return true
+
+  // Insert space when digit is followed by a letter
+  // e.g. "CW013Separately" -> keep "CW013 Separately"
+  if (isDigit(end) && isLetter(start)) return true
+
+  // Do NOT insert a space between:
+  // - letter -> letter (likely same word split across runs)
+  // - letter -> digit (codes like "CW013")
+  // - digit -> digit (numeric tokens split across runs)
+  if (
+    (isLetter(end) && isLetter(start)) ||
+    (isLetter(end) && isDigit(start)) ||
+    (isDigit(end) && isDigit(start))
+  ) {
+    return false
+  }
+
+  // Fallback: don't insert by default
+  return false
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -315,64 +361,6 @@ function processDocxParagraph(p, rels) {
   return { type: classifyDocxBlock(isHeading, isList), runs }
 }
 
-/**
- * Parse the rels XML into a rel-id → target URL map.
- * Logs (but does not throw) when the rels XML cannot be parsed —
- * the document is still usable without hyperlinks.
- */
-function parseDocxRels(parser, relsXml) {
-  if (!relsXml) {
-    return {}
-  }
-  try {
-    const relsDoc = parser.parse(relsXml)
-    return buildDocxRelsMap(relsDoc)
-  } catch (err) {
-    logger.warn(
-      { error: err.message },
-      'Failed to parse DOCX rels XML — hyperlinks will not be resolved'
-    )
-    return {}
-  }
-}
-
-/**
- * Convert document.xml + rels XML into an array of `{ type, runs }` paragraph
- * objects. Returns an empty array when the body cannot be located so callers
- * never need to handle a mixed string/array return type.
- *
- * @param {string} documentXml
- * @param {string|null} relsXml
- * @returns {Array<{ type: string, runs: Array }>}
- */
-export function docxXmlToParagraphObjects(documentXml, relsXml) {
-  const parser = new XMLParser({
-    ignoreAttributes: false,
-    attributeNamePrefix: '',
-    textNodeName: '#text',
-    ignoreNameSpace: false
-  })
-
-  const doc = parser.parse(documentXml)
-  const body = doc['w:document']?.['w:body']
-  if (!body) {
-    return []
-  }
-
-  const rels = parseDocxRels(parser, relsXml)
-  const paragraphs = ensureArray(body['w:p'])
-  const out = []
-
-  for (const p of paragraphs) {
-    const paraObj = processDocxParagraph(p, rels)
-    if (paraObj.runs.length > 0) {
-      out.push(paraObj)
-    }
-  }
-
-  return out
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Block → Markdown string serialisation
 // ─────────────────────────────────────────────────────────────────────────────
@@ -589,13 +577,12 @@ async function runDocxZipFallback(nodeBuffer) {
 }
 
 /**
- * Core orchestration for DOCX extraction. Uses mammoth first, then ZIP fallback.
+ * Core orchestration for DOCX extraction. Returns the mammoth result object.
  */
 async function runDocxExtraction(buffer) {
   const arrayBuffer = normalizeToArrayBuffer(buffer)
   const nodeBuffer = Buffer.from(arrayBuffer)
 
-  // Try mammoth with a couple of input shapes; if it fails, fall back to ZIP+XML parsing.
   const attempts = [{ arrayBuffer }, { buffer: nodeBuffer }]
 
   let result = await tryMammoth(['convertToMarkdown'], attempts)
@@ -613,6 +600,364 @@ async function runDocxExtraction(buffer) {
   }
 
   return result
+}
+
+function parseDocxRels(parser, relsXml) {
+  if (!relsXml) return {}
+  try {
+    const relsDoc = parser.parse(relsXml)
+    return buildDocxRelsMap(relsDoc)
+  } catch (err) {
+    logger.warn({ err: err.message }, 'Failed to parse DOCX relationships XML')
+    return {}
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Replacement: paragraph extraction logic adapted from scripts/text-extract-docx.js
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Convert document.xml + rels XML into an array of `{ type, runs }` paragraph
+ * objects using a conservative, parser-assisted extraction routine. This
+ * implementation mirrors the logic used by scripts/text-extract-docx.js.
+ *
+ * @param {string} documentXml
+ * @param {string|null} relsXml
+ * @returns {Array<{ type: string, runs: Array }>}
+ */
+export function docxXmlToParagraphObjects(documentXml, relsXml) {
+  const parser = new XMLParser({
+    ignoreAttributes: false,
+    attributeNamePrefix: '',
+    textNodeName: '#text',
+    ignoreNameSpace: false,
+    trimValues: false,
+    parseTagValue: false,
+    parseAttributeValue: false
+  })
+
+  const rels = parseDocxRels(parser, relsXml)
+
+  // helper: extract visible text from paragraph xml string
+  const extractVisibleTextFromParagraph = (pXml) => {
+    if (!pXml) return ''
+    let xml = pXml
+      .replace(/<[^>]*:tab\b[^>]*\/?>/gi, '<w:tab/>')
+      .replace(/<[^>]*:br\b[^>]*\/?>/gi, '<w:br/>')
+      .replace(/<[^>]*:cr\b[^>]*\/?>/gi, '<w:cr/>')
+
+    xml = xml.replace(/<w:tab\b[^>]*\/?>/gi, '\t')
+    xml = xml.replace(/<w:br\b[^>]*\/?>/gi, '\n')
+    xml = xml.replace(/<w:cr\b[^>]*\/?>/gi, '\n')
+
+    const tRegex = /<w:t\b[^>]*>([\s\S]*?)<\/w:t>/gi
+    let m
+    let out = ''
+    while ((m = tRegex.exec(xml)) !== null) {
+      out += m[1] || ''
+    }
+
+    if (!out) {
+      let safe = xml
+        .replace(
+          /<[^>:\s]+:instrText\b[^>]*>[\s\S]*?<\/[^>:\s]+:instrText>/gi,
+          ''
+        )
+        .replace(
+          /<[^>:\s]+:fldSimple\b[^>]*>[\s\S]*?<\/[^>:\s]+:fldSimple>/gi,
+          ''
+        )
+        .replace(/<\/?[^>]+>/g, '')
+      out = safe
+    }
+
+    return out.replace(/\u00A0/g, ' ').replace(/\r\n|\r/g, '\n')
+  }
+
+  const sanitizeTitle = (visible, rawVisible) => {
+    if (!visible) return ''
+    let out = String(visible)
+      .replace(/\u00A0/g, ' ')
+      .replace(/\r\n|\r/g, '\n')
+
+    if (rawVisible && rawVisible.includes('\t')) {
+      out = out.split('\t')[0]
+    } else {
+      if (rawVisible && /\.{2,}\s*\d+\s*$/.test(rawVisible)) {
+        out = out.replace(/\.{2,}.*$/s, '')
+      }
+    }
+
+    out = out.trim()
+
+    const trailingMatch = out.match(/(\d{1,4})\s*$/u)
+    if (trailingMatch) {
+      const numStr = trailingMatch[1]
+      const numLen = numStr.length
+      const rawHasTabOrDots = !!(
+        rawVisible &&
+        (rawVisible.includes('\t') || /\.{2,}\s*\d+\s*$/.test(rawVisible))
+      )
+      if (rawHasTabOrDots) {
+        out = out.slice(0, -numStr.length).trim()
+      } else if (numLen <= 3) {
+        out = out.slice(0, -numStr.length).trim()
+      } else if (numLen === 4) {
+        const n = parseInt(numStr, 10)
+        if (Number.isFinite(n) && (n < 1900 || n > 2100)) {
+          out = out.slice(0, -numStr.length).trim()
+        }
+      }
+    }
+
+    out = out.replace(
+      /\b(?:beginTOC|endTOC|begin|end|TOC\d*|TOC|_Toc[^\s]*|separate)\b/gi,
+      ' '
+    )
+    out = out.replace(/\bpreserve\d*\b/gi, ' ')
+    out = out.replace(
+      /\b(?:minorthansi|minoreastasia|minorbidi|contextualhyperlink|hyperlink|standard)\b/gi,
+      ' '
+    )
+    out = out.replace(/\b\d{6,}\b/g, ' ')
+    out = out.replace(/\s{2,}/g, ' ').trim()
+    out = out.replace(/^[\W_]+|[\W_]+$/g, '').trim()
+    return out
+  }
+
+  const paraRegex = /<w:p\b[^>]*>[\s\S]*?<\/w:p>/g
+  const paraMatches = documentXml.match(paraRegex) || []
+  const out = []
+
+  const extractRunPropsFromParsed = (parsedRun, currentHref = null) => {
+    const rObj = parsedRun['w:r'] || parsedRun
+
+    if (rObj) {
+      if (
+        rObj['w:drawing'] ||
+        rObj['w:pict'] ||
+        rObj['v:imagedata'] ||
+        rObj['pic:pic'] ||
+        (rObj['w:rPr'] && rObj['w:rPr']['w:noProof'])
+      ) {
+        return {
+          text: '',
+          bold: false,
+          italic: false,
+          href: currentHref,
+          underline: false
+        }
+      }
+      try {
+        const str = JSON.stringify(rObj)
+        if (
+          /\bblip\b/i.test(str) ||
+          /\bimagedata\b/i.test(str) ||
+          /\bdrawing\b/i.test(str) ||
+          /\bpict\b/i.test(str)
+        ) {
+          return {
+            text: '',
+            bold: false,
+            italic: false,
+            href: currentHref,
+            underline: false
+          }
+        }
+      } catch (e) {}
+    }
+
+    const getText = (node) => {
+      if (node == null) return ''
+      if (typeof node === 'string' || typeof node === 'number')
+        return String(node)
+      if (Array.isArray(node)) return node.map(getText).join('')
+      if (typeof node === 'object') {
+        if (node['#text'] !== undefined) return String(node['#text'])
+        if (node['w:t'] !== undefined) {
+          const t = node['w:t']
+          if (typeof t === 'string' || typeof t === 'number') return String(t)
+          if (t && typeof t === 'object' && t['#text'] !== undefined)
+            return String(t['#text'])
+        }
+        if (node['w:tab'] !== undefined) return '\t'
+        if (node['w:br'] !== undefined) return '\n'
+        if (node['w:cr'] !== undefined) return '\n'
+        let s = ''
+        for (const k of Object.keys(node)) {
+          if (!Object.prototype.hasOwnProperty.call(node, k)) continue
+          if (k.startsWith('@') || k.startsWith('xmlns') || k.includes(':'))
+            continue
+          s += getText(node[k])
+        }
+        return s
+      }
+      return ''
+    }
+
+    const text = getText(rObj).replace(/\u00A0/g, ' ')
+    const bold = !!(rObj && rObj['w:rPr'] && rObj['w:rPr']['w:b'] !== undefined)
+    const italic = !!(
+      rObj &&
+      rObj['w:rPr'] &&
+      rObj['w:rPr']['w:i'] !== undefined
+    )
+    const underline = !!(
+      rObj &&
+      rObj['w:rPr'] &&
+      rObj['w:rPr']['w:u'] !== undefined &&
+      rObj['w:rPr']['w:u'] !== null
+    )
+    return { text, bold, italic, href: currentHref, underline }
+  }
+
+  for (const pXml of paraMatches) {
+    const pPrMatch = pXml.match(/<w:pPr\b[^>]*>([\s\S]*?)<\/w:pPr>/)
+    const pPrXml = pPrMatch ? pPrMatch[1] : ''
+    const pStyleMatch = pPrXml.match(/<w:pStyle\b[^>]*w:val=['"]([^'"]+)['"]/i)
+    const pStyle = pStyleMatch ? pStyleMatch[1] : ''
+    const isHeading = typeof pStyle === 'string' && /^Heading/i.test(pStyle)
+    const isList = /<w:numPr\b/i.test(pPrXml)
+
+    let safeXml = pXml
+      .replace(/<w:instrText\b[^>]*>[\s\S]*?<\/w:instrText>/gi, '')
+      .replace(/<w:fldSimple\b[^>]*>[\s\S]*?<\/w:fldSimple>/gi, '')
+      .replace(/<w:fldChar\b[^>]*>[\s\S]*?<\/w:fldChar>/gi, '')
+
+    const visibleLine = extractVisibleTextFromParagraph(safeXml).trim()
+
+    const looksLikeTocField =
+      /<w:fldSimple\b[^>]*instr=["'][^"']*TOC[^"']*["']|<w:instrText\b[^>]*>[^<]*TOC[^<]*<\/w:instrText>|<w:fldChar\b[^>]*fldCharType=['"]begin['"]/i.test(
+        pXml
+      )
+    const visibleHasTabPage = /\t\s*\d+\s*$/.test(visibleLine)
+    const visibleHasDotsPage = /\.{2,}\s*\d+\s*$/.test(visibleLine)
+    const visibleEndsWithNumber = /\s\d+\s*$/.test(visibleLine)
+    const isToc =
+      (typeof pStyle === 'string' && /^TOC/i.test(pStyle)) ||
+      looksLikeTocField ||
+      visibleHasTabPage ||
+      visibleHasDotsPage ||
+      visibleEndsWithNumber
+
+    const runs = []
+
+    const childRegex =
+      /<w:hyperlink\b[^>]*>[\s\S]*?<\/w:hyperlink>|<w:fldSimple\b[^>]*>[\s\S]*?<\/w:fldSimple>|<w:r\b[^>]*>[\s\S]*?<\/w:r>|<w:instrText\b[^>]*>[\s\S]*?<\/w:instrText>|<w:t\b[^>]*>[\s\S]*?<\/w:t>/g
+    const childMatches = pXml.match(childRegex) || []
+
+    for (const childXml of childMatches) {
+      if (
+        /^<[^>:\s]+:instrText\b/i.test(childXml) ||
+        /^<w:instrText\b/i.test(childXml) ||
+        /^<w:fldSimple\b/i.test(childXml)
+      ) {
+        continue
+      }
+
+      if (
+        /<w:drawing\b/i.test(childXml) ||
+        /<w:pict\b/i.test(childXml) ||
+        /<v:imagedata\b/i.test(childXml) ||
+        /<pic:pic\b/i.test(childXml) ||
+        /\bblip:embed\b/i.test(childXml) ||
+        /<a:blip\b/i.test(childXml)
+      ) {
+        continue
+      }
+
+      if (/^<w:hyperlink\b/i.test(childXml)) {
+        const ridMatch = childXml.match(
+          /r:(?:id|Id|ID|embed)=["']([^"']+)['"]/i
+        )
+        const rid = ridMatch ? ridMatch[1] : null
+        const href = rid ? rels[rid] || null : null
+
+        const innerRunRegex =
+          /<w:r\b[^>]*>[\s\S]*?<\/w:r>|<w:t\b[^>]*>[\s\S]*?<\/w:t>/g
+        const innerMatches = childXml.match(innerRunRegex) || []
+        const children = []
+        for (const inner of innerMatches) {
+          try {
+            const parsedInner = parser.parse(inner)
+            const rp = extractRunPropsFromParsed(parsedInner, href)
+            if (rp.text && rp.text.length > 0) children.push(rp)
+          } catch (e) {}
+        }
+        if (children.length > 0) {
+          runs.push({ href, children })
+        } else {
+          const textMatch = childXml.match(/<w:t\b[^>]*>([\s\S]*?)<\/w:t>/)
+          if (textMatch)
+            runs.push({
+              text: textMatch[1].replace(/\u00A0/g, ' '),
+              bold: false,
+              italic: false,
+              href
+            })
+        }
+        continue
+      }
+
+      if (/^<w:r\b/i.test(childXml)) {
+        try {
+          const parsedRun = parser.parse(childXml)
+          const rp = extractRunPropsFromParsed(parsedRun, null)
+          if (rp.text && rp.text.length > 0) runs.push(rp)
+        } catch (e) {}
+        continue
+      }
+
+      if (/^<w:t\b/i.test(childXml)) {
+        const txt = childXml.replace(/<[^>]+>/g, '').replace(/\u00A0/g, ' ')
+        if (txt && txt.length > 0)
+          runs.push({ text: txt, bold: false, italic: false, href: null })
+        continue
+      }
+    }
+
+    if (isToc && runs.length > 0) {
+      const last = runs[runs.length - 1]
+      const lastText = last
+        ? last.text ||
+          (last.children ? last.children.map((c) => c.text || '').join('') : '')
+        : ''
+      if (/^\s*\d{1,4}\s*$/.test(lastText)) {
+        runs.pop()
+      }
+    }
+
+    let cleanedRuns = runs
+
+    if (isToc) {
+      const title = sanitizeTitle(visibleLine, visibleLine)
+      if (title && title.length > 0) {
+        cleanedRuns = [{ text: title, bold: false, italic: false, href: null }]
+      } else {
+        const combined = runs.map((r) => r.text || '').join('')
+        const fallbackTitle = sanitizeTitle(combined, combined)
+        if (fallbackTitle && fallbackTitle.length > 0) {
+          cleanedRuns = [
+            { text: fallbackTitle, bold: false, italic: false, href: null }
+          ]
+        } else {
+          cleanedRuns = []
+        }
+      }
+    }
+
+    const type = isToc
+      ? 'toc'
+      : isHeading
+        ? 'heading'
+        : isList
+          ? 'list'
+          : 'para'
+    out.push({ type, runs: cleanedRuns })
+  }
+
+  return out
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
