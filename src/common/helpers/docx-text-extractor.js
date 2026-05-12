@@ -114,7 +114,12 @@ function readWtValue(wt) {
 }
 
 /**
- * Recursively read text from a DOCX XML node, ignoring drawings/pictures.
+ * Recursively read text from a DOCX XML node, ignoring drawings/pictures
+ * and avoiding inclusion of plain attribute string values that represent rsid/IDs.
+ *
+ * Only explicit text-bearing keys (w:t, w:instrText, #text) and child element
+ * objects/arrays are considered. Plain attribute strings are skipped to avoid
+ * leaking internal IDs into output (fixes TOC numbers like "195021778").
  */
 function readDocxNodeText(node) {
   if (!node) {
@@ -129,12 +134,46 @@ function readDocxNodeText(node) {
   if (isGraphicNode(node)) {
     return ''
   }
-  if (node['w:t'] !== undefined) {
-    return readWtValue(node['w:t'])
+
+  const cleanInstr = (instr) => {
+    const raw = typeof instr === 'string' ? instr : instr['#text'] || ''
+    return String(raw)
+      .replaceAll(
+        /(?:\bPAGEREF\b|_Toc|\\h|\bbegin\b|\bend\b|MERGEFORMAT|\{|\})/gi,
+        ''
+      )
+      .replaceAll('\u00A0', ' ')
   }
+
+  // fast-path explicit nodes
+  if (node['w:instrText'] !== undefined) {
+    return cleanInstr(node['w:instrText'])
+  }
+  if (node['w:t'] !== undefined) {
+    return readWtValue(node['w:t']).replaceAll('\u00A0', ' ')
+  }
+  if (node['#text'] !== undefined) {
+    return String(node['#text'])
+  }
+
+  // helper to handle a single child value
+  const extractChild = (key, val) => {
+    if (val == null) {
+      return ''
+    }
+    if (Array.isArray(val) || typeof val === 'object') {
+      return readDocxNodeText(val)
+    }
+    // accept plain strings only when key explicitly denotes text (defensive)
+    if (key === 'w:t' || key === 'w:instrText' || key === '#text') {
+      return String(val)
+    }
+    return ''
+  }
+
   let text = ''
   for (const k of Object.keys(node)) {
-    text += readDocxNodeText(node[k])
+    text += extractChild(k, node[k])
   }
   return text
 }
@@ -248,9 +287,29 @@ function processDocxParagraph(p, rels) {
   const isHeading =
     typeof pStyle === 'string' && DOCX_HEADING_STYLE_REGEX.test(pStyle)
   const isList = !!pPr['w:numPr']
+  const isToc = typeof pStyle === 'string' && /^TOC/i.test(pStyle)
 
   const runs = []
   walkParagraphNode(p, rels, runs)
+
+  // If paragraph is a TOC entry, strip long/internal numeric and hex tokens
+  // that come from attributes/rsids and collapse excess whitespace.
+  if (isToc && runs.length > 0) {
+    const cleaned = runs
+      .map((r) => {
+        const t = (r.text || '')
+          // remove long digit sequences (>5 digits) likely internal IDs
+          .replaceAll(/\b\d{6,}\b/g, '')
+          // remove hex-like control tokens e.g. 00AF001C
+          .replaceAll(/\b00[A-Fa-f0-9]{2}(?:[A-Fa-f0-9]{2})*\b/g, '')
+          // collapse excess whitespace
+          .replaceAll(/\s{2,}/g, ' ')
+          .trim()
+        return { ...r, text: t }
+      })
+      .filter((r) => r.text && r.text.length > 0)
+    return { type: classifyDocxBlock(isHeading, isList), runs: cleaned }
+  }
 
   return { type: classifyDocxBlock(isHeading, isList), runs }
 }
