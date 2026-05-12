@@ -1,3 +1,4 @@
+// ...existing code...
 import mammoth from 'mammoth'
 import JSZip from 'jszip'
 import { XMLParser } from 'fast-xml-parser'
@@ -588,12 +589,13 @@ async function runDocxZipFallback(nodeBuffer) {
 }
 
 /**
- * Core orchestration for DOCX extraction. Returns the mammoth result object.
+ * Core orchestration for DOCX extraction. Uses mammoth first, then ZIP fallback.
  */
 async function runDocxExtraction(buffer) {
   const arrayBuffer = normalizeToArrayBuffer(buffer)
   const nodeBuffer = Buffer.from(arrayBuffer)
 
+  // Try mammoth with a couple of input shapes; if it fails, fall back to ZIP+XML parsing.
   const attempts = [{ arrayBuffer }, { buffer: nodeBuffer }]
 
   let result = await tryMammoth(['convertToMarkdown'], attempts)
@@ -640,7 +642,7 @@ export async function extractDocxText(buffer) {
 
     if (result.messages && result.messages.length > 0) {
       logger.warn(
-        { warnings: result.messages.map((m) => m.message) },
+        { warnings: result.messages.map((m) => m.message || m) },
         'DOCX extraction had warnings'
       )
     }
