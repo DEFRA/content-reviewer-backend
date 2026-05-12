@@ -79,7 +79,9 @@ function classifyDocxBlock(isHeading, isList) {
  */
 function isArtifactRunText(text) {
   const s = String(text ?? '')
-  if (!s) return false
+  if (!s) {
+    return false
+  }
   if (DOCX_ARTIFACT_PATTERN.test(s)) {
     return true
   }
@@ -210,20 +212,24 @@ function buildDocxRelsMap(relsDoc) {
  * both sides are alphanumeric and neither side already has separating whitespace.
  */
 function smartConcat(a, b) {
-  if (!a) return b || ''
-  if (!b) return a
+  if (!a) {
+    return b || ''
+  }
+  if (!b) {
+    return a
+  }
   const endsWithSpace = /\s$/.test(a)
   const startsWithSpace = /^\s/.test(b)
   if (endsWithSpace || startsWithSpace) {
-    return a + b
+    return `${a}${b}`
   }
   // If both end/start with alphanumeric, insert single space
   const alphaNumEnd = /[A-Za-z0-9]$/.test(a)
   const alphaNumStart = /^[A-Za-z0-9]/.test(b)
   if (alphaNumEnd && alphaNumStart) {
-    return a + ' ' + b
+    return `${a} ${b}`
   }
-  return a + b
+  return `${a}${b}`
 }
 
 /**
