@@ -126,6 +126,24 @@ describe('docxXmlToParagraphObjects — content extraction', () => {
     expect(block.runs[0].italic).toBe(true)
   })
 
+  test('hyperlinks resolve through the rels map to a target URL', () => {
+    const xml = wrapDocument(`
+      <w:p>
+        <w:hyperlink r:id="rId1">
+          <w:r><w:t>GOV.UK</w:t></w:r>
+        </w:hyperlink>
+      </w:p>
+    `)
+    const rels = wrapRels(
+      `<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="${GOV_UK_URL}"/>`
+    )
+    const [block] = docxXmlToParagraphObjects(xml, rels)
+    const linkRun = block.runs.find((r) => r.href)
+    expect(linkRun).toBeDefined()
+    expect(linkRun.href).toBe(GOV_UK_URL)
+    expect(linkRun.text).toContain('GOV.UK')
+  })
+
   test('drops drawing / picture artefact runs', () => {
     const xml = wrapDocument(`
       <w:p>
@@ -137,6 +155,11 @@ describe('docxXmlToParagraphObjects — content extraction', () => {
     const allText = block.runs.map((r) => r.text).join('')
     expect(allText).toContain('Real text')
     expect(allText).not.toContain('<pic:pic')
+  })
+
+  test('drops paragraphs whose runs collapse to empty', () => {
+    const xml = wrapDocument('<w:p><w:r><w:drawing/></w:r></w:p>')
+    expect(docxXmlToParagraphObjects(xml, null)).toEqual([])
   })
 
   test('falls back to empty rels when relsXml fails to parse', () => {
@@ -293,6 +316,29 @@ describe('extractDocxText – ZIP fallback parses XML', () => {
     expect(typeof result).toBe('string')
     expect(result).toContain('Hello from ZIP fallback')
   })
+
+  test('resolves hyperlinks via rels XML when present', async () => {
+    const documentXml = wrapDocument(`
+      <w:p>
+        <w:hyperlink r:id="rId1">
+          <w:r><w:t>GOV.UK</w:t></w:r>
+        </w:hyperlink>
+      </w:p>
+    `)
+    const relsXml = wrapRels(
+      `<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="${GOV_UK_URL}"/>`
+    )
+
+    vi.mocked(JSZip.loadAsync).mockResolvedValue(
+      makeMockZip({
+        'word/document.xml': documentXml,
+        'word/_rels/document.xml.rels': relsXml
+      })
+    )
+
+    const result = await extractDocxText(FAKE_BUFFER)
+    expect(result).toContain(`[GOV.UK](${GOV_UK_URL})`)
+  })
 })
 
 // ─── extractDocxText — ZIP fallback (error paths) ──────────────────────────
@@ -305,6 +351,14 @@ describe('extractDocxText – ZIP fallback error handling', () => {
     )
     vi.mocked(mammoth.extractRawText).mockRejectedValue(
       new Error('mammoth failed')
+    )
+  })
+
+  test('throws a wrapped error when zip is missing word/document.xml', async () => {
+    vi.mocked(JSZip.loadAsync).mockResolvedValue(makeMockZip({}))
+
+    await expect(extractDocxText(FAKE_BUFFER)).rejects.toThrow(
+      /Failed to extract text from DOCX/
     )
   })
 
