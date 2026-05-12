@@ -6,6 +6,7 @@ import {
   REVIEW_STATUSES,
   createCanonicalDocument,
   createReviewRecord,
+  createFailedUploadRecord,
   queueReviewJob
 } from './review-helpers.js'
 import { textExtractor } from '../common/helpers/text-extractor.js'
@@ -389,6 +390,15 @@ export const handleUploadCallback = async (request, h) => {
     }
 
     if (fileField.hasError) {
+      const userId = metadata?.userId || null
+      const fileName = fileField.filename || null
+      await createFailedUploadRecord(
+        reviewId,
+        fileName,
+        userId,
+        fileField.errorMessage,
+        request.logger
+      )
       return handleRejectedFile(fileField, reviewId, request, h)
     }
 
