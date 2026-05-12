@@ -66,6 +66,7 @@ vi.mock('./review-helpers.js', () => ({
   getCorsConfig: () => ({}),
   createCanonicalDocument: vi.fn(),
   createReviewRecord: vi.fn(),
+  createFailedUploadRecord: vi.fn(),
   queueReviewJob: vi.fn()
 }))
 
