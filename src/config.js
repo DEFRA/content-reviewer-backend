@@ -41,6 +41,20 @@ const config = convict({
     format: String,
     default: 'content-reviewer-backend'
   },
+  hapi: {
+    socketTimeoutMs: {
+      doc: 'Hapi TCP socket inactivity timeout in ms. Must exceed `hapi.serverTimeoutMs` so the handler error response is delivered before the socket is closed. Must also be less than the upstream nginx/load-balancer read timeout.',
+      format: Number,
+      default: 90_000,
+      env: 'HAPI_SOCKET_TIMEOUT_MS'
+    },
+    serverTimeoutMs: {
+      doc: 'Hapi server-side request processing timeout in ms. Hard ceiling on how long any single request handler can run. Fires 5 s before the socket timeout so a clean 503 can be returned to the client.',
+      format: Number,
+      default: 85_000,
+      env: 'HAPI_SERVER_TIMEOUT_MS'
+    }
+  },
   cdpEnvironment: {
     doc: 'The CDP environment the app is running in. With the addition of "local" for local development',
     format: [
@@ -299,6 +313,18 @@ const config = convict({
       format: Number,
       default: 3,
       env: 'SQS_MAX_RECEIVE_COUNT'
+    },
+    heartbeatIntervalMs: {
+      doc: 'How often the SQS worker extends the message visibility timeout while processing (ms). Must be smaller than `bedrock.timeoutMs` so the heartbeat fires before any plausible Bedrock timeout. 90 s gives Bedrock its full 120 s budget while still firing once as a safety net.',
+      format: Number,
+      default: 90_000,
+      env: 'SQS_HEARTBEAT_INTERVAL_MS'
+    },
+    heartbeatVisibilitySeconds: {
+      doc: 'How many seconds to add to the SQS message visibility window on each heartbeat tick. Same value is used to reset the visibility window on failure so a retried message always waits the full backoff from the moment of failure.',
+      format: Number,
+      default: 180,
+      env: 'SQS_HEARTBEAT_VISIBILITY_SECONDS'
     }
   },
   bedrock: {
@@ -350,6 +376,12 @@ const config = convict({
       format: Number,
       default: 1,
       env: 'BEDROCK_TOP_P'
+    },
+    timeoutMs: {
+      doc: 'Bedrock Converse request timeout in ms. Bedrock typically responds within 30 s for normal documents; 120 s is the hard upper limit before we surface a timeout error. Must remain less than `sqs.visibilityTimeout` (180 s) and `sqs.heartbeatIntervalMs` (90 s) so the heartbeat fires first and the message is not redelivered during a slow call.',
+      format: Number,
+      default: 120_000,
+      env: 'BEDROCK_TIMEOUT_MS'
     }
   },
   mockMode: {

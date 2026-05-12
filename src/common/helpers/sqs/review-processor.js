@@ -160,12 +160,15 @@ export class ReviewProcessor {
   async processMessage(message, messageHandler) {
     const startTime = performance.now()
 
-    // Heartbeat: extend visibility every 90 s while processing.
-    // Fires once as a safety net in case pre-Bedrock steps take longer than
-    // expected; Bedrock itself is capped at 120 s so processing always
-    // completes before the second heartbeat would fire at 180 s.
-    const HEARTBEAT_INTERVAL_MS = 90_000
-    const HEARTBEAT_VISIBILITY_SECONDS = 180
+    // Heartbeat: extend visibility every `sqs.heartbeatIntervalMs` while processing.
+    // Set in cdp-app-config (SQS_HEARTBEAT_INTERVAL_MS / SQS_HEARTBEAT_VISIBILITY_SECONDS).
+    // Default 90 s fires once as a safety net in case pre-Bedrock steps take longer
+    // than expected; Bedrock itself is capped by `bedrock.timeoutMs` (120 s by default)
+    // so processing always completes before the second heartbeat would fire at 180 s.
+    const HEARTBEAT_INTERVAL_MS = config.get('sqs.heartbeatIntervalMs')
+    const HEARTBEAT_VISIBILITY_SECONDS = config.get(
+      'sqs.heartbeatVisibilitySeconds'
+    )
     const heartbeat = setInterval(() => {
       messageHandler
         .extendVisibility(message.ReceiptHandle, HEARTBEAT_VISIBILITY_SECONDS)
