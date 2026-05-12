@@ -190,6 +190,26 @@ it('returns 200 with success:false when fileField.hasError is truthy', async () 
   })
 })
 
+it('returns 200 with success:false when fileField.hasError is truthy and userId is absent from metadata', async () => {
+  const request = {
+    payload: {
+      metadata: { reviewId: 'review-no-user' },
+      form: {
+        file: {
+          hasError: true,
+          errorMessage: 'invalid-type',
+          filename: 'bad.exe'
+        }
+      }
+    },
+    logger: makeLogger()
+  }
+  const res = await storedRoutes[ROUTE_CALLBACK].handler(request, makeH())
+
+  expect(res.statusCode).toBe(HTTP_OK)
+  expect(res.payload).toMatchObject({ success: false, message: 'invalid-type' })
+})
+
 it('fetches S3 object and parses PDF text successfully', async () => {
   extractTextMock.mockResolvedValueOnce('s3-pdf-extracted-text')
   const res = await storedRoutes[ROUTE_CALLBACK].handler(

@@ -372,6 +372,61 @@ export function handleRejectedFile(fileField, reviewId, request, h) {
 }
 
 // POST /upload-callback handler
+async function processValidUpload(
+  metadata,
+  fileField,
+  reviewId,
+  requestStartTime,
+  request
+) {
+  const userId = metadata?.userId || 'content-reviewer-frontend'
+  const { contentType, s3Key, filename } = fileField
+
+  request.logger.info(
+    `Extracted metadata from callback - reviewId: ${reviewId},userId: ${userId}, s3Key: ${s3Key}, filename: ${filename}, contentType: ${contentType}`
+  )
+
+  uploadStatusStore.set(reviewId, {
+    status: 'uploaded',
+    message: 'File uploaded and queued for review',
+    updatedAt: Date.now()
+  })
+
+  const { text, textLength } = await extractTextFromFileField(fileField, {
+    s3Client: new S3Client({ region: config.get('aws.region') }),
+    s3Bucket: config.get('s3.bucket')
+  })
+
+  request.logger.info(
+    `Extracted text from file - reviewId: ${reviewId}, charCount: ${textLength}`
+  )
+
+  launchAsyncPipeline(
+    text,
+    s3Key,
+    filename,
+    contentType,
+    reviewId,
+    userId,
+    request.logger
+  )
+
+  const totalDuration = Math.round(performance.now() - requestStartTime)
+  request.logger.info(
+    { reviewId, totalDurationMs: totalDuration },
+    '[CALLBACK] Pipeline started asynchronously'
+  )
+  request.logger.info(
+    `reviewId: ${reviewId} - Callback received from CDP Uploader`
+  )
+
+  uploadStatusStore.set(reviewId, {
+    status: 'completed',
+    message: 'review completed for the uploaded file',
+    updatedAt: Date.now()
+  })
+}
+
 export const handleUploadCallback = async (request, h) => {
   const requestStartTime = performance.now()
   const reviewId = request.payload?.metadata?.reviewId
@@ -390,66 +445,25 @@ export const handleUploadCallback = async (request, h) => {
     }
 
     if (fileField.hasError) {
-      const userId = metadata?.userId || null
+      const failedUserId = metadata?.userId || null
       const fileName = fileField.filename || null
       await createFailedUploadRecord(
         reviewId,
         fileName,
-        userId,
+        failedUserId,
         fileField.errorMessage,
         request.logger
       )
       return handleRejectedFile(fileField, reviewId, request, h)
     }
 
-    const userId = metadata?.userId || 'content-reviewer-frontend'
-    const { contentType, s3Key, filename } = fileField
-
-    request.logger.info(
-      `Extracted metadata from callback - reviewId: ${reviewId},userId: ${userId}, s3Key: ${s3Key}, filename: ${filename}, contentType: ${contentType}`
-    )
-
-    // update upload status so FE can poll
-    uploadStatusStore.set(reviewId, {
-      status: 'uploaded',
-      message: 'File uploaded and queued for review',
-      updatedAt: Date.now()
-    })
-
-    const { text, textLength } = await extractTextFromFileField(fileField, {
-      s3Client: new S3Client({ region: config.get('aws.region') }),
-      s3Bucket: config.get('s3.bucket')
-    })
-
-    request.logger.info(
-      `Extracted text from file - reviewId: ${reviewId}, charCount: ${textLength}`
-    )
-
-    launchAsyncPipeline(
-      text,
-      s3Key,
-      filename,
-      contentType,
+    await processValidUpload(
+      metadata,
+      fileField,
       reviewId,
-      userId,
-      request.logger
+      requestStartTime,
+      request
     )
-
-    const totalDuration = Math.round(performance.now() - requestStartTime)
-
-    request.logger.info(
-      { reviewId, totalDurationMs: totalDuration },
-      '[CALLBACK] Pipeline started asynchronously'
-    )
-
-    request.logger.info(
-      `reviewId: ${reviewId} - Callback received from CDP Uploader`
-    )
-    uploadStatusStore.set(reviewId, {
-      status: 'completed',
-      message: 'review completed for the uploaded file',
-      updatedAt: Date.now()
-    })
 
     return h
       .response({ success: true, message: 'Callback received' })
