@@ -35,22 +35,15 @@ export function deriveCategory(rawIssue, improvement) {
 }
 
 const DISPLAY_PLAIN_ENGLISH = 'Plain English'
-const DISPLAY_CLARITY = 'Clarity & Structure'
 const DISPLAY_GOVUK_STYLE = 'GOV.UK Style Compliance'
-const DISPLAY_COMPLETENESS = 'Content Completeness'
 
 const CATEGORY_DISPLAY_NAMES = {
   'plain-english': DISPLAY_PLAIN_ENGLISH,
   'plain english': DISPLAY_PLAIN_ENGLISH,
-  clarity: DISPLAY_CLARITY,
-  'clarity & structure': DISPLAY_CLARITY,
-  accessibility: 'Accessibility',
   'govuk-style': DISPLAY_GOVUK_STYLE,
   'govuk style': DISPLAY_GOVUK_STYLE,
   'govuk style compliance': DISPLAY_GOVUK_STYLE,
-  'gov.uk style compliance': DISPLAY_GOVUK_STYLE,
-  completeness: DISPLAY_COMPLETENESS,
-  'content completeness': DISPLAY_COMPLETENESS
+  'gov.uk style compliance': DISPLAY_GOVUK_STYLE
 }
 
 /**

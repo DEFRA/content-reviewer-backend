@@ -311,10 +311,7 @@ describe('PromptManager - Default System Prompt', () => {
   })
   test('Should contain scoring guidelines', () => {
     expect(DEFAULT_SYSTEM_PROMPT).toContain('Plain English')
-    expect(DEFAULT_SYSTEM_PROMPT).toContain('Clarity & Structure')
-    expect(DEFAULT_SYSTEM_PROMPT).toContain('Accessibility')
     expect(DEFAULT_SYSTEM_PROMPT).toContain('GOV.UK Style Compliance')
-    expect(DEFAULT_SYSTEM_PROMPT).toContain('Content Completeness')
   })
 })
 

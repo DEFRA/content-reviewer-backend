@@ -60,16 +60,14 @@ const GOVUK_LINK_START = 6
 const GOVUK_LINK_END = 12
 
 // ── Score test values ─────────────────────────────────────────────────────────
-const SCORE_2 = 2
 const SCORE_3 = 3
 const SCORE_4 = 4
-const SCORE_5 = 5
 
 // ---------------------------------------------------------------------------
 // isValidLinkEntry
 // ---------------------------------------------------------------------------
 
-describe('isValidLinkEntry', () => {
+describe('isValidLinkEntry — invalid entries', () => {
   it('returns false when start is not a number', () => {
     expect(
       isValidLinkEntry(
@@ -114,7 +112,9 @@ describe('isValidLinkEntry', () => {
       )
     ).toBe(false)
   })
+})
 
+describe('isValidLinkEntry — display and bounds', () => {
   it('returns false when end exceeds textLength', () => {
     expect(
       isValidLinkEntry(
@@ -382,10 +382,7 @@ describe('mapScores — zero values', () => {
   it('returns all zeros when rawScores is null', () => {
     const result = mapScores(null)
     expect(result.plainEnglish).toBe(0)
-    expect(result.clarity).toBe(0)
-    expect(result.accessibility).toBe(0)
     expect(result.govukStyle).toBe(0)
-    expect(result.completeness).toBe(0)
   })
 
   it('returns all zeros when rawScores is undefined', () => {
@@ -414,36 +411,6 @@ describe('mapScores — plain english', () => {
   })
 })
 
-describe('mapScores — clarity', () => {
-  it('maps clarity using the "clarity & structure" key', () => {
-    const result = mapScores({
-      'clarity & structure': { score: SCORE_3, note: 'OK' }
-    })
-    expect(result.clarity).toBe(SCORE_3)
-    expect(result.clarityNote).toBe('OK')
-  })
-
-  it('maps clarity using the fallback "clarity" key', () => {
-    const result = mapScores({ clarity: { score: SCORE_2, note: '' } })
-    expect(result.clarity).toBe(SCORE_2)
-  })
-})
-
-describe('mapScores — accessibility', () => {
-  it('maps accessibility using the "accessibility" key', () => {
-    const result = mapScores({
-      accessibility: { score: SCORE_5, note: 'Excellent' }
-    })
-    expect(result.accessibility).toBe(SCORE_5)
-    expect(result.accessibilityNote).toBe('Excellent')
-  })
-
-  it('maps accessibility using the fallback "accessible" key', () => {
-    const result = mapScores({ accessible: { score: SCORE_4, note: '' } })
-    expect(result.accessibility).toBe(SCORE_4)
-  })
-})
-
 describe('mapScores — govuk style', () => {
   it('maps govukStyle using the "gov.uk style compliance" key', () => {
     const result = mapScores({
@@ -458,25 +425,6 @@ describe('mapScores — govuk style', () => {
     })
     expect(result.govukStyle).toBe(SCORE_3)
   })
-
-  it('maps govukStyle using the "formatting" fallback key', () => {
-    const result = mapScores({ formatting: { score: SCORE_3, note: '' } })
-    expect(result.govukStyle).toBe(SCORE_3)
-  })
-})
-
-describe('mapScores — completeness', () => {
-  it('maps completeness using the "content completeness" key', () => {
-    const result = mapScores({
-      'content completeness': { score: SCORE_4, note: '' }
-    })
-    expect(result.completeness).toBe(SCORE_4)
-  })
-
-  it('maps completeness using the fallback "completeness" key', () => {
-    const result = mapScores({ completeness: { score: SCORE_3, note: '' } })
-    expect(result.completeness).toBe(SCORE_3)
-  })
 })
 
 describe('mapScores — edge cases and full mapping', () => {
@@ -490,19 +438,13 @@ describe('mapScores — edge cases and full mapping', () => {
     expect(result.plainEnglishNote).toBe('')
   })
 
-  it('maps all five categories correctly in one call', () => {
+  it('maps both categories correctly in one call', () => {
     const result = mapScores({
       'plain english': { score: SCORE_4 },
-      clarity: { score: SCORE_2 },
-      accessibility: { score: SCORE_5 },
-      'gov.uk style compliance': { score: SCORE_4 },
-      completeness: { score: SCORE_3 }
+      'gov.uk style compliance': { score: SCORE_4 }
     })
     expect(result.plainEnglish).toBe(SCORE_4)
-    expect(result.clarity).toBe(SCORE_2)
-    expect(result.accessibility).toBe(SCORE_5)
     expect(result.govukStyle).toBe(SCORE_4)
-    expect(result.completeness).toBe(SCORE_3)
   })
 
   it('handles score keys case-insensitively', () => {

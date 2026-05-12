@@ -102,14 +102,8 @@ function buildPrelimPairs(
  *   scores: {
  *     plainEnglish: number,   (1-5)
  *     plainEnglishNote: string,
- *     clarity: number,
- *     clarityNote: string,
- *     accessibility: number,
- *     accessibilityNote: string,
  *     govukStyle: number,
- *     govukStyleNote: string,
- *     completeness: number,
- *     completenessNote: string
+ *     govukStyleNote: string
  *   }
  * }
  */
@@ -253,14 +247,8 @@ class ResultEnvelopeStore {
       scores: {
         plainEnglish: 0,
         plainEnglishNote: '',
-        clarity: 0,
-        clarityNote: '',
-        accessibility: 0,
-        accessibilityNote: '',
         govukStyle: 0,
-        govukStyleNote: '',
-        completeness: 0,
-        completenessNote: ''
+        govukStyleNote: ''
       }
     }
   }
