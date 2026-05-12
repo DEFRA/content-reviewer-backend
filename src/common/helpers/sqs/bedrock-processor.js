@@ -333,7 +333,10 @@ export class BedrockReviewProcessor {
       const avg = Math.round(
         entries.reduce((sum, e) => sum + e.score, 0) / entries.length
       )
-      const worstEntry = entries.reduce((a, b) => (a.score <= b.score ? a : b))
+      const worstEntry = entries.reduce(
+        (a, b) => (a.score <= b.score ? a : b),
+        entries[0]
+      )
       collatedScores[key] = { score: avg, note: worstEntry.note }
     }
 
