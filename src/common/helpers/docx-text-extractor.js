@@ -632,11 +632,11 @@ function renderDocxGroupedRun(group) {
  * prefix; blocks whose runs collapse to whitespace are returned as empty.
  */
 function renderDocxBlock(block) {
-  // render each run (with hyperlink formatting) into a piece
-  const pieces = block.runs.map((r) => {
-    const txt = sanitizeRunText(r.text)
-    return r.href ? `[${txt}](${r.href})` : txt
-  })
+  // group adjacent runs that share the same href so anchors are emitted correctly
+  const groups = groupDocxRunsByHref(block.runs)
+
+  // render each group (anchors get [text](href))
+  const pieces = groups.map((g) => renderDocxGroupedRun(g))
 
   // reduce pieces using smartConcat so run-boundary spacing rules apply across the whole paragraph
   const merged = pieces.reduce((acc, p) => smartConcat(acc, p), '')
