@@ -1,38 +1,29 @@
-import { describe, test, expect, beforeEach, vi } from 'vitest'
+import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest'
 
 import { BedrockReviewProcessor } from './bedrock-processor.js'
 
-// ─── Shared mock fns ────────────────────────────────────────────────────────
+// ─── Shared mocks ────────────────────────────────────────────────────────────
 
-const mockLoggerInfo = vi.fn()
-const mockLoggerError = vi.fn()
-const mockGetSystemPrompt = vi.fn()
-const mockSendMessage = vi.fn()
-const mockParseBedrockResponse = vi.fn()
 const mockConfigGet = vi.fn()
 
 vi.mock('../logging/logger.js', () => ({
   createLogger: () => ({
-    info: (...args) => mockLoggerInfo(...args),
-    error: (...args) => mockLoggerError(...args),
+    info: vi.fn(),
+    error: vi.fn(),
     warn: vi.fn()
   })
 }))
 
 vi.mock('../bedrock-client.js', () => ({
-  bedrockClient: {
-    sendMessage: (...args) => mockSendMessage(...args)
-  }
+  bedrockClient: { sendMessage: vi.fn() }
 }))
 
 vi.mock('../prompt-manager.js', () => ({
-  promptManager: {
-    getSystemPrompt: (...args) => mockGetSystemPrompt(...args)
-  }
+  promptManager: { getSystemPrompt: vi.fn() }
 }))
 
 vi.mock('../review-parser.js', () => ({
-  parseBedrockResponse: (...args) => mockParseBedrockResponse(...args)
+  parseBedrockResponse: vi.fn()
 }))
 
 vi.mock('../../../config.js', () => ({
@@ -41,714 +32,95 @@ vi.mock('../../../config.js', () => ({
   }
 }))
 
-// Default config values used by the chunking code
+// ─── Test constants ──────────────────────────────────────────────────────────
+
+const CONFIG_CHUNK_SIZE_KEY = 'bedrock.chunkSizeChars'
+const CONFIG_MAX_TOKENS_KEY = 'bedrock.maxTokensPerChunk'
+
 const DEFAULT_CHUNK_SIZE = 25_000
 const DEFAULT_MAX_TOKENS_PER_CHUNK = 4_096
+const SMALL_CHUNK_SIZE = 10
+
+const INPUT_TOKENS_DEFAULT = 100
+const OUTPUT_TOKENS_DEFAULT = 50
+const TOTAL_TOKENS_DEFAULT = 150
+const BEDROCK_DURATION_DEFAULT = 1000
+const PARSE_DURATION_DEFAULT = 5
+
+const PARSE_DURATION_C1 = 30
+const PARSE_DURATION_C2 = 20
+
+// Chunk indices and offsets used in multi-chunk tests
+const CHUNK_INDEX_1 = 1
+const CHUNK_INDEX_2 = 2
+const CHUNK_INDEX_3 = 3
+const CHUNK_OFFSET_0 = 0
+const CHUNK_OFFSET_10 = 10
+const CHUNK_OFFSET_20 = 20
+// 'hello world!' splits at the space → chunk 2 starts at char 6
+const HELLO_WORLD_CHUNK2_OFFSET = 6
+const EXPECTED_THREE_CHUNKS = 3
+
+// ─── Shared helpers ───────────────────────────────────────────────────────────
 
 function setupDefaultConfig() {
   mockConfigGet.mockImplementation((key) => {
-    if (key === 'bedrock.chunkSizeChars') return DEFAULT_CHUNK_SIZE
-    if (key === 'bedrock.maxTokensPerChunk') return DEFAULT_MAX_TOKENS_PER_CHUNK
+    if (key === CONFIG_CHUNK_SIZE_KEY) {
+      return DEFAULT_CHUNK_SIZE
+    }
+    if (key === CONFIG_MAX_TOKENS_KEY) {
+      return DEFAULT_MAX_TOKENS_PER_CHUNK
+    }
     return undefined
   })
 }
 
-// ─── splitIntoChunks ────────────────────────────────────────────────────────
-
-describe('BedrockReviewProcessor - splitIntoChunks', () => {
-  let processor
-
-  beforeEach(() => {
-    vi.clearAllMocks()
-    processor = new BedrockReviewProcessor()
-  })
-
-  test('returns single chunk when text length equals chunkSize', () => {
-    const text = 'hello world'
-    const result = processor.splitIntoChunks(text, text.length)
-    expect(result).toEqual([{ text, startOffset: 0, index: 1 }])
-  })
-
-  test('returns single chunk when text length is less than chunkSize', () => {
-    const text = 'short text'
-    const result = processor.splitIntoChunks(text, 100)
-    expect(result).toEqual([{ text, startOffset: 0, index: 1 }])
-  })
-
-  test('splits text into multiple chunks respecting chunkSize', () => {
-    // 15 chars total, chunkSize=5 → 3 chunks
-    const text = 'aaaa bbbb cccc'
-    const result = processor.splitIntoChunks(text, 5)
-    expect(result.length).toBeGreaterThan(1)
-    // All chunk texts concatenated should equal the original
-    expect(result.map((c) => c.text).join('')).toBe(text)
-  })
-
-  test('snaps split point to last whitespace to avoid cutting mid-word', () => {
-    // 'hello world foo' with chunkSize=8 — would cut at index 8 ('hello wo'),
-    // but last space before index 8 is at index 5 → chunk1 should be 'hello '
-    const text = 'hello world foo'
-    const result = processor.splitIntoChunks(text, 8)
-    // First chunk must end at a space boundary (not mid-word)
-    const firstChunk = result[0].text
-    expect(firstChunk).toBe('hello ')
-  })
-
-  test('assigns correct startOffset to each chunk', () => {
-    const text = 'aa bb cc dd ee'
-    const result = processor.splitIntoChunks(text, 5)
-    let expectedOffset = 0
-    for (const chunk of result) {
-      expect(chunk.startOffset).toBe(expectedOffset)
-      expectedOffset += chunk.text.length
+function setupSmallChunkConfig() {
+  mockConfigGet.mockImplementation((key) => {
+    if (key === CONFIG_CHUNK_SIZE_KEY) {
+      return SMALL_CHUNK_SIZE
     }
-  })
-
-  test('assigns sequential 1-based index to each chunk', () => {
-    const text = 'aa bb cc dd ee'
-    const result = processor.splitIntoChunks(text, 5)
-    result.forEach((chunk, i) => {
-      expect(chunk.index).toBe(i + 1)
-    })
-  })
-
-  test('falls back to hard cut when no whitespace is found in the window', () => {
-    // No spaces — must still split at exactly chunkSize
-    const text = 'abcdefghij'
-    const result = processor.splitIntoChunks(text, 4)
-    expect(result[0].text).toBe('abcd')
-    expect(result[0].startOffset).toBe(0)
-    expect(result[1].text).toBe('efgh')
-    expect(result[1].startOffset).toBe(4)
-    expect(result[2].text).toBe('ij')
-    expect(result[2].startOffset).toBe(8)
-  })
-})
-
-// ─── adjustChunkOffsets ─────────────────────────────────────────────────────
-
-describe('BedrockReviewProcessor - adjustChunkOffsets', () => {
-  let processor
-
-  beforeEach(() => {
-    vi.clearAllMocks()
-    processor = new BedrockReviewProcessor()
-  })
-
-  test('returns parsedReview unchanged when chunkStartOffset is 0', () => {
-    const parsedReview = {
-      scores: { 'plain english': { score: 7, note: 'ok' } },
-      improvements: [{ start: 10, end: 20, suggestion: 'fix this' }],
-      reviewedContent: { issues: [{ start: 5, end: 15, text: 'issue' }] }
+    if (key === CONFIG_MAX_TOKENS_KEY) {
+      return DEFAULT_MAX_TOKENS_PER_CHUNK
     }
-    const result = processor.adjustChunkOffsets(parsedReview, 0)
-    expect(result).toBe(parsedReview) // exact same reference
+    return undefined
   })
+}
 
-  test('adds chunkStartOffset to all issue start/end values', () => {
-    const parsedReview = {
-      reviewedContent: {
-        issues: [
-          { start: 10, end: 20, text: 'issue A' },
-          { start: 30, end: 40, text: 'issue B' }
-        ]
+function makeProcessChunkResult(
+  index,
+  startOffset,
+  finalReviewContent = 'raw'
+) {
+  return {
+    chunk: { index, startOffset, text: 'chunk' },
+    bedrockResult: {
+      bedrockResponse: {
+        usage: {
+          inputTokens: INPUT_TOKENS_DEFAULT,
+          outputTokens: OUTPUT_TOKENS_DEFAULT,
+          totalTokens: TOTAL_TOKENS_DEFAULT
+        },
+        stopReason: 'end_turn'
       },
-      improvements: []
-    }
-    const result = processor.adjustChunkOffsets(parsedReview, 100)
-    expect(result.reviewedContent.issues[0].start).toBe(110)
-    expect(result.reviewedContent.issues[0].end).toBe(120)
-    expect(result.reviewedContent.issues[1].start).toBe(130)
-    expect(result.reviewedContent.issues[1].end).toBe(140)
-  })
-
-  test('adds chunkStartOffset to all improvement start/end values', () => {
-    const parsedReview = {
-      reviewedContent: { issues: [] },
-      improvements: [
-        { start: 5, end: 15, suggestion: 'improve A' },
-        { start: 50, end: 60, suggestion: 'improve B' }
-      ]
-    }
-    const result = processor.adjustChunkOffsets(parsedReview, 200)
-    expect(result.improvements[0].start).toBe(205)
-    expect(result.improvements[0].end).toBe(215)
-    expect(result.improvements[1].start).toBe(250)
-    expect(result.improvements[1].end).toBe(260)
-  })
-
-  test('handles missing start/end on improvements by treating them as 0', () => {
-    const parsedReview = {
-      reviewedContent: { issues: [] },
-      improvements: [{ suggestion: 'no offsets' }]
-    }
-    const result = processor.adjustChunkOffsets(parsedReview, 50)
-    expect(result.improvements[0].start).toBe(50)
-    expect(result.improvements[0].end).toBe(50)
-  })
-
-  test('handles empty issues and improvements arrays without error', () => {
-    const parsedReview = {
-      reviewedContent: { issues: [] },
-      improvements: []
-    }
-    const result = processor.adjustChunkOffsets(parsedReview, 100)
-    expect(result.reviewedContent.issues).toEqual([])
-    expect(result.improvements).toEqual([])
-  })
-
-  test('handles missing reviewedContent gracefully', () => {
-    const parsedReview = {
-      improvements: [{ start: 10, end: 20 }]
-    }
-    const result = processor.adjustChunkOffsets(parsedReview, 100)
-    expect(result.reviewedContent.issues).toEqual([])
-    expect(result.improvements[0].start).toBe(110)
-  })
-})
-
-// ─── applyChunkRefOffset ────────────────────────────────────────────────────
-
-describe('BedrockReviewProcessor - applyChunkRefOffset', () => {
-  let processor
-
-  beforeEach(() => {
-    vi.clearAllMocks()
-    processor = new BedrockReviewProcessor()
-  })
-
-  test('offsets ref on all improvements by refOffset', () => {
-    const parsedReview = {
-      improvements: [
-        { ref: 1, suggestion: 'a' },
-        { ref: 2, suggestion: 'b' }
-      ],
-      reviewedContent: { issues: [] }
-    }
-    const result = processor.applyChunkRefOffset(parsedReview, 1000)
-    expect(result.improvements[0].ref).toBe(1001)
-    expect(result.improvements[1].ref).toBe(1002)
-  })
-
-  test('offsets ref on all issues by refOffset', () => {
-    const parsedReview = {
-      improvements: [],
-      reviewedContent: {
-        issues: [
-          { ref: 3, start: 10, end: 20 },
-          { ref: 5, start: 30, end: 40 }
-        ]
-      }
-    }
-    const result = processor.applyChunkRefOffset(parsedReview, 2000)
-    expect(result.reviewedContent.issues[0].ref).toBe(2003)
-    expect(result.reviewedContent.issues[1].ref).toBe(2005)
-  })
-
-  test('leaves ref undefined when it was undefined', () => {
-    const parsedReview = {
-      improvements: [{ suggestion: 'no ref' }],
-      reviewedContent: { issues: [{ start: 0, end: 5 }] }
-    }
-    const result = processor.applyChunkRefOffset(parsedReview, 1000)
-    expect(result.improvements[0].ref).toBeUndefined()
-    expect(result.reviewedContent.issues[0].ref).toBeUndefined()
-  })
-
-  test('does not mutate original parsedReview', () => {
-    const parsedReview = {
-      improvements: [{ ref: 1 }],
-      reviewedContent: { issues: [{ ref: 1 }] }
-    }
-    processor.applyChunkRefOffset(parsedReview, 500)
-    expect(parsedReview.improvements[0].ref).toBe(1)
-    expect(parsedReview.reviewedContent.issues[0].ref).toBe(1)
-  })
-
-  test('handles empty improvements and issues without error', () => {
-    const parsedReview = {
+      bedrockDuration: BEDROCK_DURATION_DEFAULT
+    },
+    parsedReview: {
+      scores: {
+        'plain english': { score: 7, note: 'ok' },
+        'gov.uk style compliance': { score: 8, note: 'good' }
+      },
       improvements: [],
       reviewedContent: { issues: [] }
-    }
-    const result = processor.applyChunkRefOffset(parsedReview, 1000)
-    expect(result.improvements).toEqual([])
-    expect(result.reviewedContent.issues).toEqual([])
-  })
-})
-
-// ─── collateChunkResults ────────────────────────────────────────────────────
-
-describe('BedrockReviewProcessor - collateChunkResults', () => {
-  let processor
-  const CANONICAL_TEXT = 'full document text'
-
-  beforeEach(() => {
-    vi.clearAllMocks()
-    processor = new BedrockReviewProcessor()
-  })
-
-  function makeChunkResult({
-    plainEnglishScore,
-    plainEnglishNote,
-    govUkScore,
-    govUkNote,
-    improvements = [],
-    issues = [],
-    inputTokens = 100,
-    outputTokens = 50,
-    totalTokens = 150,
-    bedrockDuration = 1000
-  }) {
-    return {
-      chunk: { index: 1, startOffset: 0 },
-      bedrockResult: {
-        bedrockResponse: {
-          usage: { inputTokens, outputTokens, totalTokens },
-          stopReason: 'end_turn'
-        },
-        bedrockDuration
-      },
-      parsedReview: {
-        scores: {
-          'plain english': { score: plainEnglishScore, note: plainEnglishNote },
-          'gov.uk style compliance': { score: govUkScore, note: govUkNote }
-        },
-        improvements,
-        reviewedContent: { issues }
-      },
-      parseDuration: 10,
-      finalReviewContent: 'raw'
-    }
+    },
+    parseDuration: PARSE_DURATION_DEFAULT,
+    finalReviewContent
   }
+}
 
-  test('averages scores across all chunks', () => {
-    const results = [
-      makeChunkResult({
-        plainEnglishScore: 6,
-        plainEnglishNote: 'needs work',
-        govUkScore: 8,
-        govUkNote: 'good'
-      }),
-      makeChunkResult({
-        plainEnglishScore: 8,
-        plainEnglishNote: 'ok',
-        govUkScore: 6,
-        govUkNote: 'improve'
-      })
-    ]
-    const { combinedParsedReview } = processor.collateChunkResults(
-      results,
-      CANONICAL_TEXT
-    )
-    expect(combinedParsedReview.scores['plain english'].score).toBe(7) // (6+8)/2
-    expect(combinedParsedReview.scores['gov.uk style compliance'].score).toBe(7) // (8+6)/2
-  })
+// ─── performChunkedReview — below threshold (single call) ────────────────────
 
-  test('uses note from the lowest-scoring chunk', () => {
-    const results = [
-      makeChunkResult({
-        plainEnglishScore: 4,
-        plainEnglishNote: 'poor',
-        govUkScore: 9,
-        govUkNote: 'great'
-      }),
-      makeChunkResult({
-        plainEnglishScore: 8,
-        plainEnglishNote: 'fine',
-        govUkScore: 7,
-        govUkNote: 'ok'
-      })
-    ]
-    const { combinedParsedReview } = processor.collateChunkResults(
-      results,
-      CANONICAL_TEXT
-    )
-    // plain english: lowest is score 4, note 'poor'
-    expect(combinedParsedReview.scores['plain english'].note).toBe('poor')
-    // gov.uk: lowest is score 7, note 'ok'
-    expect(combinedParsedReview.scores['gov.uk style compliance'].note).toBe(
-      'ok'
-    )
-  })
-
-  test('sums token usage across all chunks', () => {
-    const results = [
-      makeChunkResult({
-        plainEnglishScore: 7,
-        plainEnglishNote: 'a',
-        govUkScore: 7,
-        govUkNote: 'a',
-        inputTokens: 300,
-        outputTokens: 100,
-        totalTokens: 400
-      }),
-      makeChunkResult({
-        plainEnglishScore: 7,
-        plainEnglishNote: 'a',
-        govUkScore: 7,
-        govUkNote: 'a',
-        inputTokens: 200,
-        outputTokens: 80,
-        totalTokens: 280
-      })
-    ]
-    const { combinedBedrockResult } = processor.collateChunkResults(
-      results,
-      CANONICAL_TEXT
-    )
-    expect(combinedBedrockResult.bedrockResponse.usage.inputTokens).toBe(500)
-    expect(combinedBedrockResult.bedrockResponse.usage.outputTokens).toBe(180)
-    expect(combinedBedrockResult.bedrockResponse.usage.totalTokens).toBe(680)
-  })
-
-  test('takes the max bedrockDuration across chunks (wall-clock time)', () => {
-    const results = [
-      makeChunkResult({
-        plainEnglishScore: 7,
-        plainEnglishNote: 'a',
-        govUkScore: 7,
-        govUkNote: 'a',
-        bedrockDuration: 5000
-      }),
-      makeChunkResult({
-        plainEnglishScore: 7,
-        plainEnglishNote: 'a',
-        govUkScore: 7,
-        govUkNote: 'a',
-        bedrockDuration: 8000
-      }),
-      makeChunkResult({
-        plainEnglishScore: 7,
-        plainEnglishNote: 'a',
-        govUkScore: 7,
-        govUkNote: 'a',
-        bedrockDuration: 3000
-      })
-    ]
-    const { combinedBedrockResult } = processor.collateChunkResults(
-      results,
-      CANONICAL_TEXT
-    )
-    expect(combinedBedrockResult.bedrockDuration).toBe(8000)
-  })
-
-  test('merges improvements from all chunks', () => {
-    const imp1 = { start: 10, end: 20, suggestion: 'fix A' }
-    const imp2 = { start: 500, end: 510, suggestion: 'fix B' }
-    const results = [
-      makeChunkResult({
-        plainEnglishScore: 7,
-        plainEnglishNote: 'a',
-        govUkScore: 7,
-        govUkNote: 'a',
-        improvements: [imp1]
-      }),
-      makeChunkResult({
-        plainEnglishScore: 7,
-        plainEnglishNote: 'a',
-        govUkScore: 7,
-        govUkNote: 'a',
-        improvements: [imp2]
-      })
-    ]
-    const { combinedParsedReview } = processor.collateChunkResults(
-      results,
-      CANONICAL_TEXT
-    )
-    expect(combinedParsedReview.improvements).toHaveLength(2)
-    expect(combinedParsedReview.improvements).toContain(imp1)
-    expect(combinedParsedReview.improvements).toContain(imp2)
-  })
-
-  test('merges issues from all chunks', () => {
-    const issue1 = { start: 5, end: 10, text: 'issue A' }
-    const issue2 = { start: 600, end: 620, text: 'issue B' }
-    const results = [
-      makeChunkResult({
-        plainEnglishScore: 7,
-        plainEnglishNote: 'a',
-        govUkScore: 7,
-        govUkNote: 'a',
-        issues: [issue1]
-      }),
-      makeChunkResult({
-        plainEnglishScore: 7,
-        plainEnglishNote: 'a',
-        govUkScore: 7,
-        govUkNote: 'a',
-        issues: [issue2]
-      })
-    ]
-    const { combinedParsedReview } = processor.collateChunkResults(
-      results,
-      CANONICAL_TEXT
-    )
-    expect(combinedParsedReview.reviewedContent.issues).toHaveLength(2)
-  })
-
-  test('uses canonicalText as plainText in combined reviewedContent', () => {
-    const results = [
-      makeChunkResult({
-        plainEnglishScore: 7,
-        plainEnglishNote: 'a',
-        govUkScore: 7,
-        govUkNote: 'a'
-      })
-    ]
-    const { combinedParsedReview } = processor.collateChunkResults(
-      results,
-      CANONICAL_TEXT
-    )
-    expect(combinedParsedReview.reviewedContent.plainText).toBe(CANONICAL_TEXT)
-  })
-
-  test('collates scores correctly when LLM returns capitalized keys', () => {
-    // LLM often returns "Plain English" (Title Case) — collateChunkResults must
-    // normalise to lowercase before lookup so scores are not silently dropped.
-    const results = [
-      {
-        chunk: { index: 1, startOffset: 0 },
-        bedrockResult: {
-          bedrockResponse: { usage: {}, stopReason: 'end_turn' },
-          bedrockDuration: 500
-        },
-        parsedReview: {
-          scores: {
-            'Plain English': { score: 4, note: 'wordy' },
-            'GOV.UK Style Compliance': { score: 3, note: 'needs work' }
-          },
-          improvements: [],
-          reviewedContent: { issues: [] }
-        },
-        parseDuration: 5,
-        finalReviewContent: ''
-      }
-    ]
-    const { combinedParsedReview } = processor.collateChunkResults(
-      results,
-      CANONICAL_TEXT
-    )
-    expect(combinedParsedReview.scores['plain english'].score).toBe(4)
-    expect(combinedParsedReview.scores['gov.uk style compliance'].score).toBe(3)
-  })
-
-  test('skips score keys where no chunk has data', () => {
-    const results = [
-      {
-        chunk: { index: 1, startOffset: 0 },
-        bedrockResult: {
-          bedrockResponse: { usage: {}, stopReason: 'end_turn' },
-          bedrockDuration: 100
-        },
-        parsedReview: {
-          scores: {},
-          improvements: [],
-          reviewedContent: { issues: [] }
-        },
-        parseDuration: 5,
-        finalReviewContent: ''
-      }
-    ]
-    const { combinedParsedReview } = processor.collateChunkResults(
-      results,
-      CANONICAL_TEXT
-    )
-    expect(combinedParsedReview.scores['plain english']).toBeUndefined()
-    expect(
-      combinedParsedReview.scores['gov.uk style compliance']
-    ).toBeUndefined()
-  })
-})
-
-// ─── processChunk ───────────────────────────────────────────────────────────
-
-describe('BedrockReviewProcessor - processChunk', () => {
-  let processor
-
-  beforeEach(() => {
-    vi.clearAllMocks()
-    setupDefaultConfig()
-    processor = new BedrockReviewProcessor()
-  })
-
-  test('calls performBedrockReview with chunkReviewId and maxTokensPerChunk', async () => {
-    const chunk = { text: 'chunk text', startOffset: 0, index: 2 }
-    const bedrockResult = {
-      bedrockResponse: { content: 'response', usage: {} },
-      bedrockDuration: 500
-    }
-    const parsedResult = {
-      parsedReview: {
-        scores: {},
-        improvements: [],
-        reviewedContent: { issues: [] }
-      },
-      parseDuration: 10,
-      finalReviewContent: 'response'
-    }
-
-    processor.performBedrockReview = vi.fn().mockResolvedValue(bedrockResult)
-    processor.parseBedrockResponseData = vi.fn().mockResolvedValue(parsedResult)
-
-    await processor.processChunk('review-abc', chunk)
-
-    expect(processor.performBedrockReview).toHaveBeenCalledWith(
-      'review-abc_chunk_2',
-      'chunk text',
-      DEFAULT_MAX_TOKENS_PER_CHUNK
-    )
-  })
-
-  test('calls parseBedrockResponseData with chunkReviewId and chunk text', async () => {
-    const chunk = { text: 'some chunk', startOffset: 500, index: 3 }
-    const bedrockResult = {
-      bedrockResponse: { content: 'parsed', usage: {} },
-      bedrockDuration: 300
-    }
-    const parsedResult = {
-      parsedReview: {
-        scores: {},
-        improvements: [],
-        reviewedContent: { issues: [] }
-      },
-      parseDuration: 5,
-      finalReviewContent: 'parsed'
-    }
-
-    processor.performBedrockReview = vi.fn().mockResolvedValue(bedrockResult)
-    processor.parseBedrockResponseData = vi.fn().mockResolvedValue(parsedResult)
-
-    await processor.processChunk('review-xyz', chunk)
-
-    expect(processor.parseBedrockResponseData).toHaveBeenCalledWith(
-      'review-xyz_chunk_3',
-      bedrockResult,
-      'some chunk'
-    )
-  })
-
-  test('adjusts offsets by chunkStartOffset and returns combined result', async () => {
-    const chunk = { text: 'chunk content', startOffset: 1000, index: 1 }
-    const bedrockResult = {
-      bedrockResponse: { content: 'review', usage: { inputTokens: 50 } },
-      bedrockDuration: 800
-    }
-    const parsedResult = {
-      parsedReview: {
-        scores: {},
-        improvements: [{ start: 5, end: 10, suggestion: 'fix' }],
-        reviewedContent: { issues: [{ start: 2, end: 7, text: 'issue' }] }
-      },
-      parseDuration: 15,
-      finalReviewContent: 'review'
-    }
-
-    processor.performBedrockReview = vi.fn().mockResolvedValue(bedrockResult)
-    processor.parseBedrockResponseData = vi.fn().mockResolvedValue(parsedResult)
-
-    const result = await processor.processChunk('r1', chunk)
-
-    // Offsets must be adjusted by chunkStartOffset (1000)
-    expect(result.parsedReview.improvements[0].start).toBe(1005)
-    expect(result.parsedReview.improvements[0].end).toBe(1010)
-    expect(result.parsedReview.reviewedContent.issues[0].start).toBe(1002)
-    expect(result.parsedReview.reviewedContent.issues[0].end).toBe(1007)
-  })
-
-  test('offsets refs by (chunk.index - 1) * 1000 to prevent cross-chunk collisions', async () => {
-    // chunk.index = 3 → refOffset = 2000
-    const chunk = { text: 'chunk text', startOffset: 0, index: 3 }
-    const bedrockResult = {
-      bedrockResponse: { content: 'ok', usage: {} },
-      bedrockDuration: 200
-    }
-    const parsedResult = {
-      parsedReview: {
-        scores: {},
-        improvements: [{ ref: 1, start: 0, end: 5 }],
-        reviewedContent: { issues: [{ ref: 2, start: 10, end: 20 }] }
-      },
-      parseDuration: 5,
-      finalReviewContent: 'ok'
-    }
-
-    processor.performBedrockReview = vi.fn().mockResolvedValue(bedrockResult)
-    processor.parseBedrockResponseData = vi.fn().mockResolvedValue(parsedResult)
-
-    const result = await processor.processChunk('r', chunk)
-
-    expect(result.parsedReview.improvements[0].ref).toBe(2001)
-    expect(result.parsedReview.reviewedContent.issues[0].ref).toBe(2002)
-  })
-
-  test('does not offset refs for chunk.index = 1 (refOffset = 0)', async () => {
-    const chunk = { text: 'chunk text', startOffset: 0, index: 1 }
-    const bedrockResult = {
-      bedrockResponse: { content: 'ok', usage: {} },
-      bedrockDuration: 200
-    }
-    const parsedResult = {
-      parsedReview: {
-        scores: {},
-        improvements: [{ ref: 1, start: 0, end: 5 }],
-        reviewedContent: { issues: [{ ref: 1, start: 0, end: 5 }] }
-      },
-      parseDuration: 5,
-      finalReviewContent: 'ok'
-    }
-
-    processor.performBedrockReview = vi.fn().mockResolvedValue(bedrockResult)
-    processor.parseBedrockResponseData = vi.fn().mockResolvedValue(parsedResult)
-
-    const result = await processor.processChunk('r', chunk)
-
-    // No offset for chunk 1 — refs stay as-is
-    expect(result.parsedReview.improvements[0].ref).toBe(1)
-    expect(result.parsedReview.reviewedContent.issues[0].ref).toBe(1)
-  })
-
-  test('propagates error from performBedrockReview', async () => {
-    const chunk = { text: 'text', startOffset: 0, index: 1 }
-    processor.performBedrockReview = vi
-      .fn()
-      .mockRejectedValue(new Error('Bedrock timeout'))
-
-    await expect(processor.processChunk('r-fail', chunk)).rejects.toThrow(
-      'Bedrock timeout'
-    )
-  })
-
-  test('returns chunk, bedrockResult, parsedReview, parseDuration, finalReviewContent', async () => {
-    const chunk = { text: 'hello', startOffset: 0, index: 1 }
-    const bedrockResult = {
-      bedrockResponse: { content: 'ok', usage: {} },
-      bedrockDuration: 200
-    }
-    const parsedResult = {
-      parsedReview: {
-        scores: {},
-        improvements: [],
-        reviewedContent: { issues: [] }
-      },
-      parseDuration: 8,
-      finalReviewContent: 'ok'
-    }
-
-    processor.performBedrockReview = vi.fn().mockResolvedValue(bedrockResult)
-    processor.parseBedrockResponseData = vi.fn().mockResolvedValue(parsedResult)
-
-    const result = await processor.processChunk('r', chunk)
-
-    expect(result.chunk).toBe(chunk)
-    expect(result.bedrockResult).toBe(bedrockResult)
-    expect(result.parseDuration).toBe(8)
-    expect(result.finalReviewContent).toBe('ok')
-  })
-})
-
-// ─── performChunkedReview ───────────────────────────────────────────────────
-
-describe('BedrockReviewProcessor - performChunkedReview - below threshold (single call)', () => {
+describe('BedrockReviewProcessor - performChunkedReview - below threshold', () => {
   let processor
 
   beforeEach(() => {
@@ -758,17 +130,21 @@ describe('BedrockReviewProcessor - performChunkedReview - below threshold (singl
   })
 
   test('calls performBedrockReview directly without chunking for short text', async () => {
-    const shortText = 'x'.repeat(100) // well below 25,000
+    const shortText = 'x'.repeat(DEFAULT_CHUNK_SIZE - 1)
     const bedrockResult = {
       bedrockResponse: {
         content: 'ok',
-        usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 }
+        usage: {
+          inputTokens: INPUT_TOKENS_DEFAULT,
+          outputTokens: OUTPUT_TOKENS_DEFAULT,
+          totalTokens: TOTAL_TOKENS_DEFAULT
+        }
       },
-      bedrockDuration: 300
+      bedrockDuration: BEDROCK_DURATION_DEFAULT
     }
     const parseResult = {
       parsedReview: { scores: {}, improvements: [] },
-      parseDuration: 5,
+      parseDuration: PARSE_DURATION_DEFAULT,
       finalReviewContent: 'ok'
     }
 
@@ -787,11 +163,11 @@ describe('BedrockReviewProcessor - performChunkedReview - below threshold (singl
     const shortText = 'short'
     const bedrockResult = {
       bedrockResponse: { content: 'ok', usage: {} },
-      bedrockDuration: 100
+      bedrockDuration: BEDROCK_DURATION_DEFAULT
     }
     const parseResult = {
       parsedReview: {},
-      parseDuration: 2,
+      parseDuration: PARSE_DURATION_DEFAULT,
       finalReviewContent: 'ok'
     }
 
@@ -812,11 +188,11 @@ describe('BedrockReviewProcessor - performChunkedReview - below threshold (singl
     const shortText = 'brief'
     const bedrockResult = {
       bedrockResponse: { content: 'ok', usage: {} },
-      bedrockDuration: 50
+      bedrockDuration: BEDROCK_DURATION_DEFAULT
     }
     const parseResult = {
       parsedReview: {},
-      parseDuration: 1,
+      parseDuration: PARSE_DURATION_DEFAULT,
       finalReviewContent: 'ok'
     }
 
@@ -830,56 +206,24 @@ describe('BedrockReviewProcessor - performChunkedReview - below threshold (singl
   })
 })
 
-describe('BedrockReviewProcessor - performChunkedReview - above threshold (multi-chunk)', () => {
-  let processor
+// ─── performChunkedReview — above threshold (multi-chunk) ────────────────────
 
-  const SMALL_CHUNK_SIZE = 10 // force chunking even with short text
+describe('BedrockReviewProcessor - performChunkedReview - above threshold', () => {
+  let processor
 
   beforeEach(() => {
     vi.clearAllMocks()
-    mockConfigGet.mockImplementation((key) => {
-      if (key === 'bedrock.chunkSizeChars') return SMALL_CHUNK_SIZE
-      if (key === 'bedrock.maxTokensPerChunk')
-        return DEFAULT_MAX_TOKENS_PER_CHUNK
-      return undefined
-    })
+    setupSmallChunkConfig()
     processor = new BedrockReviewProcessor()
   })
-
-  function makeProcessChunkResult(
-    index,
-    startOffset,
-    finalReviewContent = 'raw'
-  ) {
-    return {
-      chunk: { index, startOffset, text: 'chunk' },
-      bedrockResult: {
-        bedrockResponse: {
-          usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
-          stopReason: 'end_turn'
-        },
-        bedrockDuration: 1000
-      },
-      parsedReview: {
-        scores: {
-          'plain english': { score: 7, note: 'ok' },
-          'gov.uk style compliance': { score: 8, note: 'good' }
-        },
-        improvements: [],
-        reviewedContent: { issues: [] }
-      },
-      parseDuration: 5,
-      finalReviewContent
-    }
-  }
 
   test('calls processChunk once per chunk in parallel', async () => {
     // text length=30, chunkSize=10 → 3 chunks
     const longText = 'aaaa bbbbb cccc ddddd eeeee ff'
     const chunkResults = [
-      makeProcessChunkResult(1, 0),
-      makeProcessChunkResult(2, 10),
-      makeProcessChunkResult(3, 20)
+      makeProcessChunkResult(CHUNK_INDEX_1, CHUNK_OFFSET_0),
+      makeProcessChunkResult(CHUNK_INDEX_2, CHUNK_OFFSET_10),
+      makeProcessChunkResult(CHUNK_INDEX_3, CHUNK_OFFSET_20)
     ]
 
     processor.processChunk = vi
@@ -890,26 +234,27 @@ describe('BedrockReviewProcessor - performChunkedReview - above threshold (multi
 
     await processor.performChunkedReview('r', longText)
 
-    expect(processor.processChunk).toHaveBeenCalledTimes(3)
+    expect(processor.processChunk).toHaveBeenCalledTimes(EXPECTED_THREE_CHUNKS)
     expect(processor.processChunk).toHaveBeenCalledWith(
       'r',
-      expect.objectContaining({ index: 1 })
+      expect.objectContaining({ index: CHUNK_INDEX_1 })
     )
     expect(processor.processChunk).toHaveBeenCalledWith(
       'r',
-      expect.objectContaining({ index: 2 })
+      expect.objectContaining({ index: CHUNK_INDEX_2 })
     )
     expect(processor.processChunk).toHaveBeenCalledWith(
       'r',
-      expect.objectContaining({ index: 3 })
+      expect.objectContaining({ index: CHUNK_INDEX_3 })
     )
   })
 
   test('returns combined parsedReview and bedrockResult from collateChunkResults', async () => {
     const longText = 'aaa bbb ccc ddd eee fff ggg'
-    const chunkResult = makeProcessChunkResult(1, 0)
 
-    processor.processChunk = vi.fn().mockResolvedValue(chunkResult)
+    processor.processChunk = vi
+      .fn()
+      .mockResolvedValue(makeProcessChunkResult(CHUNK_INDEX_1, CHUNK_OFFSET_0))
 
     const result = await processor.performChunkedReview('r', longText)
 
@@ -920,10 +265,17 @@ describe('BedrockReviewProcessor - performChunkedReview - above threshold (multi
 
   test('includes per-chunk data in chunks array for debug artefact', async () => {
     // 'hello world!' = 12 chars → exactly 2 chunks with chunkSize=10
-    // chunk1='hello '(0-6), chunk2='world!'(6-12)
     const longText = 'hello world!'
-    const chunkResult1 = makeProcessChunkResult(1, 0, 'response-chunk-1')
-    const chunkResult2 = makeProcessChunkResult(2, 6, 'response-chunk-2')
+    const chunkResult1 = makeProcessChunkResult(
+      CHUNK_INDEX_1,
+      CHUNK_OFFSET_0,
+      'response-chunk-1'
+    )
+    const chunkResult2 = makeProcessChunkResult(
+      CHUNK_INDEX_2,
+      HELLO_WORLD_CHUNK2_OFFSET,
+      'response-chunk-2'
+    )
 
     processor.processChunk = vi
       .fn()
@@ -946,8 +298,14 @@ describe('BedrockReviewProcessor - performChunkedReview - above threshold (multi
   test('sums parseDuration across all chunks', async () => {
     // 'hello world!' = 12 chars → exactly 2 chunks with chunkSize=10
     const longText = 'hello world!'
-    const c1 = { ...makeProcessChunkResult(1, 0), parseDuration: 30 }
-    const c2 = { ...makeProcessChunkResult(2, 6), parseDuration: 20 }
+    const c1 = {
+      ...makeProcessChunkResult(CHUNK_INDEX_1, CHUNK_OFFSET_0),
+      parseDuration: PARSE_DURATION_C1
+    }
+    const c2 = {
+      ...makeProcessChunkResult(CHUNK_INDEX_2, HELLO_WORLD_CHUNK2_OFFSET),
+      parseDuration: PARSE_DURATION_C2
+    }
 
     processor.processChunk = vi
       .fn()
@@ -956,42 +314,28 @@ describe('BedrockReviewProcessor - performChunkedReview - above threshold (multi
 
     const result = await processor.performChunkedReview('r', longText)
 
-    expect(result.parseDuration).toBe(50)
+    expect(result.parseDuration).toBe(PARSE_DURATION_C1 + PARSE_DURATION_C2)
   })
 })
+
+// ─── performChunkedReview — failure propagation ───────────────────────────────
 
 describe('BedrockReviewProcessor - performChunkedReview - failure propagation', () => {
   let processor
 
-  const SMALL_CHUNK_SIZE = 10
-
   beforeEach(() => {
     vi.clearAllMocks()
-    mockConfigGet.mockImplementation((key) => {
-      if (key === 'bedrock.chunkSizeChars') return SMALL_CHUNK_SIZE
-      if (key === 'bedrock.maxTokensPerChunk')
-        return DEFAULT_MAX_TOKENS_PER_CHUNK
-      return undefined
-    })
+    setupSmallChunkConfig()
     processor = new BedrockReviewProcessor()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
   })
 
   test('rejects the entire review when any chunk fails', async () => {
     const longText = 'aa bb cc dd ee ff gg hh ii jj'
-    const successResult = {
-      chunk: { index: 1, startOffset: 0 },
-      bedrockResult: {
-        bedrockResponse: { usage: {}, stopReason: 'end_turn' },
-        bedrockDuration: 100
-      },
-      parsedReview: {
-        scores: {},
-        improvements: [],
-        reviewedContent: { issues: [] }
-      },
-      parseDuration: 5,
-      finalReviewContent: 'ok'
-    }
+    const successResult = makeProcessChunkResult(1, 0)
 
     processor.processChunk = vi
       .fn()
