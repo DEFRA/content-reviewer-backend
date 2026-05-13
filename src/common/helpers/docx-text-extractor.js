@@ -126,11 +126,7 @@ function readWtValue(wt) {
   return extractStringFromObject(wt)
 }
 
-/**
- * Safely extract a string from a nested object shape produced by the XML parser.
- * Traverses '#text' / '$text' keys and falls back to first primitive string child.
- */
-function extractStringFromObject(obj) {
+function coercePrimitiveToString(obj) {
   if (obj == null) {
     return ''
   }
@@ -139,6 +135,18 @@ function extractStringFromObject(obj) {
   }
   if (typeof obj !== 'object') {
     return String(obj)
+  }
+  return null
+}
+
+/**
+ * Safely extract a string from a nested object shape produced by the XML parser.
+ * Traverses '#text' / '$text' keys and falls back to first primitive string child.
+ */
+function extractStringFromObject(obj) {
+  const primitive = coercePrimitiveToString(obj)
+  if (primitive !== null) {
+    return primitive
   }
 
   // Prefer explicit '#text' / '$text' keys when present
@@ -172,15 +180,16 @@ function hasOwn(obj, key) {
 }
 
 function isAttributeLikeKey(k) {
-  return (
-    k === '#text' ||
-    k === '$text' ||
-    (typeof k === 'string' &&
-      (k.startsWith('@') ||
-        k.startsWith('xml') ||
-        k.startsWith('xmlns') ||
-        k.includes(':')))
-  )
+  // explicit text keys first
+  if (k === '#text' || k === '$text') {
+    return true
+  }
+  if (typeof k !== 'string') {
+    return false
+  }
+
+  // concise single-regex check for attribute-like prefixes or any namespace colon
+  return /^(?:@|xml|xmlns)|:/.test(k)
 }
 
 /**
@@ -248,12 +257,20 @@ function getDocxNodeFastText(node) {
  * leaking internal IDs into output (fixes TOC numbers like "195021778").
  */
 function readDocxNodeText(node) {
-  if (!node) return ''
-  if (Array.isArray(node)) return node.map(readDocxNodeText).join('')
-  if (typeof node !== 'object') return String(node)
+  if (!node) {
+    return ''
+  }
+  if (Array.isArray(node)) {
+    return node.map(readDocxNodeText).join('')
+  }
+  if (typeof node !== 'object') {
+    return String(node)
+  }
 
   const fast = getDocxNodeFastText(node)
-  if (fast !== null) return fast
+  if (fast !== null) {
+    return fast
+  }
 
   let text = ''
   for (const k of Object.keys(node)) {
