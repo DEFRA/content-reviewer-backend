@@ -25,7 +25,7 @@ const PROCESSING_TIME_2000 = 2000
 const SUBMITTED_AT_OFFSET_MS = 60000
 
 // Test constants - Strings
-const TEST_ERROR_STACK = TEST_ERROR_STACK
+const TEST_ERROR_STACK = 'Error stack trace'
 
 const mockLoggerInfo = vi.fn()
 const mockLoggerError = vi.fn()
