@@ -321,15 +321,12 @@ function isParagraphToc(pStyle, visibleLine, rawParagraphJson) {
     /(?:\bTOC\b|_Toc\b)/i.test(rawParagraphJson) ||
     rawParagraphJson.includes('"w:fldSimple"') ||
     rawParagraphJson.includes('"w:instrText"')
-  if (
+  return (
     (typeof pStyle === 'string' && /^TOC/i.test(pStyle)) ||
     looksLikeTocField ||
     visibleHasTabPage ||
     visibleHasDotsPage
-  ) {
-    return true
-  }
-  return false
+  )
 }
 
 function visibleLineHasDotsPage(visibleLine) {
