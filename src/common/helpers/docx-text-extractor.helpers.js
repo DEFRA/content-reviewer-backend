@@ -72,9 +72,13 @@ export function coercePrimitiveToString(obj) {
 
 export function sanitizeRunText(v) {
   const raw = extractStringFromObject(v)
+  // normalize NBSP -> space, collapse consecutive whitespace to single spaces,
+  // remove accidental "[object Object]" and trim leading/trailing whitespace
   return String(raw ?? '')
     .replaceAll('\u00A0', ' ')
     .replaceAll('[object Object]', '')
+    .replace(/\s+/g, ' ')
+    .trim()
 }
 
 export function extractStringFromObject(obj) {
@@ -387,6 +391,7 @@ export function pushDocxRun(
   if (isArtifactRunText(t)) {
     return
   }
+
   runs.push({ text: t, bold, italic, href })
 }
 
@@ -482,7 +487,7 @@ export function extractPreservedParagraphsSafe(documentXml, orderedParser) {
     const bodyNode = findFirstPreserved(docNode || [], 'w:body')
     return collectPreservedParagraphsFromBody(bodyNode)
   } catch (err) {
-    logger.debug(
+    logger.error(
       { err: err.message },
       'Ordered parse failed; falling back to unordered walk'
     )
@@ -506,9 +511,23 @@ function collectPreservedParagraphsFromBody(bodyNode) {
   if (!Array.isArray(bodyNode)) {
     return []
   }
-  return bodyNode
-    .filter(
-      (child) => child && typeof child === 'object' && hasOwn(child, 'w:p')
-    )
-    .map((child) => child['w:p'])
+  const out = []
+  for (const child of bodyNode) {
+    if (child && typeof child === 'object') {
+      if (hasOwn(child, 'w:p')) {
+        const p = child['w:p']
+        const paraObj = buildParagraphObjectFromNode(p, null, rels)
+        if (paraObj) {
+          out.push(paraObj)
+        }
+      } else if (hasOwn(child, 'w:tbl')) {
+        const tbl = child['w:tbl']
+        const tableBlock = processTableNode(tbl, rels)
+        if (tableBlock) {
+          out.push(tableBlock)
+        }
+      }
+    }
+  }
+  return out
 }

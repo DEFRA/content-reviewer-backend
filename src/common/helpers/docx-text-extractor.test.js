@@ -122,8 +122,8 @@ describe('docxXmlToParagraphObjects — content extraction', () => {
       '<w:p><w:r><w:rPr><w:b/><w:i/></w:rPr><w:t>Strong</w:t></w:r></w:p>'
     )
     const [block] = docxXmlToParagraphObjects(xml, null)
-    expect(block.runs[0].bold).toBe(false)
-    expect(block.runs[0].italic).toBe(false)
+    expect(block.runs[0].bold).toBe(true)
+    expect(block.runs[0].italic).toBe(true)
   })
 
   test('drops drawing / picture artefact runs', () => {
