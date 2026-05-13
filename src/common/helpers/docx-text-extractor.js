@@ -44,6 +44,8 @@ const MAX_EXTRACTED_XML_BYTES = MAX_XML_SIZE_MB * 1024 * 1024
 const MAX_INPUT_BUFFER_BYTES = MAX_XML_SIZE_MB * 1024 * 1024
 const DOCX_TEXT_KEYS = new Set(['w:t', 'w:instrText', '#text'])
 const DOCX_SPACE_KEYS = new Set(['w:tab', 'w:br', 'w:cr'])
+const ASCII_UPPER_A = 65
+const ASCII_UPPER_Z = 90
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Generic helpers
@@ -319,8 +321,8 @@ function endsWithUpperAcronym(s) {
   let count = 0
   // scan backwards counting consecutive ASCII uppercase letters
   while (i >= 0) {
-    const code = str.charCodeAt(i)
-    if (code >= 65 && code <= 90) {
+    const code = str.codePointAt(i)
+    if (code >= ASCII_UPPER_A && code <= ASCII_UPPER_Z) {
       count += 1
       i -= 1
     } else {
@@ -395,6 +397,16 @@ function pushDocxRun(
   // DROP: suspicious pure-digit blobs (likely rsid/internal IDs).
   // Keep short numbers (years etc) — only drop long numeric-only tokens.
   if (/^\d{5,}$/.test(t)) {
+    return
+  }
+  // DROP: repeated small-group numeric tokens like "2828", "121212"
+  // (pattern is small group 1-3 digits repeated at least twice)
+  if (/^(\d{1,3})\1+$/.test(t)) {
+    return
+  }
+
+  // DROP: hex-like control tokens (e.g. 00AF001C)
+  if (/^00[A-Fa-f0-9]{2}(?:[A-Fa-f0-9]{2})*$/.test(t)) {
     return
   }
   if (isArtifactRunText(t)) {
@@ -496,11 +508,13 @@ function walkParagraphNode(node, rels, runs, currentHref = null) {
  * Decide whether a paragraph looks like a TOC entry.
  */
 function isParagraphToc(pStyle, visibleLine, rawParagraphJson) {
-  const WSP = '[ \\t\\f\\v\\r\\n]*'
-  const visibleHasTabPage = new RegExp(`\\t${WSP}\\d+${WSP}$`).test(visibleLine)
-  const visibleHasDotsPage = new RegExp(`\\.{2,}${WSP}\\d+${WSP}$`).test(
+  const WSP = String.raw`[ \t\f\v\r\n]*`
+  const visibleHasTabPage = new RegExp(String.raw`\t${WSP}\d+${WSP}$`).test(
     visibleLine
   )
+  const visibleHasDotsPage = new RegExp(
+    String.raw`\.{2,}${WSP}\d+${WSP}$`
+  ).test(visibleLine)
   const looksLikeTocField =
     /(?:\bTOC\b|_Toc\b)/i.test(rawParagraphJson) ||
     rawParagraphJson.includes('"w:fldSimple"') ||
@@ -809,21 +823,26 @@ function renderDocxBlock(block) {
  * Implemented as a linear scan to avoid regex backtracking / ReDoS risk.
  */
 function spaceAroundDashes(s) {
-  if (!s) return s
+  if (!s) {
+    return s
+  }
   const dashSet = new Set(['–', '—', '-'])
   let out = ''
   const len = s.length
-  for (let i = 0; i < len; i++) {
+  let i = 0
+
+  while (i < len) {
     const ch = s[i]
     if (!dashSet.has(ch)) {
       out += ch
+      i += 1
       continue
     }
 
     // ensure single space before
     if (out.length === 0) {
       out += ch
-    } else if (out[out.length - 1] === ' ') {
+    } else if (out.endsWith(' ')) {
       out += ch
     } else {
       out += ' ' + ch
@@ -831,11 +850,13 @@ function spaceAroundDashes(s) {
 
     // skip any whitespace immediately after the dash
     let j = i + 1
-    while (j < len && /\s/.test(s[j])) j++
+    while (j < len && /\s/.test(s[j])) {
+      j++
+    }
 
     // ensure single space after
     out += ' '
-    i = j - 1
+    i = j
   }
   return out
 }
