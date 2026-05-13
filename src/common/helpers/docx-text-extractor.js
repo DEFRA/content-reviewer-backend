@@ -338,19 +338,6 @@ function pushDocxRun(
 }
 
 /**
- * Read text from each w:r in a w:hyperlink and append a run for each.
- */
-function processDocxHyperlinks(hyperlinkNode, rels, runs) {
-  for (const hp of ensureArray(hyperlinkNode)) {
-    const rid = hp['r:id'] || hp['r:embed'] || hp['r:Id'] || hp['r:ID']
-    const href = rid ? rels[rid] || null : null
-    const innerRuns = hp['w:r'] || hp
-    const text = readDocxNodeText(innerRuns)
-    pushDocxRun(runs, text, { bold: false, italic: false, href })
-  }
-}
-
-/**
  * Extract text from each w:r child and push as a run.
  */
 function processDocxRuns(runNode, runs, currentHref) {
@@ -367,41 +354,82 @@ function processDocxRuns(runNode, runs, currentHref) {
  * Recursively walk a DOCX paragraph node, collecting runs into the array.
  */
 function walkParagraphNode(node, rels, runs, currentHref = null) {
-  if (!node) {
-    return
-  }
+  if (!node) return
   if (Array.isArray(node)) {
     for (const n of node) {
       walkParagraphNode(n, rels, runs, currentHref)
     }
     return
   }
-  if (typeof node !== 'object') {
-    return
-  }
+  if (typeof node !== 'object') return
 
-  if (node['w:hyperlink']) {
-    processDocxHyperlinks(node['w:hyperlink'], rels, runs)
-    return
-  }
-  if (node['w:r']) {
-    processDocxRuns(node['w:r'], runs, currentHref)
-    return
-  }
-  if (node['w:t']) {
-    pushDocxRun(runs, readDocxNodeText(node))
-    return
-  }
+  // Iterate keys in insertion order so we preserve sequence where possible
+  for (const [key, val] of Object.entries(node)) {
+    if (val == null) continue
 
-  for (const k of Object.keys(node)) {
-    walkParagraphNode(node[k], rels, runs, currentHref)
+    // Handle hyperlink nodes: resolve relationship id -> href and process inner runs
+    if (key === 'w:hyperlink') {
+      for (const hp of ensureArray(val)) {
+        // common attribute name variants used by different parsers
+        const rid =
+          hp['r:id'] ||
+          hp['@_r:id'] ||
+          hp['@_rId'] ||
+          hp['r:embed'] ||
+          hp['r:Id'] ||
+          hp['r:ID'] ||
+          null
+        const href = rid && rels ? rels[rid] || null : null
+
+        // If hyperlink directly contains runs, process them right here so they
+        // are emitted at the current paragraph position with the href attached.
+        if (hp['w:r']) {
+          processDocxRuns(hp['w:r'], runs, href)
+        }
+
+        // Recurse other children of the hyperlink (rare) to capture nested text
+        for (const [hk, hv] of Object.entries(hp)) {
+          if (hk === 'w:r') continue
+          walkParagraphNode(hv, rels, runs, href)
+        }
+      }
+      continue
+    }
+
+    // explicit run(s) at this position — push them with currentHref
+    if (key === 'w:r') {
+      processDocxRuns(val, runs, currentHref)
+      continue
+    }
+
+    // direct text node at this level
+    if (key === 'w:t') {
+      pushDocxRun(runs, readDocxNodeText(node), { href: currentHref })
+      continue
+    }
+
+    // otherwise recurse into the child (preserves order as much as parser allows)
+    walkParagraphNode(val, rels, runs, currentHref)
+  }
+}
+
+/**
+ * Read text from each w:r in a w:hyperlink and append a run for each.
+ * (Kept for compatibility but simplified — prefer walkParagraphNode recursion.)
+ */
+function processDocxHyperlinks(hyperlinkNode, rels, runs) {
+  for (const hp of ensureArray(hyperlinkNode)) {
+    const rid = hp['r:id'] || hp['r:embed'] || hp['r:Id'] || hp['r:ID']
+    const href = rid ? rels[rid] || null : null
+    // recurse into hyperlink children with href set so inner runs are pushed in-place
+    walkParagraphNode(hp, rels, runs, href)
   }
 }
 
 /**
  * Convert a single DOCX paragraph into a { type, runs } block.
  */
-function processDocxParagraph(p, rels) {
+function processDocxParagraph(p, rels, preservedNode = null) {
   const pPr = p['w:pPr'] || {}
   const pStyle = extractParagraphStyle(pPr)
   const isHeading =
@@ -427,7 +455,12 @@ function processDocxParagraph(p, rels) {
     visibleHasDotsPage
 
   const runs = []
-  walkParagraphNode(p, rels, runs)
+  // use preservedNode (ordered child array) when available so hyperlink/run order is correct
+  if (preservedNode) {
+    walkParagraphNode(preservedNode, rels, runs)
+  } else {
+    walkParagraphNode(p, rels, runs)
+  }
 
   // If paragraph is a TOC entry, strip long/internal numeric and hex tokens
   // that come from attributes/rsids and collapse excess whitespace.
@@ -490,6 +523,15 @@ export function docxXmlToParagraphObjects(documentXml, relsXml) {
     ignoreNameSpace: false
   })
 
+  // Ordered parser: preserves element order so runs/hyperlinks keep original positions
+  const orderedParser = new XMLParser({
+    ignoreAttributes: false,
+    attributeNamePrefix: '',
+    textNodeName: '#text',
+    ignoreNameSpace: false,
+    preserveOrder: true
+  })
+
   const doc = parser.parse(documentXml)
   const body = doc['w:document']?.['w:body']
   if (!body) {
@@ -497,11 +539,52 @@ export function docxXmlToParagraphObjects(documentXml, relsXml) {
   }
 
   const rels = parseDocxRels(parser, relsXml)
+  // parse ordered representation and extract ordered paragraph nodes
+  let preservedParagraphs = []
+  try {
+    const docPres = orderedParser.parse(documentXml)
+    // helper to find first element with given tag in the preserved array
+    const findFirst = (arr, tag) => {
+      if (!Array.isArray(arr)) return null
+      for (const item of arr) {
+        if (
+          item &&
+          typeof item === 'object' &&
+          Object.prototype.hasOwnProperty.call(item, tag)
+        ) {
+          return item[tag]
+        }
+      }
+      return null
+    }
+    const docNode = findFirst(docPres, 'w:document')
+    const bodyNode = findFirst(docNode || [], 'w:body')
+    if (Array.isArray(bodyNode)) {
+      // collect each w:p value in order
+      for (const child of bodyNode) {
+        if (
+          child &&
+          typeof child === 'object' &&
+          Object.prototype.hasOwnProperty.call(child, 'w:p')
+        ) {
+          preservedParagraphs.push(child['w:p'])
+        }
+      }
+    }
+  } catch (err) {
+    // if ordered parsing fails, continue without preserved paragraphs
+    logger.debug(
+      { err: err.message },
+      'Ordered parse failed; falling back to unordered walk'
+    )
+  }
   const paragraphs = ensureArray(body['w:p'])
   const out = []
 
-  for (const p of paragraphs) {
-    const paraObj = processDocxParagraph(p, rels)
+  for (let i = 0; i < paragraphs.length; i++) {
+    const p = paragraphs[i]
+    const preserved = preservedParagraphs[i] || null
+    const paraObj = processDocxParagraph(p, rels, preserved)
     if (paraObj.runs.length > 0) {
       out.push(paraObj)
     }
