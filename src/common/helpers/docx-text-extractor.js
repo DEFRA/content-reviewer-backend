@@ -414,19 +414,6 @@ function walkParagraphNode(node, rels, runs, currentHref = null) {
 }
 
 /**
- * Read text from each w:r in a w:hyperlink and append a run for each.
- * (Kept for compatibility but simplified — prefer walkParagraphNode recursion.)
- */
-function processDocxHyperlinks(hyperlinkNode, rels, runs) {
-  for (const hp of ensureArray(hyperlinkNode)) {
-    const rid = hp['r:id'] || hp['r:embed'] || hp['r:Id'] || hp['r:ID']
-    const href = rid ? rels[rid] || null : null
-    // recurse into hyperlink children with href set so inner runs are pushed in-place
-    walkParagraphNode(hp, rels, runs, href)
-  }
-}
-
-/**
  * Convert a single DOCX paragraph into a { type, runs } block.
  */
 function processDocxParagraph(p, rels, preservedNode = null) {
