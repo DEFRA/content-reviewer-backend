@@ -19,9 +19,6 @@ const ASCII_LF = 10
 const ASCII_VT = 11
 const ASCII_FF = 12
 const ASCII_CR = 13
-const ASCII_DIGIT_0 = 48
-const ASCII_DIGIT_9 = 57
-const ASCII_DOT = 46
 
 export function ensureArray(value) {
   if (Array.isArray(value)) {
@@ -288,110 +285,6 @@ export function isAsciiWhitespaceCode(cp) {
     cp === ASCII_FF ||
     cp === ASCII_CR
   )
-}
-
-function nextNonWhitespaceIndex(str, from) {
-  const len = str.length
-  let i = from
-  while (i < len && isAsciiWhitespaceCode(str.codePointAt(i))) {
-    i++
-  }
-  return i
-}
-
-function countDigitsFrom(str, from) {
-  const len = str.length
-  let i = from
-  let digitCount = 0
-  while (i < len) {
-    const cp = str.codePointAt(i)
-    if (cp >= ASCII_DIGIT_0 && cp <= ASCII_DIGIT_9) {
-      digitCount++
-      i++
-    } else {
-      break
-    }
-  }
-  return { digitCount, indexAfterDigits: i }
-}
-
-export function visibleLineHasTabPage(visibleLine) {
-  const tabIdx = visibleLine.lastIndexOf('\t')
-  if (tabIdx === -1) {
-    return false
-  }
-
-  const len = visibleLine.length
-  let i = nextNonWhitespaceIndex(visibleLine, tabIdx + 1)
-  if (i >= len) {
-    return false
-  }
-
-  const { digitCount, indexAfterDigits } = countDigitsFrom(visibleLine, i)
-  if (digitCount === 0) {
-    return false
-  }
-
-  i = nextNonWhitespaceIndex(visibleLine, indexAfterDigits)
-  return i === len
-}
-
-export function visibleLineHasDotsPage(visibleLine) {
-  let i = trimTrailingWhitespaceIndex(visibleLine)
-  const { digitCount, nextIndex } = countTrailingDigitsFromIndex(visibleLine, i)
-  if (digitCount === 0) {
-    return false
-  }
-
-  i = skipWhitespaceReverse(visibleLine, nextIndex)
-  const dotCount = countTrailingDotsFromIndex(visibleLine, i)
-  if (dotCount < 2) {
-    return false
-  }
-
-  return true
-}
-
-function trimTrailingWhitespaceIndex(str) {
-  const len = str.length
-  let i = len - 1
-  while (i >= 0 && isAsciiWhitespaceCode(str.codePointAt(i))) {
-    i--
-  }
-  return i
-}
-
-function countTrailingDigitsFromIndex(str, index) {
-  let i = index
-  let digitCount = 0
-  while (i >= 0) {
-    const cp = str.codePointAt(i)
-    if (cp >= ASCII_DIGIT_0 && cp <= ASCII_DIGIT_9) {
-      digitCount++
-      i--
-    } else {
-      break
-    }
-  }
-  return { digitCount, nextIndex: i }
-}
-
-function skipWhitespaceReverse(str, index) {
-  let i = index
-  while (i >= 0 && isAsciiWhitespaceCode(str.codePointAt(i))) {
-    i--
-  }
-  return i
-}
-
-function countTrailingDotsFromIndex(str, index) {
-  let i = index
-  let dotCount = 0
-  while (i >= 0 && str.codePointAt(i) === ASCII_DOT) {
-    dotCount++
-    i--
-  }
-  return dotCount
 }
 
 // Linear, safe dash-spacing implementation
