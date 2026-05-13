@@ -215,6 +215,13 @@ export function isAlnumChar(ch) {
   }
   return /[A-Za-z0-9]/.test(ch)
 }
+// new helper: detect ASCII/Latin letters (used to avoid inserting spaces between split letters)
+export function isLetterChar(ch) {
+  if (typeof ch !== 'string' || ch.length === 0) {
+    return false
+  }
+  return /[A-Za-z]/.test(ch)
+}
 
 export function endsWithUpperAcronym(s) {
   const str = String(s ?? '')
@@ -250,6 +257,20 @@ export function shouldInsertSpaceBetween(a, b) {
   const bIsP = isPunctChar(bFirst)
   const aIsAl = isAlnumChar(aLast)
   const bIsAl = isAlnumChar(bFirst)
+  // Prevent inserting spaces between adjacent letters that were split into separate runs
+  const aIsAlpha = isLetterChar(aLast)
+  const bIsAlpha = isLetterChar(bFirst)
+  if (aIsAlpha && bIsAlpha) {
+    // If exactly one side is a single-letter fragment, it's likely a run-split inside a word:
+    //   e.g. 'pos' + 'e' -> should join -> suppress space
+    // If both sides are multi-letter or both are single-letter words, keep the space.
+    const aIsSingle = a.length === 1
+    const bIsSingle = b.length === 1
+    if (aIsSingle !== bIsSingle) {
+      return false
+    }
+    return true
+  }
   return !aIsP && !bIsP && (aIsAl || bIsAl)
 }
 
