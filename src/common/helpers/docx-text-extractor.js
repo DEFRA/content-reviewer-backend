@@ -29,6 +29,8 @@ const MAX_ZIP_ENTRIES = 1000
 
 // Maximum size in megabytes for each individual extracted XML stream.
 const MAX_XML_SIZE_MB = 50
+const MAX_PREVEW_CHARS = 200
+const PARAGRAPH_LENGTH = 2000
 // 50 MB cap on each individual extracted XML stream. Real-world DOCX
 // document.xml / rels.xml are < 5 MB even for very large documents; anything
 // above this almost certainly indicates a zip bomb expanding far beyond the
@@ -40,6 +42,8 @@ const MAX_EXTRACTED_XML_BYTES = MAX_XML_SIZE_MB * 1024 * 1024
 // belt-and-braces check that runs *before* JSZip.loadAsync, so a malicious
 // caller cannot ask the zip library to ingest an arbitrarily large blob.
 const MAX_INPUT_BUFFER_BYTES = MAX_XML_SIZE_MB * 1024 * 1024
+const DOCX_TEXT_KEYS = new Set(['w:t', 'w:instrText', '#text'])
+const DOCX_SPACE_KEYS = new Set(['w:tab', 'w:br', 'w:cr'])
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Generic helpers
@@ -137,17 +141,16 @@ function extractStringFromObject(obj) {
     return String(obj)
   }
 
-  // prefer explicit '#text' or '$text'
-  if (Object.hasOwn(obj, '#text')) {
+  // Prefer explicit '#text' / '$text' keys when present
+  if (hasOwn(obj, '#text')) {
     return String(obj['#text'] ?? '')
   }
-  if (Object.hasOwn(obj, '$text')) {
+  if (hasOwn(obj, '$text')) {
     return String(obj['$text'] ?? '')
   }
 
-  // depth-first search for the first string-like child
+  // Recursive depth-first search for the first non-attribute child string
   for (const [k, v] of Object.entries(obj)) {
-    // skip attribute-like / namespace keys and explicit text keys
     const isAttributeLike =
       k === '#text' ||
       k === '$text' ||
@@ -158,12 +161,17 @@ function extractStringFromObject(obj) {
 
     if (!isAttributeLike) {
       const s = extractStringFromObject(v)
-      if (s) {
-        return s
-      }
+      if (s) return s
     }
   }
+
   return ''
+}
+
+function hasOwn(obj, key) {
+  return typeof Object.hasOwn === 'function'
+    ? Object.hasOwn(obj, key)
+    : Object.hasOwn(obj, key)
 }
 
 /**
@@ -171,27 +179,38 @@ function extractStringFromObject(obj) {
  * Kept small and testable to reduce complexity of readDocxNodeText.
  */
 function readDocxChildValue(key, val) {
-  if (val == null) {
-    return ''
-  }
-  if (Array.isArray(val) || typeof val === 'object') {
+  if (val == null) return ''
+  if (Array.isArray(val) || typeof val === 'object')
     return readDocxNodeText(val)
-  }
 
-  // explicit text/spaces handled verbatim
-  if (key === 'w:t' || key === 'w:instrText' || key === '#text') {
-    return String(val)
-  }
-  if (key === 'w:tab' || key === 'w:br' || key === 'w:cr') {
-    return ' '
-  }
+  if (DOCX_TEXT_KEYS.has(key)) return String(val)
+  if (DOCX_SPACE_KEYS.has(key)) return ' '
 
   const s = String(val)
   // allow short numeric-like tokens (years, versions) as fallback
-  if (/^\d[\d.,]{0,9}$/.test(s) && s.length <= 10) {
-    return s
+  return /^\d[\d.,]{0,9}$/.test(s) && s.length <= 10 ? s : ''
+}
+
+/**
+ * Fast-path extractor for common explicit node shapes.
+ * Returns:
+ *  - string when a direct text value is present
+ *  - '' for graphic nodes we explicitly ignore
+ *  - null when no fast-path applies and caller should iterate children
+ */
+function getDocxNodeFastText(node) {
+  if (!node || typeof node !== 'object') return null
+  if (isGraphicNode(node)) return ''
+  if (node['w:instrText'] !== undefined) {
+    return String(node['w:instrText']).replaceAll('\u00A0', ' ')
   }
-  return ''
+  if (node['w:t'] !== undefined) {
+    return readWtValue(node['w:t']).replaceAll('\u00A0', ' ')
+  }
+  if (node['w:tab'] !== undefined) return ' '
+  if (node['w:br'] !== undefined || node['w:cr'] !== undefined) return ' '
+  if (node['#text'] !== undefined) return String(node['#text'])
+  return null
 }
 
 /**
@@ -203,37 +222,13 @@ function readDocxChildValue(key, val) {
  * leaking internal IDs into output (fixes TOC numbers like "195021778").
  */
 function readDocxNodeText(node) {
-  if (!node) {
-    return ''
-  }
-  if (Array.isArray(node)) {
-    return node.map(readDocxNodeText).join('')
-  }
-  if (typeof node !== 'object') {
-    return String(node)
-  }
-  if (isGraphicNode(node)) {
-    return ''
-  }
+  if (!node) return ''
+  if (Array.isArray(node)) return node.map(readDocxNodeText).join('')
+  if (typeof node !== 'object') return String(node)
 
-  // fast-path explicit nodes
-  if (node['w:instrText'] !== undefined) {
-    return String(node['w:instrText']).replaceAll('\u00A0', ' ')
-  }
-  if (node['w:t'] !== undefined) {
-    return readWtValue(node['w:t']).replaceAll('\u00A0', ' ')
-  }
-  if (node['w:tab'] !== undefined) {
-    return ' '
-  }
-  if (node['w:br'] !== undefined || node['w:cr'] !== undefined) {
-    return ' '
-  }
-  if (node['#text'] !== undefined) {
-    return String(node['#text'])
-  }
+  const fast = getDocxNodeFastText(node)
+  if (fast !== null) return fast
 
-  // Generic child iteration delegated to helper for lower complexity
   let text = ''
   for (const k of Object.keys(node)) {
     text += readDocxChildValue(k, node[k])
@@ -266,54 +261,67 @@ function buildDocxRelsMap(relsDoc) {
   return rels
 }
 
-/**
- * Smartly concatenate two text fragments ensuring a space is inserted when
- * both sides are alphanumeric and neither side already has separating whitespace.
- */
-function smartConcat(a, b) {
-  if (!a) return b || ''
-  if (!b) return a
+function isPunctChar(ch) {
+  return /[^\w\s]/u.test(ch)
+}
+function isDigitChar(ch) {
+  return /\d/.test(ch)
+}
+function isAlnumChar(ch) {
+  return /[A-Za-z0-9]/.test(ch)
+}
+function endsWithUpperAcronym(s) {
+  const m = s.match(/([A-Z]+)$/)
+  return !!(m && m[1] && m[1].length >= 2)
+}
 
-  const endsWithSpace = /\s$/.test(a)
-  const startsWithSpace = /^\s/.test(b)
-  if (endsWithSpace || startsWithSpace) {
-    return `${a}${b}`
-  }
-
+function shouldPreserveExplicitWhitespace(a, b) {
+  return /\s$/.test(a) || /^\s/.test(b)
+}
+function shouldKeepContiguousDigits(a, b) {
   const aLast = a.charAt(a.length - 1)
   const bFirst = b.charAt(0)
+  return isDigitChar(aLast) && isDigitChar(bFirst)
+}
+function shouldKeepAcronymDigits(a, b) {
+  return endsWithUpperAcronym(a) && /^\d/.test(b)
+}
+function shouldInsertSpaceBetween(a, b) {
+  const aLast = a.charAt(a.length - 1)
+  const bFirst = b.charAt(0)
+  const aIsP = isPunctChar(aLast)
+  const bIsP = isPunctChar(bFirst)
+  const aIsAl = isAlnumChar(aLast)
+  const bIsAl = isAlnumChar(bFirst)
+  return !aIsP && !bIsP && (aIsAl || bIsAl)
+}
 
-  // punctuation detection (non-word, non-space)
-  const aIsPunct = /[^\w\s]/u.test(aLast)
-  const bIsPunct = /[^\w\s]/u.test(bFirst)
-
-  // digit detection
-  const aIsDigit = /\d/.test(aLast)
-  const bIsDigit = /\d/.test(bFirst)
-  if (aIsDigit && bIsDigit) {
-    // preserve contiguous digit runs without inserting spaces ("0" + "13" -> "013")
-    return `${a}${b}`
+/**
+ * Smartly concatenate two text fragments preserving explicit whitespace and
+ * avoiding accidental word gluing. Delegates checks to small helpers to keep
+ * cyclomatic complexity low while preserving previous logic.
+ */
+function smartConcat(a, b) {
+  if (!a) {
+    return b || ''
+  }
+  if (!b) {
+    return a
   }
 
-  // acronym+digits case: left ends with >1 uppercase letters and right starts with digits
-  const leftLettersMatch = a.match(/([A-Z]+)$/)
-  const rightDigitsMatch = b.match(/^(\d+)/)
-  if (leftLettersMatch && leftLettersMatch[1].length >= 2 && rightDigitsMatch) {
+  if (shouldPreserveExplicitWhitespace(a, b)) {
     return `${a}${b}`
   }
-
-  // alnum detection
-  const aIsAlnum = /[A-Za-z0-9]/.test(aLast)
-  const bIsAlnum = /[A-Za-z0-9]/.test(bFirst)
-
-  // Insert a space when:
-  // - neither side is punctuation, and
-  // - at least one side is alphanumeric
-  if (!aIsPunct && !bIsPunct && (aIsAlnum || bIsAlnum)) {
+  if (shouldKeepContiguousDigits(a, b)) {
+    return `${a}${b}`
+  }
+  if (shouldKeepAcronymDigits(a, b)) {
+    return `${a}${b}`
+  }
+  if (shouldInsertSpaceBetween(a, b)) {
     return `${a} ${b}`
   }
 
-  // default: join directly
   return `${a}${b}`
 }
 
@@ -327,6 +335,11 @@ function pushDocxRun(
 ) {
   const t = sanitizeRunText(text)
   if (!t) {
+    return
+  }
+  // DROP: suspicious pure-digit blobs (likely rsid/internal IDs).
+  // Keep short numbers (years etc) — only drop long numeric-only tokens.
+  if (/^\d{5,}$/.test(t)) {
     return
   }
   if (isArtifactRunText(t)) {
@@ -381,7 +394,9 @@ function processHyperlinkEntries(hyperlinkVal, rels, runs) {
 
     // Recurse other hyperlink children (rare) to capture nested text
     for (const [hk, hv] of Object.entries(hp)) {
-      if (hk === 'w:r') continue
+      if (hk === 'w:r') {
+        continue
+      }
       walkParagraphNode(hv, rels, runs, href)
     }
   }
@@ -425,7 +440,7 @@ function walkParagraphNode(node, rels, runs, currentHref = null) {
 /**
  * Decide whether a paragraph looks like a TOC entry.
  */
-function isParagraphToc(p, pStyle, visibleLine, rawParagraphJson) {
+function isParagraphToc(pStyle, visibleLine, rawParagraphJson) {
   const visibleHasTabPage = /\t\s*\d+\s*$/.test(visibleLine)
   const visibleHasDotsPage = /\.{2,}\s*\d+\s*$/.test(visibleLine)
   const looksLikeTocField =
@@ -470,6 +485,57 @@ function cleanTocRuns(runs) {
     .filter((r) => r.text && r.text.length > 0)
 }
 
+function diagnoseDigitLossIfNeeded(runs, visibleLine, rawParagraphJson) {
+  if (process.env.DOCX_DEBUG !== '1') return
+  try {
+    const PREVIEW_CHARS = MAX_PREVEW_CHARS
+    const rawDigits = (rawParagraphJson.match(/\d/g) || []).length
+    const visibleDigits = (visibleLine.match(/\d/g) || []).length
+    const runsRendered = runs.map((r) => String(r.text || '')).join('')
+    const runsDigits = (runsRendered.match(/\d/g) || []).length
+
+    if (
+      (visibleDigits > 0 && runsDigits < visibleDigits) ||
+      (rawDigits > 0 && runsDigits < rawDigits)
+    ) {
+      logger.warn(
+        {
+          reason: 'digits-lost',
+          rawDigits,
+          visibleDigits,
+          runsDigits,
+          previewVisibleLine: visibleLine.slice(0, PREVIEW_CHARS),
+          runsCount: runs.length
+        },
+        'DOCX diagnostic: paragraph appears to lose numeric characters'
+      )
+
+      const snippet =
+        rawParagraphJson.length > PARAGRAPH_LENGTH
+          ? rawParagraphJson.slice(0, PARAGRAPH_LENGTH) + '...'
+          : rawParagraphJson
+      // eslint-disable-next-line no-console
+      console.log(
+        '--- DOCX PARAGRAPH RAW SNIPPET ---\n',
+        snippet,
+        '\n--- END SNIPPET ---'
+      )
+      // eslint-disable-next-line no-console
+      console.log(
+        '--- DOCX PARAGRAPH RUNS (first 50) ---\n',
+        JSON.stringify(runs.slice(0, MAX_XML_SIZE_MB), null, 2),
+        '\n--- END RUNS ---'
+      )
+    }
+  } catch (e) {
+    // swallow diagnostics
+    logger.error(
+      { error: e.message },
+      'Error during DOCX digit loss diagnostics'
+    )
+  }
+}
+
 /**
  * Convert a single DOCX paragraph into a { type, runs } block.
  * Complexity reduced by delegating subtasks to helpers.
@@ -484,53 +550,12 @@ function processDocxParagraph(p, rels, preservedNode = null) {
   const visibleLine = (readDocxNodeText(p) || '').replaceAll('\u00A0', ' ')
   const rawParagraphJson = JSON.stringify(p)
 
-  const isToc = isParagraphToc(p, pStyle, visibleLine, rawParagraphJson)
+  const isToc = isParagraphToc(pStyle, visibleLine, rawParagraphJson)
 
   const runs = collectParagraphRuns(p, rels, preservedNode)
 
-  // DIAGNOSTIC: log when digits are lost during run extraction (enabled via DOCX_DEBUG=1)
-  if (process.env.DOCX_DEBUG === '1') {
-    try {
-      const rawDigits = (rawParagraphJson.match(/\d/g) || []).length
-      const visibleDigits = (visibleLine.match(/\d/g) || []).length
-      const runsRendered = runs.map((r) => String(r.text || '')).join('')
-      const runsDigits = (runsRendered.match(/\d/g) || []).length
-      if (
-        (visibleDigits > 0 && runsDigits < visibleDigits) ||
-        (rawDigits > 0 && runsDigits < rawDigits)
-      ) {
-        logger.warn(
-          {
-            reason: 'digits-lost',
-            rawDigits,
-            visibleDigits,
-            runsDigits,
-            previewVisibleLine: visibleLine.slice(0, 200),
-            runsCount: runs.length
-          },
-          'DOCX diagnostic: paragraph appears to lose numeric characters'
-        )
-        const snippet =
-          rawParagraphJson.length > 2000
-            ? rawParagraphJson.slice(0, 2000) + '...'
-            : rawParagraphJson
-        // eslint-disable-next-line no-console
-        console.log(
-          '--- DOCX PARAGRAPH RAW SNIPPET ---\n',
-          snippet,
-          '\n--- END SNIPPET ---'
-        )
-        // eslint-disable-next-line no-console
-        console.log(
-          '--- DOCX PARAGRAPH RUNS (first 50) ---\n',
-          JSON.stringify(runs.slice(0, 50), null, 2),
-          '\n--- END RUNS ---'
-        )
-      }
-    } catch (e) {
-      // swallow diagnostics
-    }
-  }
+  // diagnostics delegated to helper to reduce function complexity
+  diagnoseDigitLossIfNeeded(runs, visibleLine, rawParagraphJson)
 
   if (isToc && runs.length > 0) {
     const cleaned = cleanTocRuns(runs)
@@ -558,6 +583,44 @@ function parseDocxRels(parser, relsXml) {
       'Failed to parse DOCX rels XML — hyperlinks will not be resolved'
     )
     return {}
+  }
+}
+
+/** Find first preserved-order element with given tag. */
+function findFirstPreserved(arr, tag) {
+  if (!Array.isArray(arr)) return null
+  for (const item of arr) {
+    if (item && typeof item === 'object' && hasOwn(item, tag)) {
+      return item[tag]
+    }
+  }
+  return null
+}
+
+/** Collect preserved w:p paragraph nodes from an ordered body node. */
+function collectPreservedParagraphsFromBody(bodyNode) {
+  if (!Array.isArray(bodyNode)) return []
+  return bodyNode
+    .filter(
+      (child) => child && typeof child === 'object' && hasOwn(child, 'w:p')
+    )
+    .map((child) => child['w:p'])
+}
+
+/** Parse ordered representation and return preserved paragraph nodes (or []). */
+function extractPreservedParagraphs(documentXml, orderedParser) {
+  try {
+    const docPres = orderedParser.parse(documentXml)
+    const docNode = findFirstPreserved(docPres, 'w:document')
+    if (!docNode) return []
+    const bodyNode = findFirstPreserved(docNode || [], 'w:body')
+    return collectPreservedParagraphsFromBody(bodyNode)
+  } catch (err) {
+    logger.debug(
+      { err: err.message },
+      'Ordered parse failed; falling back to unordered walk'
+    )
+    return []
   }
 }
 
@@ -589,48 +652,13 @@ export function docxXmlToParagraphObjects(documentXml, relsXml) {
 
   const doc = parser.parse(documentXml)
   const body = doc['w:document']?.['w:body']
-  if (!body) {
-    return []
-  }
+  if (!body) return []
 
   const rels = parseDocxRels(parser, relsXml)
-  // parse ordered representation and extract ordered paragraph nodes
-  const preservedParagraphs = []
-  try {
-    const docPres = orderedParser.parse(documentXml)
-    // helper to find first element with given tag in the preserved array
-    const findFirst = (arr, tag) => {
-      if (!Array.isArray(arr)) {
-        return null
-      }
-      for (const item of arr) {
-        if (
-          item &&
-          typeof item === 'object' &&
-          Object.prototype.hasOwnProperty.call(item, tag)
-        ) {
-          return item[tag]
-        }
-      }
-      return null
-    }
-    const docNode = findFirst(docPres, 'w:document')
-    const bodyNode = findFirst(docNode || [], 'w:body')
-    if (Array.isArray(bodyNode)) {
-      // collect each w:p value in order
-      for (const child of bodyNode) {
-        if (child && typeof child === 'object' && Object.hasOwn(child, 'w:p')) {
-          preservedParagraphs.push(child['w:p'])
-        }
-      }
-    }
-  } catch (err) {
-    // if ordered parsing fails, continue without preserved paragraphs
-    logger.debug(
-      { err: err.message },
-      'Ordered parse failed; falling back to unordered walk'
-    )
-  }
+  const preservedParagraphs = extractPreservedParagraphs(
+    documentXml,
+    orderedParser
+  )
   const paragraphs = ensureArray(body['w:p'])
   const out = []
 
@@ -638,9 +666,7 @@ export function docxXmlToParagraphObjects(documentXml, relsXml) {
     const p = paragraphs[i]
     const preserved = preservedParagraphs[i] || null
     const paraObj = processDocxParagraph(p, rels, preserved)
-    if (paraObj.runs.length > 0) {
-      out.push(paraObj)
-    }
+    if (paraObj.runs.length > 0) out.push(paraObj)
   }
 
   return out
