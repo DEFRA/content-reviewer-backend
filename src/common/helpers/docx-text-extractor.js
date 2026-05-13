@@ -17,7 +17,7 @@ const DOCX_BINARY_BLOB_MIN_LENGTH = 300
 
 // XML/Word artefact patterns we drop from extracted runs.
 const DOCX_ARTIFACT_PATTERN =
-  /(Picture\s*\d+)|http:\/\/schemas\.openxmlformats\.org|<w:drawing|<pic:|graphicData|\{[0-9A-Fa-f-]{8,}}/
+  /(Picture\s*\d+)|http:\/\/schemas\.openxmlformats\.org|<w:drawing|<pic:|graphicData|\{[\dA-Fa-f-]{8,}}/
 
 // Paragraph-style names that mark headings.
 const DOCX_HEADING_STYLE_REGEX = /^Heading/i
@@ -570,7 +570,7 @@ function parseDocxRels(parser, relsXml) {
  * @param {string|null} relsXml
  * @returns {Array<{ type: string, runs: Array }>}
  */
-function docxXmlToParagraphObjects(documentXml, relsXml) {
+export function docxXmlToParagraphObjects(documentXml, relsXml) {
   const parser = new XMLParser({
     ignoreAttributes: false,
     attributeNamePrefix: '',
@@ -715,7 +715,7 @@ function renderDocxBlock(block) {
  * @param {Array<{ type: string, runs: Array }>} blocks
  * @returns {string}
  */
-function blocksToDocxText(blocks) {
+export function blocksToDocxText(blocks) {
   return blocks.map(renderDocxBlock).filter(Boolean).join('\n\n')
 }
 
