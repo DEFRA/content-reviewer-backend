@@ -13,6 +13,16 @@ const DOCX_BINARY_BLOB_MIN_LENGTH = 300
 const DOCX_ARTIFACT_PATTERN =
   /(Picture\s*\d+)|http:\/\/schemas\.openxmlformats\.org|<w:drawing|<pic:|graphicData|\{[\dA-Fa-f-]{8,}}/
 
+const ASCII_SPACE = 32
+const ASCII_TAB = 9
+const ASCII_LF = 10
+const ASCII_VT = 11
+const ASCII_FF = 12
+const ASCII_CR = 13
+const ASCII_DIGIT_0 = 48
+const ASCII_DIGIT_9 = 57
+const ASCII_DOT = 46
+
 export function ensureArray(value) {
   if (Array.isArray(value)) {
     return value
@@ -37,7 +47,7 @@ export function hasOwn(obj, key) {
   if (typeof Object.hasOwn === 'function') {
     return Object.hasOwn(obj, key)
   }
-  return Object.prototype.hasOwnProperty.call(obj, key)
+  return Object.hasOwn(obj, key)
 }
 
 export function isAttributeLikeKey(k) {
@@ -271,8 +281,38 @@ export function smartConcat(a, b) {
 // Linear, ReDoS-safe whitespace/dot/tab detection helpers
 export function isAsciiWhitespaceCode(cp) {
   return (
-    cp === 32 || cp === 9 || cp === 10 || cp === 11 || cp === 12 || cp === 13
+    cp === ASCII_SPACE ||
+    cp === ASCII_TAB ||
+    cp === ASCII_LF ||
+    cp === ASCII_VT ||
+    cp === ASCII_FF ||
+    cp === ASCII_CR
   )
+}
+
+function nextNonWhitespaceIndex(str, from) {
+  const len = str.length
+  let i = from
+  while (i < len && isAsciiWhitespaceCode(str.codePointAt(i))) {
+    i++
+  }
+  return i
+}
+
+function countDigitsFrom(str, from) {
+  const len = str.length
+  let i = from
+  let digitCount = 0
+  while (i < len) {
+    const cp = str.codePointAt(i)
+    if (cp >= ASCII_DIGIT_0 && cp <= ASCII_DIGIT_9) {
+      digitCount++
+      i++
+    } else {
+      break
+    }
+  }
+  return { digitCount, indexAfterDigits: i }
 }
 
 export function visibleLineHasTabPage(visibleLine) {
@@ -280,58 +320,78 @@ export function visibleLineHasTabPage(visibleLine) {
   if (tabIdx === -1) {
     return false
   }
+
   const len = visibleLine.length
-  let i = tabIdx + 1
-  while (i < len && isAsciiWhitespaceCode(visibleLine.charCodeAt(i))) {
-    i++
-  }
+  let i = nextNonWhitespaceIndex(visibleLine, tabIdx + 1)
   if (i >= len) {
     return false
   }
-  let digitCount = 0
-  while (
-    i < len &&
-    visibleLine.charCodeAt(i) >= 48 &&
-    visibleLine.charCodeAt(i) <= 57
-  ) {
-    digitCount++
-    i++
-  }
+
+  const { digitCount, indexAfterDigits } = countDigitsFrom(visibleLine, i)
   if (digitCount === 0) {
     return false
   }
-  while (i < len && isAsciiWhitespaceCode(visibleLine.charCodeAt(i))) {
-    i++
-  }
+
+  i = nextNonWhitespaceIndex(visibleLine, indexAfterDigits)
   return i === len
 }
 
 export function visibleLineHasDotsPage(visibleLine) {
-  let i = visibleLine.length - 1
-  while (i >= 0 && isAsciiWhitespaceCode(visibleLine.charCodeAt(i))) {
-    i--
-  }
-  let digitCount = 0
-  while (
-    i >= 0 &&
-    visibleLine.charCodeAt(i) >= 48 &&
-    visibleLine.charCodeAt(i) <= 57
-  ) {
-    digitCount++
-    i--
-  }
+  let i = trimTrailingWhitespaceIndex(visibleLine)
+  const { digitCount, nextIndex } = countTrailingDigitsFromIndex(visibleLine, i)
   if (digitCount === 0) {
     return false
   }
-  while (i >= 0 && isAsciiWhitespaceCode(visibleLine.charCodeAt(i))) {
+
+  i = skipWhitespaceReverse(visibleLine, nextIndex)
+  const dotCount = countTrailingDotsFromIndex(visibleLine, i)
+  if (dotCount < 2) {
+    return false
+  }
+
+  return true
+}
+
+function trimTrailingWhitespaceIndex(str) {
+  const len = str.length
+  let i = len - 1
+  while (i >= 0 && isAsciiWhitespaceCode(str.codePointAt(i))) {
     i--
   }
+  return i
+}
+
+function countTrailingDigitsFromIndex(str, index) {
+  let i = index
+  let digitCount = 0
+  while (i >= 0) {
+    const cp = str.codePointAt(i)
+    if (cp >= ASCII_DIGIT_0 && cp <= ASCII_DIGIT_9) {
+      digitCount++
+      i--
+    } else {
+      break
+    }
+  }
+  return { digitCount, nextIndex: i }
+}
+
+function skipWhitespaceReverse(str, index) {
+  let i = index
+  while (i >= 0 && isAsciiWhitespaceCode(str.codePointAt(i))) {
+    i--
+  }
+  return i
+}
+
+function countTrailingDotsFromIndex(str, index) {
+  let i = index
   let dotCount = 0
-  while (i >= 0 && visibleLine.charCodeAt(i) === 46) {
+  while (i >= 0 && str.codePointAt(i) === ASCII_DOT) {
     dotCount++
     i--
   }
-  return dotCount >= 2
+  return dotCount
 }
 
 // Linear, safe dash-spacing implementation

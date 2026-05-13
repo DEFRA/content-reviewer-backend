@@ -224,52 +224,64 @@ export function docxXmlToParagraphObjects(documentXml, relsXml) {
     orderedParser
   )
   const paragraphs = ensureArray(body['w:p'])
+  return buildParagraphsFromNodes(paragraphs, preservedParagraphs, rels)
+}
+
+function buildParagraphsFromNodes(paragraphs, preservedParagraphs, rels) {
   const out = []
   for (let i = 0; i < paragraphs.length; i++) {
     const p = paragraphs[i]
     const preserved = preservedParagraphs[i] || null
-    const pPr = p['w:pPr'] || {}
-    const pStyle = extractParagraphStyle(pPr)
-    const isHeading = typeof pStyle === 'string' && /^Heading/i.test(pStyle)
-    const isList = !!pPr['w:numPr']
-    const visibleLine = (readDocxNodeText(p) || '').replaceAll('\u00A0', ' ')
-    const rawParagraphJson = JSON.stringify(p)
-    const isToc = (function isParagraphToc() {
-      const visibleHasTabPage = visibleLineHasTabPage(visibleLine)
-      const visibleHasDotsPage = visibleLineHasDotsPage(visibleLine)
-      const looksLikeTocField =
-        /(?:\bTOC\b|_Toc\b)/i.test(rawParagraphJson) ||
-        rawParagraphJson.includes('"w:fldSimple"') ||
-        rawParagraphJson.includes('"w:instrText"')
-      if (
-        (typeof pStyle === 'string' && /^TOC/i.test(pStyle)) ||
-        looksLikeTocField ||
-        visibleHasTabPage ||
-        visibleHasDotsPage
-      ) {
-        return true
-      }
-      return false
-    })()
-
-    const runs = []
-    if (preserved) {
-      walkParagraphNode(preserved, rels, runs)
-    } else {
-      walkParagraphNode(p, rels, runs)
-    }
-
-    if (isToc && runs.length > 0) {
-      out.push({
-        type: classifyDocxBlock(isHeading, isList),
-        runs: cleanTocRuns(runs)
-      })
-    } else if (runs.length > 0) {
-      out.push({ type: classifyDocxBlock(isHeading, isList), runs })
+    const paraObj = buildParagraphObjectFromNode(p, preserved, rels)
+    if (paraObj) {
+      out.push(paraObj)
     }
   }
-
   return out
+}
+
+function buildParagraphObjectFromNode(p, preserved, rels) {
+  const pPr = p['w:pPr'] || {}
+  const pStyle = extractParagraphStyle(pPr)
+  const isHeading = typeof pStyle === 'string' && /^Heading/i.test(pStyle)
+  const isList = !!pPr['w:numPr']
+  const visibleLine = (readDocxNodeText(p) || '').replaceAll('\u00A0', ' ')
+  const rawParagraphJson = JSON.stringify(p)
+  const toc = isParagraphToc(pStyle, visibleLine, rawParagraphJson)
+  const runs = []
+  if (preserved) {
+    walkParagraphNode(preserved, rels, runs)
+  } else {
+    walkParagraphNode(p, rels, runs)
+  }
+  if (toc && runs.length > 0) {
+    return {
+      type: classifyDocxBlock(isHeading, isList),
+      runs: cleanTocRuns(runs)
+    }
+  }
+  if (runs.length > 0) {
+    return { type: classifyDocxBlock(isHeading, isList), runs }
+  }
+  return null
+}
+
+function isParagraphToc(pStyle, visibleLine, rawParagraphJson) {
+  const visibleHasTabPage = visibleLineHasTabPage(visibleLine)
+  const visibleHasDotsPage = visibleLineHasDotsPage(visibleLine)
+  const looksLikeTocField =
+    /(?:\bTOC\b|_Toc\b)/i.test(rawParagraphJson) ||
+    rawParagraphJson.includes('"w:fldSimple"') ||
+    rawParagraphJson.includes('"w:instrText"')
+  if (
+    (typeof pStyle === 'string' && /^TOC/i.test(pStyle)) ||
+    looksLikeTocField ||
+    visibleHasTabPage ||
+    visibleHasDotsPage
+  ) {
+    return true
+  }
+  return false
 }
 
 function parseDocxRelsSafe(relsXml, parser) {
@@ -310,10 +322,5 @@ function cleanTocRuns(runs) {
         .trim()
       return { ...r, text: t }
     })
-    .filter((r) => {
-      if (r && r.text && r.text.length > 0) {
-        return true
-      }
-      return false
-    })
+    .filter((r) => r?.text?.length > 0)
 }
