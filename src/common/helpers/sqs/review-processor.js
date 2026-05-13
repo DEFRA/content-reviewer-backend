@@ -480,6 +480,11 @@ export class ReviewProcessor {
       ? Math.round(Date.now() - new Date(submittedAt).getTime())
       : null
 
+    const endToEndSuffix =
+      endToEndDurationMs === null
+        ? ''
+        : ` | End-to-end: ${endToEndDurationMs}ms`
+
     logger.info(
       {
         reviewId,
@@ -487,9 +492,9 @@ export class ReviewProcessor {
         bedrockDurationMs: bedrockResult.bedrockDuration,
         parseDurationMs: parseResult.parseDuration,
         envelopeDurationMs: envelopeDuration,
-        ...(endToEndDurationMs !== null ? { endToEndDurationMs } : {})
+        ...(endToEndDurationMs === null ? {} : { endToEndDurationMs })
       },
-      `[RESPONSE TIME] [STEP 6/6] Content review processing COMPLETED - TOTAL: ${totalProcessingDuration}ms (Bedrock: ${bedrockResult.bedrockDuration}ms, Parse: ${parseResult.parseDuration}ms, Envelope: ${envelopeDuration}ms)${endToEndDurationMs !== null ? ` | End-to-end: ${endToEndDurationMs}ms` : ''}`
+      `[RESPONSE TIME] [STEP 6/6] Content review processing COMPLETED - TOTAL: ${totalProcessingDuration}ms (Bedrock: ${bedrockResult.bedrockDuration}ms, Parse: ${parseResult.parseDuration}ms, Envelope: ${envelopeDuration}ms)${endToEndSuffix}`
     )
   }
 
