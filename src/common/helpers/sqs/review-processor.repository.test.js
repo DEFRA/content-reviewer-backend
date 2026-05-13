@@ -22,6 +22,10 @@ const TEST_PROCESSING_FAILED = 'Processing failed'
 // Test constants - Numbers
 const PROCESSING_TIME_5000 = 5000
 const PROCESSING_TIME_2000 = 2000
+const SUBMITTED_AT_OFFSET_MS = 60000
+
+// Test constants - Strings
+const TEST_ERROR_STACK = TEST_ERROR_STACK
 
 const mockLoggerInfo = vi.fn()
 const mockLoggerError = vi.fn()
@@ -229,22 +233,48 @@ describe('ReviewProcessor - logReviewCompletion', () => {
       )
 
       expect(mockLoggerInfo).toHaveBeenCalledWith(
-        {
+        expect.objectContaining({
           reviewId: TEST_REVIEW_ID,
           totalDurationMs: expect.any(Number),
           bedrockDurationMs: 3000,
           parseDurationMs: 500,
           envelopeDurationMs: expect.any(Number)
-        },
+        }),
         expect.stringContaining(
           '[STEP 6/6] Content review processing COMPLETED'
         )
       )
     })
+
+    test('Should include endToEndDurationMs when submittedAt is provided', () => {
+      const processingStartTime = performance.now() - PROCESSING_TIME_5000
+      const bedrockResult = { bedrockDuration: 3000 }
+      const parseResult = { parseDuration: 500 }
+      const submittedAt = new Date(
+        Date.now() - SUBMITTED_AT_OFFSET_MS
+      ).toISOString()
+
+      processor.logReviewCompletion(
+        TEST_REVIEW_ID,
+        processingStartTime,
+        bedrockResult,
+        parseResult,
+        0,
+        submittedAt
+      )
+
+      expect(mockLoggerInfo).toHaveBeenCalledWith(
+        expect.objectContaining({
+          reviewId: TEST_REVIEW_ID,
+          endToEndDurationMs: expect.any(Number)
+        }),
+        expect.stringContaining('End-to-end:')
+      )
+    })
   })
 })
 
-describe('ReviewProcessor - handleReviewProcessingError', () => {
+describe('ReviewProcessor - handleReviewProcessingError — error handling', () => {
   let processor
 
   beforeEach(() => {
@@ -252,113 +282,120 @@ describe('ReviewProcessor - handleReviewProcessingError', () => {
     processor = new ReviewProcessor()
   })
 
-  describe('handleReviewProcessingError', () => {
-    test('Should handle error and save to repository', async () => {
-      const error = new Error(TEST_PROCESSING_FAILED)
-      error.stack = 'Error stack trace'
-      const processingStartTime = performance.now() - PROCESSING_TIME_2000
+  test('Should handle error and save to repository', async () => {
+    const error = new Error(TEST_PROCESSING_FAILED)
+    error.stack = TEST_ERROR_STACK
+    const processingStartTime = performance.now() - PROCESSING_TIME_2000
 
-      mockFormatErrorForUI.mockReturnValue(TEST_USER_FRIENDLY_ERROR)
-      mockSaveReviewError.mockResolvedValue()
+    mockFormatErrorForUI.mockReturnValue(TEST_USER_FRIENDLY_ERROR)
+    mockSaveReviewError.mockResolvedValue()
 
-      await processor.handleReviewProcessingError(
-        TEST_REVIEW_ID,
-        error,
-        processingStartTime
-      )
+    await processor.handleReviewProcessingError(
+      TEST_REVIEW_ID,
+      error,
+      processingStartTime
+    )
 
-      expect(mockLoggerError).toHaveBeenCalledWith(
-        {
-          reviewId: TEST_REVIEW_ID,
-          error: TEST_PROCESSING_FAILED,
-          errorName: 'Error',
-          stack: 'Error stack trace',
-          totalDurationMs: expect.any(Number)
-        },
-        expect.stringContaining('Review processing failed')
-      )
-      expect(mockFormatErrorForUI).toHaveBeenCalledWith(error)
-      expect(mockSaveReviewError).toHaveBeenCalledWith(
-        TEST_REVIEW_ID,
-        TEST_USER_FRIENDLY_ERROR,
-        {}
-      )
-      expect(mockLoggerInfo).toHaveBeenCalledWith(
-        {
-          reviewId: TEST_REVIEW_ID,
-          errorMessage: TEST_USER_FRIENDLY_ERROR,
-          originalError: TEST_PROCESSING_FAILED
-        },
-        'Review error saved to database - status updated to failed'
-      )
-    })
+    expect(mockLoggerError).toHaveBeenCalledWith(
+      {
+        reviewId: TEST_REVIEW_ID,
+        error: TEST_PROCESSING_FAILED,
+        errorName: 'Error',
+        stack: TEST_ERROR_STACK,
+        totalDurationMs: expect.any(Number)
+      },
+      expect.stringContaining('Review processing failed')
+    )
+    expect(mockFormatErrorForUI).toHaveBeenCalledWith(error)
+    expect(mockSaveReviewError).toHaveBeenCalledWith(
+      TEST_REVIEW_ID,
+      TEST_USER_FRIENDLY_ERROR,
+      {}
+    )
+    expect(mockLoggerInfo).toHaveBeenCalledWith(
+      {
+        reviewId: TEST_REVIEW_ID,
+        errorMessage: TEST_USER_FRIENDLY_ERROR,
+        originalError: TEST_PROCESSING_FAILED
+      },
+      'Review error saved to database - status updated to failed'
+    )
+  })
 
-    test('Should pass populated guardrailData when error has guardrailAssessment', async () => {
-      const error = new Error(TEST_PROCESSING_FAILED)
-      error.stack = 'Error stack trace'
-      error.guardrailAssessment = { allAssessments: [{ pii: true }] }
-      error.policyBreakdown = [{ assessmentIndex: 0 }]
-      const processingStartTime = performance.now() - PROCESSING_TIME_2000
+  test('Should handle failure when saving error to repository', async () => {
+    const error = new Error(TEST_PROCESSING_FAILED)
+    const saveError = new Error('Database save failed')
+    const processingStartTime = performance.now() - PROCESSING_TIME_2000
 
-      mockFormatErrorForUI.mockReturnValue(TEST_USER_FRIENDLY_ERROR)
-      mockSaveReviewError.mockResolvedValue()
+    mockFormatErrorForUI.mockReturnValue(TEST_USER_FRIENDLY_ERROR)
+    mockSaveReviewError.mockRejectedValue(saveError)
+    mockHandleSaveErrorFailure.mockResolvedValue()
 
-      await processor.handleReviewProcessingError(
-        TEST_REVIEW_ID,
-        error,
-        processingStartTime
-      )
+    await processor.handleReviewProcessingError(
+      TEST_REVIEW_ID,
+      error,
+      processingStartTime
+    )
 
-      expect(mockSaveReviewError).toHaveBeenCalledWith(
-        TEST_REVIEW_ID,
-        TEST_USER_FRIENDLY_ERROR,
-        {
-          guardrailAssessment: error.guardrailAssessment,
-          policyBreakdown: error.policyBreakdown
-        }
-      )
-    })
+    expect(mockHandleSaveErrorFailure).toHaveBeenCalled()
+  })
+})
 
-    test('Should pass populated guardrailData when error has only policyBreakdown', async () => {
-      const error = new Error(TEST_PROCESSING_FAILED)
-      error.policyBreakdown = [{ assessmentIndex: 0 }]
-      const processingStartTime = performance.now() - PROCESSING_TIME_2000
+describe('ReviewProcessor - handleReviewProcessingError — guardrail data', () => {
+  let processor
 
-      mockFormatErrorForUI.mockReturnValue(TEST_USER_FRIENDLY_ERROR)
-      mockSaveReviewError.mockResolvedValue()
+  beforeEach(() => {
+    vi.clearAllMocks()
+    processor = new ReviewProcessor()
+  })
 
-      await processor.handleReviewProcessingError(
-        TEST_REVIEW_ID,
-        error,
-        processingStartTime
-      )
+  test('Should pass populated guardrailData when error has guardrailAssessment', async () => {
+    const error = new Error(TEST_PROCESSING_FAILED)
+    error.stack = TEST_ERROR_STACK
+    error.guardrailAssessment = { allAssessments: [{ pii: true }] }
+    error.policyBreakdown = [{ assessmentIndex: 0 }]
+    const processingStartTime = performance.now() - PROCESSING_TIME_2000
 
-      expect(mockSaveReviewError).toHaveBeenCalledWith(
-        TEST_REVIEW_ID,
-        TEST_USER_FRIENDLY_ERROR,
-        {
-          guardrailAssessment: null,
-          policyBreakdown: error.policyBreakdown
-        }
-      )
-    })
+    mockFormatErrorForUI.mockReturnValue(TEST_USER_FRIENDLY_ERROR)
+    mockSaveReviewError.mockResolvedValue()
 
-    test('Should handle failure when saving error to repository', async () => {
-      const error = new Error(TEST_PROCESSING_FAILED)
-      const saveError = new Error('Database save failed')
-      const processingStartTime = performance.now() - PROCESSING_TIME_2000
+    await processor.handleReviewProcessingError(
+      TEST_REVIEW_ID,
+      error,
+      processingStartTime
+    )
 
-      mockFormatErrorForUI.mockReturnValue(TEST_USER_FRIENDLY_ERROR)
-      mockSaveReviewError.mockRejectedValue(saveError)
-      mockHandleSaveErrorFailure.mockResolvedValue()
+    expect(mockSaveReviewError).toHaveBeenCalledWith(
+      TEST_REVIEW_ID,
+      TEST_USER_FRIENDLY_ERROR,
+      {
+        guardrailAssessment: error.guardrailAssessment,
+        policyBreakdown: error.policyBreakdown
+      }
+    )
+  })
 
-      await processor.handleReviewProcessingError(
-        TEST_REVIEW_ID,
-        error,
-        processingStartTime
-      )
+  test('Should pass populated guardrailData when error has only policyBreakdown', async () => {
+    const error = new Error(TEST_PROCESSING_FAILED)
+    error.policyBreakdown = [{ assessmentIndex: 0 }]
+    const processingStartTime = performance.now() - PROCESSING_TIME_2000
 
-      expect(mockHandleSaveErrorFailure).toHaveBeenCalled()
-    })
+    mockFormatErrorForUI.mockReturnValue(TEST_USER_FRIENDLY_ERROR)
+    mockSaveReviewError.mockResolvedValue()
+
+    await processor.handleReviewProcessingError(
+      TEST_REVIEW_ID,
+      error,
+      processingStartTime
+    )
+
+    expect(mockSaveReviewError).toHaveBeenCalledWith(
+      TEST_REVIEW_ID,
+      TEST_USER_FRIENDLY_ERROR,
+      {
+        guardrailAssessment: null,
+        policyBreakdown: error.policyBreakdown
+      }
+    )
   })
 })

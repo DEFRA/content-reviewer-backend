@@ -298,28 +298,8 @@ const handleDeleteReview = async (request, h) => {
   const requestStartTime = performance.now()
   const { reviewId } = request.params
 
-  request.logger.info(
-    { reviewId },
-    `DELETE ${ENDPOINTS.REVIEWS_DELETE} request received`
-  )
-
   try {
-    // Delete the review and associated content
-    const deleteStart = performance.now()
     const result = await reviewRepository.deleteReview(reviewId)
-    const deleteDuration = Math.round(performance.now() - deleteStart)
-    const totalDuration = Math.round(performance.now() - requestStartTime)
-
-    request.logger.info(
-      {
-        reviewId,
-        deletedKeys: result.deletedKeys,
-        deletedCount: result.deletedCount,
-        deleteDurationMs: deleteDuration,
-        totalDurationMs: totalDuration
-      },
-      `[RESPONSE TIME] DELETE ${ENDPOINTS.REVIEWS_DELETE} deleted in ${totalDuration}ms (S3: ${deleteDuration}ms, ${result.deletedCount} keys removed)`
-    )
 
     return h
       .response({
