@@ -141,12 +141,9 @@ function extractStringFromObject(obj) {
     return String(obj)
   }
 
-  // Prefer explicit '#text' / '$text' keys when present
-  if (hasOwn(obj, '#text')) {
-    return String(obj['#text'] ?? '')
-  }
-  if (hasOwn(obj, '$text')) {
-    return String(obj['$text'] ?? '')
+  const explicit = getExplicitText(obj)
+  if (explicit !== null) {
+    return explicit
   }
 
   // Recursive depth-first search for the first non-attribute child string
@@ -155,11 +152,35 @@ function extractStringFromObject(obj) {
 
     if (!isAttributeLike) {
       const s = extractStringFromObject(v)
-      if (s) return s
+      if (s) {
+        return s
+      }
     }
   }
 
   return ''
+}
+
+function getExplicitText(obj) {
+  if (hasOwn(obj, '#text')) {
+    const v = obj['#text']
+    if (v == null) return ''
+    if (typeof v === 'string') return v
+    if (Array.isArray(v))
+      return v.map((x) => (x == null ? '' : String(x))).join('')
+    if (typeof v === 'object') return findFirstTextValueRecursive(v)
+    return String(v)
+  }
+  if (hasOwn(obj, '$text')) {
+    const v = obj['$text']
+    if (v == null) return ''
+    if (typeof v === 'string') return v
+    if (Array.isArray(v))
+      return v.map((x) => (x == null ? '' : String(x))).join('')
+    if (typeof v === 'object') return findFirstTextValueRecursive(v)
+    return String(v)
+  }
+  return null
 }
 
 function hasOwn(obj, key) {
@@ -171,33 +192,10 @@ function hasOwn(obj, key) {
 
 // attribute-like / namespace key detector
 function isAttributeLikeKey(k) {
-  return (
-    k === '#text' ||
-    k === '$text' ||
-    (typeof k === 'string' &&
-      (k.startsWith('@') ||
-        k.startsWith('xml') ||
-        k.startsWith('xmlns') ||
-        k.includes(':')))
-  )
-}
-
-/**
- * Recursive depth-first search for the first primitive/string-like value
- * in an object, skipping attribute-like keys. Returns '' when none found.
- * This preserves the original behaviour that matched your working version.
- */
-function findFirstTextValueRecursive(node) {
-  if (node == null) return ''
-  if (typeof node === 'string') return node
-  if (typeof node !== 'object') return String(node)
-
-  for (const [k, v] of Object.entries(node)) {
-    if (isAttributeLikeKey(k)) continue
-    const s = findFirstTextValueRecursive(v)
-    if (s) return s
-  }
-  return ''
+  if (k === '#text' || k === '$text') return true
+  if (typeof k !== 'string') return false
+  const prefixes = ['@', 'xml', 'xmlns']
+  return prefixes.some((p) => k.startsWith(p)) || k.includes(':')
 }
 
 /**
@@ -265,12 +263,20 @@ function getDocxNodeFastText(node) {
  * leaking internal IDs into output (fixes TOC numbers like "195021778").
  */
 function readDocxNodeText(node) {
-  if (!node) return ''
-  if (Array.isArray(node)) return node.map(readDocxNodeText).join('')
-  if (typeof node !== 'object') return String(node)
+  if (!node) {
+    return ''
+  }
+  if (Array.isArray(node)) {
+    return node.map(readDocxNodeText).join('')
+  }
+  if (typeof node !== 'object') {
+    return String(node)
+  }
 
   const fast = getDocxNodeFastText(node)
-  if (fast !== null) return fast
+  if (fast !== null) {
+    return fast
+  }
 
   let text = ''
   for (const k of Object.keys(node)) {
@@ -314,7 +320,8 @@ function isAlnumChar(ch) {
   return /[A-Za-z0-9]/.test(ch)
 }
 function endsWithUpperAcronym(s) {
-  return (String(s).match(/([A-Z]+)$/)?.[1]?.length ?? 0) >= 2
+  const m = /([A-Z]+)$/.exec(String(s))
+  return Boolean(m && m[1] && m[1].length >= 2)
 }
 
 function shouldPreserveExplicitWhitespace(a, b) {
