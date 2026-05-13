@@ -7,8 +7,6 @@ const DOCX_TEXT_KEYS = new Set(['w:t', 'w:instrText', '#text'])
 const DOCX_SPACE_KEYS = new Set(['w:tab', 'w:br', 'w:cr'])
 const ASCII_UPPER_A = 65
 const ASCII_UPPER_Z = 90
-const MAX_PREVEW_CHARS = 200
-const PARAGRAPH_LENGTH = 2000
 // Filter out runs that look like binary blobs (no whitespace, very long).
 const DOCX_BINARY_BLOB_MIN_LENGTH = 300
 // XML/Word artefact patterns we drop from extracted runs.
