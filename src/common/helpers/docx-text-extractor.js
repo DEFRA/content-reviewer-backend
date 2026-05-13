@@ -151,13 +151,7 @@ function extractStringFromObject(obj) {
 
   // Recursive depth-first search for the first non-attribute child string
   for (const [k, v] of Object.entries(obj)) {
-    const isAttributeLike =
-      k === '#text' ||
-      k === '$text' ||
-      k.startsWith('@') ||
-      k.startsWith('xml') ||
-      k.startsWith('xmlns') ||
-      k.includes(':')
+    const isAttributeLike = isAttributeLikeKey(k)
 
     if (!isAttributeLike) {
       const s = extractStringFromObject(v)
@@ -169,9 +163,41 @@ function extractStringFromObject(obj) {
 }
 
 function hasOwn(obj, key) {
-  return typeof Object.hasOwn === 'function'
-    ? Object.hasOwn(obj, key)
-    : Object.hasOwn(obj, key)
+  if (typeof Object.hasOwn === 'function') {
+    return Object.hasOwn(obj, key)
+  }
+  return Object.hasOwn(obj, key)
+}
+
+// attribute-like / namespace key detector
+function isAttributeLikeKey(k) {
+  return (
+    k === '#text' ||
+    k === '$text' ||
+    (typeof k === 'string' &&
+      (k.startsWith('@') ||
+        k.startsWith('xml') ||
+        k.startsWith('xmlns') ||
+        k.includes(':')))
+  )
+}
+
+/**
+ * Recursive depth-first search for the first primitive/string-like value
+ * in an object, skipping attribute-like keys. Returns '' when none found.
+ * This preserves the original behaviour that matched your working version.
+ */
+function findFirstTextValueRecursive(node) {
+  if (node == null) return ''
+  if (typeof node === 'string') return node
+  if (typeof node !== 'object') return String(node)
+
+  for (const [k, v] of Object.entries(node)) {
+    if (isAttributeLikeKey(k)) continue
+    const s = findFirstTextValueRecursive(v)
+    if (s) return s
+  }
+  return ''
 }
 
 /**
@@ -179,12 +205,19 @@ function hasOwn(obj, key) {
  * Kept small and testable to reduce complexity of readDocxNodeText.
  */
 function readDocxChildValue(key, val) {
-  if (val == null) return ''
-  if (Array.isArray(val) || typeof val === 'object')
+  if (val == null) {
+    return ''
+  }
+  if (Array.isArray(val) || typeof val === 'object') {
     return readDocxNodeText(val)
+  }
 
-  if (DOCX_TEXT_KEYS.has(key)) return String(val)
-  if (DOCX_SPACE_KEYS.has(key)) return ' '
+  if (DOCX_TEXT_KEYS.has(key)) {
+    return String(val)
+  }
+  if (DOCX_SPACE_KEYS.has(key)) {
+    return ' '
+  }
 
   const s = String(val)
   // allow short numeric-like tokens (years, versions) as fallback
@@ -199,17 +232,27 @@ function readDocxChildValue(key, val) {
  *  - null when no fast-path applies and caller should iterate children
  */
 function getDocxNodeFastText(node) {
-  if (!node || typeof node !== 'object') return null
-  if (isGraphicNode(node)) return ''
+  if (!node || typeof node !== 'object') {
+    return null
+  }
+  if (isGraphicNode(node)) {
+    return ''
+  }
   if (node['w:instrText'] !== undefined) {
     return String(node['w:instrText']).replaceAll('\u00A0', ' ')
   }
   if (node['w:t'] !== undefined) {
     return readWtValue(node['w:t']).replaceAll('\u00A0', ' ')
   }
-  if (node['w:tab'] !== undefined) return ' '
-  if (node['w:br'] !== undefined || node['w:cr'] !== undefined) return ' '
-  if (node['#text'] !== undefined) return String(node['#text'])
+  if (node['w:tab'] !== undefined) {
+    return ' '
+  }
+  if (node['w:br'] !== undefined || node['w:cr'] !== undefined) {
+    return ' '
+  }
+  if (node['#text'] !== undefined) {
+    return String(node['#text'])
+  }
   return null
 }
 
@@ -271,8 +314,7 @@ function isAlnumChar(ch) {
   return /[A-Za-z0-9]/.test(ch)
 }
 function endsWithUpperAcronym(s) {
-  const m = s.match(/([A-Z]+)$/)
-  return !!(m && m[1] && m[1].length >= 2)
+  return (String(s).match(/([A-Z]+)$/)?.[1]?.length ?? 0) >= 2
 }
 
 function shouldPreserveExplicitWhitespace(a, b) {
@@ -486,7 +528,9 @@ function cleanTocRuns(runs) {
 }
 
 function diagnoseDigitLossIfNeeded(runs, visibleLine, rawParagraphJson) {
-  if (process.env.DOCX_DEBUG !== '1') return
+  if (process.env.DOCX_DEBUG !== '1') {
+    return
+  }
   try {
     const PREVIEW_CHARS = MAX_PREVEW_CHARS
     const rawDigits = (rawParagraphJson.match(/\d/g) || []).length
@@ -588,7 +632,9 @@ function parseDocxRels(parser, relsXml) {
 
 /** Find first preserved-order element with given tag. */
 function findFirstPreserved(arr, tag) {
-  if (!Array.isArray(arr)) return null
+  if (!Array.isArray(arr)) {
+    return null
+  }
   for (const item of arr) {
     if (item && typeof item === 'object' && hasOwn(item, tag)) {
       return item[tag]
@@ -599,7 +645,9 @@ function findFirstPreserved(arr, tag) {
 
 /** Collect preserved w:p paragraph nodes from an ordered body node. */
 function collectPreservedParagraphsFromBody(bodyNode) {
-  if (!Array.isArray(bodyNode)) return []
+  if (!Array.isArray(bodyNode)) {
+    return []
+  }
   return bodyNode
     .filter(
       (child) => child && typeof child === 'object' && hasOwn(child, 'w:p')
@@ -612,7 +660,9 @@ function extractPreservedParagraphs(documentXml, orderedParser) {
   try {
     const docPres = orderedParser.parse(documentXml)
     const docNode = findFirstPreserved(docPres, 'w:document')
-    if (!docNode) return []
+    if (!docNode) {
+      return []
+    }
     const bodyNode = findFirstPreserved(docNode || [], 'w:body')
     return collectPreservedParagraphsFromBody(bodyNode)
   } catch (err) {
@@ -652,7 +702,9 @@ export function docxXmlToParagraphObjects(documentXml, relsXml) {
 
   const doc = parser.parse(documentXml)
   const body = doc['w:document']?.['w:body']
-  if (!body) return []
+  if (!body) {
+    return []
+  }
 
   const rels = parseDocxRels(parser, relsXml)
   const preservedParagraphs = extractPreservedParagraphs(
@@ -666,7 +718,9 @@ export function docxXmlToParagraphObjects(documentXml, relsXml) {
     const p = paragraphs[i]
     const preserved = preservedParagraphs[i] || null
     const paraObj = processDocxParagraph(p, rels, preserved)
-    if (paraObj.runs.length > 0) out.push(paraObj)
+    if (paraObj.runs.length > 0) {
+      out.push(paraObj)
+    }
   }
 
   return out
