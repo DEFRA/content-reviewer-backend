@@ -305,7 +305,8 @@ export class ReviewProcessor {
         processingStartTime,
         bedrockResult,
         parseResult,
-        envelopeDuration
+        envelopeDuration,
+        messageBody.uploadedAt
       )
 
       return {
@@ -469,11 +470,20 @@ export class ReviewProcessor {
     processingStartTime,
     bedrockResult,
     parseResult,
-    envelopeDuration = 0
+    envelopeDuration = 0,
+    submittedAt = null
   ) {
     const totalProcessingDuration = Math.round(
       performance.now() - processingStartTime
     )
+    const endToEndDurationMs = submittedAt
+      ? Math.round(Date.now() - new Date(submittedAt).getTime())
+      : null
+
+    const endToEndSuffix =
+      endToEndDurationMs === null
+        ? ''
+        : ` | End-to-end: ${endToEndDurationMs}ms`
 
     logger.info(
       {
@@ -481,9 +491,10 @@ export class ReviewProcessor {
         totalDurationMs: totalProcessingDuration,
         bedrockDurationMs: bedrockResult.bedrockDuration,
         parseDurationMs: parseResult.parseDuration,
-        envelopeDurationMs: envelopeDuration
+        envelopeDurationMs: envelopeDuration,
+        ...(endToEndDurationMs === null ? {} : { endToEndDurationMs })
       },
-      `[RESPONSE TIME] [STEP 6/6] Content review processing COMPLETED - TOTAL: ${totalProcessingDuration}ms (Bedrock: ${bedrockResult.bedrockDuration}ms, Parse: ${parseResult.parseDuration}ms, Envelope: ${envelopeDuration}ms)`
+      `[RESPONSE TIME] [STEP 6/6] Content review processing COMPLETED - TOTAL: ${totalProcessingDuration}ms (Bedrock: ${bedrockResult.bedrockDuration}ms, Parse: ${parseResult.parseDuration}ms, Envelope: ${envelopeDuration}ms)${endToEndSuffix}`
     )
   }
 

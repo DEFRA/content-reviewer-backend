@@ -1,9 +1,3 @@
-import { createLogger } from './logging/logger.js'
-
-const logger = createLogger()
-
-const CURRENT_LOG_PREVIEW_LENGTH = 80
-
 function extractField(block, fieldName) {
   const searchString = `${fieldName}:`
   const startIndex = block.indexOf(searchString)
@@ -108,14 +102,6 @@ function parseImprovementBlock(block, originalText = '') {
     originalText
   )
   if (rejectionReason) {
-    logger.warn(
-      {
-        category,
-        issue,
-        current: current.substring(0, CURRENT_LOG_PREVIEW_LENGTH)
-      },
-      `[review-parser] Discarding improvement block: ${rejectionReason}`
-    )
     return null
   }
 
