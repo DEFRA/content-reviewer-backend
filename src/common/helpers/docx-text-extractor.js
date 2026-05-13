@@ -141,9 +141,12 @@ function extractStringFromObject(obj) {
     return String(obj)
   }
 
-  const explicit = getExplicitText(obj)
-  if (explicit !== null) {
-    return explicit
+  // Prefer explicit '#text' / '$text' keys when present
+  if (hasOwn(obj, '#text')) {
+    return String(obj['#text'] ?? '')
+  }
+  if (hasOwn(obj, '$text')) {
+    return String(obj['$text'] ?? '')
   }
 
   // Recursive depth-first search for the first non-attribute child string
@@ -161,28 +164,6 @@ function extractStringFromObject(obj) {
   return ''
 }
 
-function getExplicitText(obj) {
-  if (hasOwn(obj, '#text')) {
-    const v = obj['#text']
-    if (v == null) return ''
-    if (typeof v === 'string') return v
-    if (Array.isArray(v))
-      return v.map((x) => (x == null ? '' : String(x))).join('')
-    if (typeof v === 'object') return findFirstTextValueRecursive(v)
-    return String(v)
-  }
-  if (hasOwn(obj, '$text')) {
-    const v = obj['$text']
-    if (v == null) return ''
-    if (typeof v === 'string') return v
-    if (Array.isArray(v))
-      return v.map((x) => (x == null ? '' : String(x))).join('')
-    if (typeof v === 'object') return findFirstTextValueRecursive(v)
-    return String(v)
-  }
-  return null
-}
-
 function hasOwn(obj, key) {
   if (typeof Object.hasOwn === 'function') {
     return Object.hasOwn(obj, key)
@@ -190,12 +171,16 @@ function hasOwn(obj, key) {
   return Object.hasOwn(obj, key)
 }
 
-// attribute-like / namespace key detector
 function isAttributeLikeKey(k) {
-  if (k === '#text' || k === '$text') return true
-  if (typeof k !== 'string') return false
-  const prefixes = ['@', 'xml', 'xmlns']
-  return prefixes.some((p) => k.startsWith(p)) || k.includes(':')
+  return (
+    k === '#text' ||
+    k === '$text' ||
+    (typeof k === 'string' &&
+      (k.startsWith('@') ||
+        k.startsWith('xml') ||
+        k.startsWith('xmlns') ||
+        k.includes(':')))
+  )
 }
 
 /**
@@ -263,20 +248,12 @@ function getDocxNodeFastText(node) {
  * leaking internal IDs into output (fixes TOC numbers like "195021778").
  */
 function readDocxNodeText(node) {
-  if (!node) {
-    return ''
-  }
-  if (Array.isArray(node)) {
-    return node.map(readDocxNodeText).join('')
-  }
-  if (typeof node !== 'object') {
-    return String(node)
-  }
+  if (!node) return ''
+  if (Array.isArray(node)) return node.map(readDocxNodeText).join('')
+  if (typeof node !== 'object') return String(node)
 
   const fast = getDocxNodeFastText(node)
-  if (fast !== null) {
-    return fast
-  }
+  if (fast !== null) return fast
 
   let text = ''
   for (const k of Object.keys(node)) {
@@ -321,7 +298,7 @@ function isAlnumChar(ch) {
 }
 function endsWithUpperAcronym(s) {
   const m = /([A-Z]+)$/.exec(String(s))
-  return Boolean(m && m[1] && m[1].length >= 2)
+  return (m?.[1]?.length ?? 0) >= 2
 }
 
 function shouldPreserveExplicitWhitespace(a, b) {
