@@ -189,7 +189,7 @@ function isAttributeLikeKey(k) {
   }
 
   // concise single-regex check for attribute-like prefixes or any namespace colon
-  return /^(?:@|xml|xmlns)|:/.test(k)
+  return /(?:^(?:@|xml|xmlns)|:)/.test(k)
 }
 
 /**
@@ -314,8 +314,20 @@ function isAlnumChar(ch) {
   return /[A-Za-z0-9]/.test(ch)
 }
 function endsWithUpperAcronym(s) {
-  const m = /([A-Z]+)$/.exec(String(s))
-  return (m?.[1]?.length ?? 0) >= 2
+  const str = String(s ?? '')
+  let i = str.length - 1
+  let count = 0
+  // scan backwards counting consecutive ASCII uppercase letters
+  while (i >= 0) {
+    const code = str.charCodeAt(i)
+    if (code >= 65 && code <= 90) {
+      count += 1
+      i -= 1
+    } else {
+      break
+    }
+  }
+  return count >= 2
 }
 
 function shouldPreserveExplicitWhitespace(a, b) {
@@ -484,8 +496,11 @@ function walkParagraphNode(node, rels, runs, currentHref = null) {
  * Decide whether a paragraph looks like a TOC entry.
  */
 function isParagraphToc(pStyle, visibleLine, rawParagraphJson) {
-  const visibleHasTabPage = /\t\s*\d+\s*$/.test(visibleLine)
-  const visibleHasDotsPage = /\.{2,}\s*\d+\s*$/.test(visibleLine)
+  const WSP = '[ \\t\\f\\v\\r\\n]*'
+  const visibleHasTabPage = new RegExp(`\\t${WSP}\\d+${WSP}$`).test(visibleLine)
+  const visibleHasDotsPage = new RegExp(`\\.{2,}${WSP}\\d+${WSP}$`).test(
+    visibleLine
+  )
   const looksLikeTocField =
     /(?:\bTOC\b|_Toc\b)/i.test(rawParagraphJson) ||
     rawParagraphJson.includes('"w:fldSimple"') ||
@@ -776,7 +791,7 @@ function renderDocxBlock(block) {
   const merged = pieces.reduce((acc, p) => smartConcat(acc, p), '')
 
   // ensure there are spaces around common dash characters so later collapse doesn't glue words
-  const spacedDashes = String(merged).replace(/\s*([–—-])\s*/g, ' $1 ')
+  const spacedDashes = spaceAroundDashes(String(merged))
 
   // collapse internal whitespace to single spaces, then trim ends
   const text = spacedDashes.replace(/\s+/g, ' ').trim()
@@ -787,6 +802,42 @@ function renderDocxBlock(block) {
     return `- ${text}`
   }
   return text
+}
+
+/**
+ * Ensure there is exactly one space either side of common dash characters.
+ * Implemented as a linear scan to avoid regex backtracking / ReDoS risk.
+ */
+function spaceAroundDashes(s) {
+  if (!s) return s
+  const dashSet = new Set(['–', '—', '-'])
+  let out = ''
+  const len = s.length
+  for (let i = 0; i < len; i++) {
+    const ch = s[i]
+    if (!dashSet.has(ch)) {
+      out += ch
+      continue
+    }
+
+    // ensure single space before
+    if (out.length === 0) {
+      out += ch
+    } else if (out[out.length - 1] === ' ') {
+      out += ch
+    } else {
+      out += ' ' + ch
+    }
+
+    // skip any whitespace immediately after the dash
+    let j = i + 1
+    while (j < len && /\s/.test(s[j])) j++
+
+    // ensure single space after
+    out += ' '
+    i = j - 1
+  }
+  return out
 }
 
 /**
