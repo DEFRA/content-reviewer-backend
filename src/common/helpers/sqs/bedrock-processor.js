@@ -274,6 +274,31 @@ export class BedrockReviewProcessor {
   }
 
   /**
+   * Offset every `ref` field in improvements and issues by a fixed amount so
+   * that refs from different chunks never collide when results are collated.
+   * Chunk 1 keeps refs 1-999, chunk 2 gets 1001-1999, etc.
+   * @param {Object} parsedReview
+   * @param {number} refOffset
+   * @returns {Object}
+   */
+  applyChunkRefOffset(parsedReview, refOffset) {
+    return {
+      ...parsedReview,
+      improvements: (parsedReview.improvements ?? []).map((imp) => ({
+        ...imp,
+        ref: imp.ref !== undefined ? imp.ref + refOffset : imp.ref
+      })),
+      reviewedContent: {
+        ...parsedReview.reviewedContent,
+        issues: (parsedReview.reviewedContent?.issues ?? []).map((issue) => ({
+          ...issue,
+          ref: issue.ref !== undefined ? issue.ref + refOffset : issue.ref
+        }))
+      }
+    }
+  }
+
+  /**
    * Adjust all START/END offsets in a parsed review from chunk-relative
    * positions to full-document absolute positions.
    * @param {Object} parsedReview - Result of parseBedrockResponse against chunk text
@@ -323,7 +348,15 @@ export class BedrockReviewProcessor {
 
     for (const key of scoreKeys) {
       const entries = chunkResults
-        .map((r) => r.parsedReview.scores?.[key])
+        .map((r) => {
+          // Normalize to lowercase so we match regardless of LLM capitalisation
+          // (e.g. "Plain English" vs "plain english")
+          const scores = r.parsedReview.scores || {}
+          const normalised = Object.fromEntries(
+            Object.entries(scores).map(([k, v]) => [k.toLowerCase(), v])
+          )
+          return normalised[key]
+        })
         .filter(Boolean)
 
       if (entries.length === 0) {
@@ -425,10 +458,17 @@ export class BedrockReviewProcessor {
       bedrockResult,
       chunk.text // parse against chunk text so indexOf resolves within-chunk positions
     )
-    const adjustedParsedReview = this.adjustChunkOffsets(
+    const offsetParsedReview = this.adjustChunkOffsets(
       parseResult.parsedReview,
       chunk.startOffset
     )
+    // Offset refs by chunk index so refs from different chunks never collide
+    // when results are collated (chunk 1 keeps 1-999, chunk 2 gets 1001-1999…)
+    const refOffset = (chunk.index - 1) * 1000
+    const adjustedParsedReview =
+      refOffset > 0
+        ? this.applyChunkRefOffset(offsetParsedReview, refOffset)
+        : offsetParsedReview
 
     logger.info(
       {

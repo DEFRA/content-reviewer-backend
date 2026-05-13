@@ -207,6 +207,75 @@ describe('BedrockReviewProcessor - adjustChunkOffsets', () => {
   })
 })
 
+// ─── applyChunkRefOffset ────────────────────────────────────────────────────
+
+describe('BedrockReviewProcessor - applyChunkRefOffset', () => {
+  let processor
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    processor = new BedrockReviewProcessor()
+  })
+
+  test('offsets ref on all improvements by refOffset', () => {
+    const parsedReview = {
+      improvements: [
+        { ref: 1, suggestion: 'a' },
+        { ref: 2, suggestion: 'b' }
+      ],
+      reviewedContent: { issues: [] }
+    }
+    const result = processor.applyChunkRefOffset(parsedReview, 1000)
+    expect(result.improvements[0].ref).toBe(1001)
+    expect(result.improvements[1].ref).toBe(1002)
+  })
+
+  test('offsets ref on all issues by refOffset', () => {
+    const parsedReview = {
+      improvements: [],
+      reviewedContent: {
+        issues: [
+          { ref: 3, start: 10, end: 20 },
+          { ref: 5, start: 30, end: 40 }
+        ]
+      }
+    }
+    const result = processor.applyChunkRefOffset(parsedReview, 2000)
+    expect(result.reviewedContent.issues[0].ref).toBe(2003)
+    expect(result.reviewedContent.issues[1].ref).toBe(2005)
+  })
+
+  test('leaves ref undefined when it was undefined', () => {
+    const parsedReview = {
+      improvements: [{ suggestion: 'no ref' }],
+      reviewedContent: { issues: [{ start: 0, end: 5 }] }
+    }
+    const result = processor.applyChunkRefOffset(parsedReview, 1000)
+    expect(result.improvements[0].ref).toBeUndefined()
+    expect(result.reviewedContent.issues[0].ref).toBeUndefined()
+  })
+
+  test('does not mutate original parsedReview', () => {
+    const parsedReview = {
+      improvements: [{ ref: 1 }],
+      reviewedContent: { issues: [{ ref: 1 }] }
+    }
+    processor.applyChunkRefOffset(parsedReview, 500)
+    expect(parsedReview.improvements[0].ref).toBe(1)
+    expect(parsedReview.reviewedContent.issues[0].ref).toBe(1)
+  })
+
+  test('handles empty improvements and issues without error', () => {
+    const parsedReview = {
+      improvements: [],
+      reviewedContent: { issues: [] }
+    }
+    const result = processor.applyChunkRefOffset(parsedReview, 1000)
+    expect(result.improvements).toEqual([])
+    expect(result.reviewedContent.issues).toEqual([])
+  })
+})
+
 // ─── collateChunkResults ────────────────────────────────────────────────────
 
 describe('BedrockReviewProcessor - collateChunkResults', () => {
@@ -433,6 +502,36 @@ describe('BedrockReviewProcessor - collateChunkResults', () => {
     expect(combinedParsedReview.reviewedContent.plainText).toBe(CANONICAL_TEXT)
   })
 
+  test('collates scores correctly when LLM returns capitalized keys', () => {
+    // LLM often returns "Plain English" (Title Case) — collateChunkResults must
+    // normalise to lowercase before lookup so scores are not silently dropped.
+    const results = [
+      {
+        chunk: { index: 1, startOffset: 0 },
+        bedrockResult: {
+          bedrockResponse: { usage: {}, stopReason: 'end_turn' },
+          bedrockDuration: 500
+        },
+        parsedReview: {
+          scores: {
+            'Plain English': { score: 4, note: 'wordy' },
+            'GOV.UK Style Compliance': { score: 3, note: 'needs work' }
+          },
+          improvements: [],
+          reviewedContent: { issues: [] }
+        },
+        parseDuration: 5,
+        finalReviewContent: ''
+      }
+    ]
+    const { combinedParsedReview } = processor.collateChunkResults(
+      results,
+      CANONICAL_TEXT
+    )
+    expect(combinedParsedReview.scores['plain english'].score).toBe(4)
+    expect(combinedParsedReview.scores['gov.uk style compliance'].score).toBe(3)
+  })
+
   test('skips score keys where no chunk has data', () => {
     const results = [
       {
@@ -554,6 +653,58 @@ describe('BedrockReviewProcessor - processChunk', () => {
     expect(result.parsedReview.improvements[0].end).toBe(1010)
     expect(result.parsedReview.reviewedContent.issues[0].start).toBe(1002)
     expect(result.parsedReview.reviewedContent.issues[0].end).toBe(1007)
+  })
+
+  test('offsets refs by (chunk.index - 1) * 1000 to prevent cross-chunk collisions', async () => {
+    // chunk.index = 3 → refOffset = 2000
+    const chunk = { text: 'chunk text', startOffset: 0, index: 3 }
+    const bedrockResult = {
+      bedrockResponse: { content: 'ok', usage: {} },
+      bedrockDuration: 200
+    }
+    const parsedResult = {
+      parsedReview: {
+        scores: {},
+        improvements: [{ ref: 1, start: 0, end: 5 }],
+        reviewedContent: { issues: [{ ref: 2, start: 10, end: 20 }] }
+      },
+      parseDuration: 5,
+      finalReviewContent: 'ok'
+    }
+
+    processor.performBedrockReview = vi.fn().mockResolvedValue(bedrockResult)
+    processor.parseBedrockResponseData = vi.fn().mockResolvedValue(parsedResult)
+
+    const result = await processor.processChunk('r', chunk)
+
+    expect(result.parsedReview.improvements[0].ref).toBe(2001)
+    expect(result.parsedReview.reviewedContent.issues[0].ref).toBe(2002)
+  })
+
+  test('does not offset refs for chunk.index = 1 (refOffset = 0)', async () => {
+    const chunk = { text: 'chunk text', startOffset: 0, index: 1 }
+    const bedrockResult = {
+      bedrockResponse: { content: 'ok', usage: {} },
+      bedrockDuration: 200
+    }
+    const parsedResult = {
+      parsedReview: {
+        scores: {},
+        improvements: [{ ref: 1, start: 0, end: 5 }],
+        reviewedContent: { issues: [{ ref: 1, start: 0, end: 5 }] }
+      },
+      parseDuration: 5,
+      finalReviewContent: 'ok'
+    }
+
+    processor.performBedrockReview = vi.fn().mockResolvedValue(bedrockResult)
+    processor.parseBedrockResponseData = vi.fn().mockResolvedValue(parsedResult)
+
+    const result = await processor.processChunk('r', chunk)
+
+    // No offset for chunk 1 — refs stay as-is
+    expect(result.parsedReview.improvements[0].ref).toBe(1)
+    expect(result.parsedReview.reviewedContent.issues[0].ref).toBe(1)
   })
 
   test('propagates error from performBedrockReview', async () => {
