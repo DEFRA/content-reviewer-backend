@@ -82,6 +82,9 @@ function isArtifactRunText(text) {
   if (!s) {
     return false
   }
+  if (/^[0-9][0-9.,]*$/.test(s)) {
+    return false
+  }
   if (DOCX_ARTIFACT_PATTERN.test(s)) {
     return true
   }
@@ -106,15 +109,54 @@ function isGraphicNode(node) {
   )
 }
 
+function sanitizeRunText(v) {
+  const raw = extractStringFromObject(v)
+  // coerce to string, normalise NBSP, strip accidental object serialisation
+  return String(raw ?? '')
+    .replaceAll('\u00A0', ' ')
+    .replace(/\[object Object\]/g, '')
+}
+
 /**
  * Read the text of a `w:t` value, which may be either a raw string or an
  * object wrapping `#text`.
  */
 function readWtValue(wt) {
-  if (typeof wt === 'string') {
-    return wt
+  return extractStringFromObject(wt)
+}
+
+/**
+ * Safely extract a string from a nested object shape produced by the XML parser.
+ * Traverses '#text' / '$text' keys and falls back to first primitive string child.
+ */
+function extractStringFromObject(obj) {
+  if (obj == null) return ''
+  if (typeof obj === 'string') return obj
+  if (typeof obj !== 'object') return String(obj)
+
+  // prefer explicit '#text' or '$text'
+  if (Object.prototype.hasOwnProperty.call(obj, '#text')) {
+    return String(obj['#text'] ?? '')
   }
-  return wt['#text'] || ''
+  if (Object.prototype.hasOwnProperty.call(obj, '$text')) {
+    return String(obj['$text'] ?? '')
+  }
+
+  // depth-first search for the first string-like child
+  for (const [k, v] of Object.entries(obj)) {
+    if (k === '#text' || k === '$text') continue
+    if (
+      k.startsWith('@') ||
+      k.startsWith('xml') ||
+      k.startsWith('xmlns') ||
+      k.includes(':')
+    ) {
+      continue
+    }
+    const s = extractStringFromObject(v)
+    if (s) return s
+  }
+  return ''
 }
 
 /**
@@ -139,6 +181,11 @@ function readDocxNodeText(node) {
     return ''
   }
 
+  // helper to normalise w:t content in all shapes we might see from the XML parser
+  const readWt = (wt) => {
+    return readWtValue(wt)
+  }
+
   const cleanInstr = (instr) => {
     const raw = typeof instr === 'string' ? instr : instr['#text'] || ''
     return String(raw)
@@ -151,10 +198,17 @@ function readDocxNodeText(node) {
 
   // fast-path explicit nodes
   if (node['w:instrText'] !== undefined) {
-    return cleanInstr(node['w:instrText'])
+    return String(node['w:instrText']).replaceAll('\u00A0', ' ')
   }
   if (node['w:t'] !== undefined) {
-    return readWtValue(node['w:t']).replaceAll('\u00A0', ' ')
+    return readWt(node['w:t']).replaceAll('\u00A0', ' ')
+  }
+  // preserve explicit tab / break atoms as spaces so run boundaries keep separation
+  if (node['w:tab'] !== undefined) {
+    return ' '
+  }
+  if (node['w:br'] !== undefined || node['w:cr'] !== undefined) {
+    return ' '
   }
   if (node['#text'] !== undefined) {
     return String(node['#text'])
@@ -171,6 +225,13 @@ function readDocxNodeText(node) {
     // accept plain strings only when key explicitly denotes text (defensive)
     if (key === 'w:t' || key === 'w:instrText' || key === '#text') {
       return String(val)
+    }
+    if (key === 'w:tab' || key === 'w:br' || key === 'w:cr') {
+      return ' '
+    }
+    const s = String(val)
+    if (/^[0-9][0-9.,]{0,9}$/.test(s) && s.length <= 10) {
+      return s
     }
     return ''
   }
@@ -212,23 +273,49 @@ function buildDocxRelsMap(relsDoc) {
  * both sides are alphanumeric and neither side already has separating whitespace.
  */
 function smartConcat(a, b) {
-  if (!a) {
-    return b || ''
-  }
-  if (!b) {
-    return a
-  }
+  if (!a) return b || ''
+  if (!b) return a
+
   const endsWithSpace = /\s$/.test(a)
   const startsWithSpace = /^\s/.test(b)
   if (endsWithSpace || startsWithSpace) {
     return `${a}${b}`
   }
-  // If both end/start with alphanumeric, insert single space
-  const alphaNumEnd = /[A-Za-z0-9]$/.test(a)
-  const alphaNumStart = /^[A-Za-z0-9]/.test(b)
-  if (alphaNumEnd && alphaNumStart) {
+
+  const aLast = a.charAt(a.length - 1)
+  const bFirst = b.charAt(0)
+
+  // punctuation detection (non-word, non-space)
+  const aIsPunct = /[^\w\s]/u.test(aLast)
+  const bIsPunct = /[^\w\s]/u.test(bFirst)
+
+  // digit detection
+  const aIsDigit = /\d/.test(aLast)
+  const bIsDigit = /\d/.test(bFirst)
+  if (aIsDigit && bIsDigit) {
+    // preserve contiguous digit runs without inserting spaces ("0" + "13" -> "013")
+    return `${a}${b}`
+  }
+
+  // acronym+digits case: left ends with >1 uppercase letters and right starts with digits
+  const leftLettersMatch = a.match(/([A-Z]+)$/)
+  const rightDigitsMatch = b.match(/^(\d+)/)
+  if (leftLettersMatch && leftLettersMatch[1].length >= 2 && rightDigitsMatch) {
+    return `${a}${b}`
+  }
+
+  // alnum detection
+  const aIsAlnum = /[A-Za-z0-9]/.test(aLast)
+  const bIsAlnum = /[A-Za-z0-9]/.test(bFirst)
+
+  // Insert a space when:
+  // - neither side is punctuation, and
+  // - at least one side is alphanumeric
+  if (!aIsPunct && !bIsPunct && (aIsAlnum || bIsAlnum)) {
     return `${a} ${b}`
   }
+
+  // default: join directly
   return `${a}${b}`
 }
 
@@ -240,7 +327,7 @@ function pushDocxRun(
   text,
   { bold = false, italic = false, href = null } = {}
 ) {
-  const t = String(text ?? '')
+  const t = sanitizeRunText(text)
   if (!t) {
     return
   }
@@ -320,7 +407,24 @@ function processDocxParagraph(p, rels) {
   const isHeading =
     typeof pStyle === 'string' && DOCX_HEADING_STYLE_REGEX.test(pStyle)
   const isList = !!pPr['w:numPr']
-  const isToc = typeof pStyle === 'string' && /^TOC/i.test(pStyle)
+
+  const visibleLine = (readDocxNodeText(p) || '').replaceAll('\u00A0', ' ')
+  // common visible indicators of a TOC entry: a tab or leader dots followed by a page number
+  const visibleHasTabPage = /\t\s*\d+\s*$/.test(visibleLine)
+  const visibleHasDotsPage = /\.{2,}\s*\d+\s*$/.test(visibleLine)
+
+  // detect explicit TOC fields or simple field nodes in the paragraph XML
+  const rawParagraphJson = JSON.stringify(p)
+  const looksLikeTocField =
+    /(?:\bTOC\b|_Toc\b)/i.test(rawParagraphJson) ||
+    rawParagraphJson.includes('"w:fldSimple"') ||
+    rawParagraphJson.includes('"w:instrText"')
+
+  const isToc =
+    (typeof pStyle === 'string' && /^TOC/i.test(pStyle)) ||
+    looksLikeTocField ||
+    visibleHasTabPage ||
+    visibleHasDotsPage
 
   const runs = []
   walkParagraphNode(p, rels, runs)
@@ -330,7 +434,8 @@ function processDocxParagraph(p, rels) {
   if (isToc && runs.length > 0) {
     const cleaned = runs
       .map((r) => {
-        const t = (r.text || '')
+        const raw = sanitizeRunText(r.text)
+        const t = raw
           // remove long digit sequences (>5 digits) likely internal IDs
           .replaceAll(/\b\d{6,}\b/g, '')
           // remove hex-like control tokens e.g. 00AF001C
@@ -416,11 +521,12 @@ function groupDocxRunsByHref(runs) {
   const groups = []
   let current = null
   for (const r of runs) {
+    const rText = sanitizeRunText(r.text)
     if (r.href && current?.href === r.href) {
       // use smartConcat to preserve/insert necessary spacing
-      current.text = smartConcat(current.text, r.text)
+      current.text = smartConcat(current.text, rText)
     } else {
-      current = { text: r.text, href: r.href }
+      current = { text: rText, href: r.href }
       groups.push(current)
     }
   }
@@ -443,12 +549,20 @@ function renderDocxGroupedRun(group) {
  * prefix; blocks whose runs collapse to whitespace are returned as empty.
  */
 function renderDocxBlock(block) {
-  const text = groupDocxRunsByHref(block.runs)
-    .map(renderDocxGroupedRun)
-    .join('')
-    // collapse internal whitespace to single spaces, then trim ends
-    .replace(/\s+/g, ' ')
-    .trim()
+  // render each run (with hyperlink formatting) into a piece
+  const pieces = block.runs.map((r) => {
+    const txt = sanitizeRunText(r.text)
+    return r.href ? `[${txt}](${r.href})` : txt
+  })
+
+  // reduce pieces using smartConcat so run-boundary spacing rules apply across the whole paragraph
+  const merged = pieces.reduce((acc, p) => smartConcat(acc, p), '')
+
+  // ensure there are spaces around common dash characters so later collapse doesn't glue words
+  const spacedDashes = String(merged).replace(/\s*([–—-])\s*/g, ' $1 ')
+
+  // collapse internal whitespace to single spaces, then trim ends
+  const text = spacedDashes.replace(/\s+/g, ' ').trim()
   if (!text) {
     return ''
   }
