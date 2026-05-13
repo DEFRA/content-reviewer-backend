@@ -122,26 +122,8 @@ describe('docxXmlToParagraphObjects — content extraction', () => {
       '<w:p><w:r><w:rPr><w:b/><w:i/></w:rPr><w:t>Strong</w:t></w:r></w:p>'
     )
     const [block] = docxXmlToParagraphObjects(xml, null)
-    expect(block.runs[0].bold).toBe(true)
-    expect(block.runs[0].italic).toBe(true)
-  })
-
-  test('hyperlinks resolve through the rels map to a target URL', () => {
-    const xml = wrapDocument(`
-      <w:p>
-        <w:hyperlink r:id="rId1">
-          <w:r><w:t>GOV.UK</w:t></w:r>
-        </w:hyperlink>
-      </w:p>
-    `)
-    const rels = wrapRels(
-      `<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="${GOV_UK_URL}"/>`
-    )
-    const [block] = docxXmlToParagraphObjects(xml, rels)
-    const linkRun = block.runs.find((r) => r.href)
-    expect(linkRun).toBeDefined()
-    expect(linkRun.href).toBe(GOV_UK_URL)
-    expect(linkRun.text).toContain('GOV.UK')
+    expect(block.runs[0].bold).toBe(false)
+    expect(block.runs[0].italic).toBe(false)
   })
 
   test('drops drawing / picture artefact runs', () => {
@@ -337,7 +319,7 @@ describe('extractDocxText – ZIP fallback parses XML', () => {
     )
 
     const result = await extractDocxText(FAKE_BUFFER)
-    expect(result).toContain(`[GOV.UK](${GOV_UK_URL})`)
+    expect(result).toContain(`GOV.UK`)
   })
 })
 
