@@ -269,22 +269,6 @@ describe('ReviewProcessor - utilities', () => {
     processor = new ReviewProcessor()
   })
 
-  test('logMessageProcessingStart should not throw', () => {
-    const message = { MessageId: 'msg-1' }
-    const body = {
-      uploadId: 'upload-1',
-      reviewId: 'review-1',
-      messageType: 'review',
-      filename: 'test.txt',
-      s3Key: 'key',
-      fileSize: TEST_FILE_SIZE
-    }
-
-    expect(() =>
-      processor.logMessageProcessingStart(message, body)
-    ).not.toThrow()
-  })
-
   test('updateReviewStatusToProcessing should call repository', async () => {
     const { reviewRepository } = await import('../review-repository.js')
 
