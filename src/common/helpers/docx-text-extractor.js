@@ -82,9 +82,6 @@ function isArtifactRunText(text) {
   if (!s) {
     return false
   }
-  if (/^[0-9][0-9.,]*$/.test(s)) {
-    return false
-  }
   if (DOCX_ARTIFACT_PATTERN.test(s)) {
     return true
   }
@@ -114,7 +111,7 @@ function sanitizeRunText(v) {
   // coerce to string, normalise NBSP, strip accidental object serialisation
   return String(raw ?? '')
     .replaceAll('\u00A0', ' ')
-    .replace(/\[object Object\]/g, '')
+    .replaceAll('[object Object]', '')
 }
 
 /**
@@ -130,31 +127,69 @@ function readWtValue(wt) {
  * Traverses '#text' / '$text' keys and falls back to first primitive string child.
  */
 function extractStringFromObject(obj) {
-  if (obj == null) return ''
-  if (typeof obj === 'string') return obj
-  if (typeof obj !== 'object') return String(obj)
+  if (obj == null) {
+    return ''
+  }
+  if (typeof obj === 'string') {
+    return obj
+  }
+  if (typeof obj !== 'object') {
+    return String(obj)
+  }
 
   // prefer explicit '#text' or '$text'
-  if (Object.prototype.hasOwnProperty.call(obj, '#text')) {
+  if (Object.hasOwn(obj, '#text')) {
     return String(obj['#text'] ?? '')
   }
-  if (Object.prototype.hasOwnProperty.call(obj, '$text')) {
+  if (Object.hasOwn(obj, '$text')) {
     return String(obj['$text'] ?? '')
   }
 
   // depth-first search for the first string-like child
   for (const [k, v] of Object.entries(obj)) {
-    if (k === '#text' || k === '$text') continue
-    if (
+    // skip attribute-like / namespace keys and explicit text keys
+    const isAttributeLike =
+      k === '#text' ||
+      k === '$text' ||
       k.startsWith('@') ||
       k.startsWith('xml') ||
       k.startsWith('xmlns') ||
       k.includes(':')
-    ) {
-      continue
+
+    if (!isAttributeLike) {
+      const s = extractStringFromObject(v)
+      if (s) {
+        return s
+      }
     }
-    const s = extractStringFromObject(v)
-    if (s) return s
+  }
+  return ''
+}
+
+/**
+ * Helper to extract a single child value from a node key/value pair.
+ * Kept small and testable to reduce complexity of readDocxNodeText.
+ */
+function readDocxChildValue(key, val) {
+  if (val == null) {
+    return ''
+  }
+  if (Array.isArray(val) || typeof val === 'object') {
+    return readDocxNodeText(val)
+  }
+
+  // explicit text/spaces handled verbatim
+  if (key === 'w:t' || key === 'w:instrText' || key === '#text') {
+    return String(val)
+  }
+  if (key === 'w:tab' || key === 'w:br' || key === 'w:cr') {
+    return ' '
+  }
+
+  const s = String(val)
+  // allow short numeric-like tokens (years, versions) as fallback
+  if (/^\d[\d.,]{0,9}$/.test(s) && s.length <= 10) {
+    return s
   }
   return ''
 }
@@ -181,29 +216,13 @@ function readDocxNodeText(node) {
     return ''
   }
 
-  // helper to normalise w:t content in all shapes we might see from the XML parser
-  const readWt = (wt) => {
-    return readWtValue(wt)
-  }
-
-  const cleanInstr = (instr) => {
-    const raw = typeof instr === 'string' ? instr : instr['#text'] || ''
-    return String(raw)
-      .replaceAll(
-        /(?:\bPAGEREF\b|_Toc|\\h|\bbegin\b|\bend\b|MERGEFORMAT|\{|\})/gi,
-        ''
-      )
-      .replaceAll('\u00A0', ' ')
-  }
-
   // fast-path explicit nodes
   if (node['w:instrText'] !== undefined) {
     return String(node['w:instrText']).replaceAll('\u00A0', ' ')
   }
   if (node['w:t'] !== undefined) {
-    return readWt(node['w:t']).replaceAll('\u00A0', ' ')
+    return readWtValue(node['w:t']).replaceAll('\u00A0', ' ')
   }
-  // preserve explicit tab / break atoms as spaces so run boundaries keep separation
   if (node['w:tab'] !== undefined) {
     return ' '
   }
@@ -214,31 +233,10 @@ function readDocxNodeText(node) {
     return String(node['#text'])
   }
 
-  // helper to handle a single child value
-  const extractChild = (key, val) => {
-    if (val == null) {
-      return ''
-    }
-    if (Array.isArray(val) || typeof val === 'object') {
-      return readDocxNodeText(val)
-    }
-    // accept plain strings only when key explicitly denotes text (defensive)
-    if (key === 'w:t' || key === 'w:instrText' || key === '#text') {
-      return String(val)
-    }
-    if (key === 'w:tab' || key === 'w:br' || key === 'w:cr') {
-      return ' '
-    }
-    const s = String(val)
-    if (/^[0-9][0-9.,]{0,9}$/.test(s) && s.length <= 10) {
-      return s
-    }
-    return ''
-  }
-
+  // Generic child iteration delegated to helper for lower complexity
   let text = ''
   for (const k of Object.keys(node)) {
-    text += extractChild(k, node[k])
+    text += readDocxChildValue(k, node[k])
   }
   return text
 }
@@ -351,70 +349,130 @@ function processDocxRuns(runNode, runs, currentHref) {
 }
 
 /**
+ * Resolve a relationship id from common attribute name variants.
+ */
+function resolveRelationshipId(node) {
+  const keys = ['r:id', '@_r:id', '@_rId', 'r:embed', 'r:Id', 'r:ID']
+  for (const k of keys) {
+    if (Object.hasOwn(node, k) && node[k]) {
+      return node[k]
+    }
+  }
+  return null
+}
+
+/**
+ * Process w:hyperlink entries in-place: resolve r:id -> href, emit inner runs
+ * with the resolved href, and recurse remaining hyperlink children.
+ */
+function processHyperlinkEntries(hyperlinkVal, rels, runs) {
+  for (const hp of ensureArray(hyperlinkVal)) {
+    const rid = resolveRelationshipId(hp)
+
+    let href = null
+    if (rid && rels && Object.hasOwn(rels, rid)) {
+      href = rels[rid]
+    }
+
+    // Emit direct runs inside the hyperlink at the current position
+    if (hp['w:r']) {
+      processDocxRuns(hp['w:r'], runs, href)
+    }
+
+    // Recurse other hyperlink children (rare) to capture nested text
+    for (const [hk, hv] of Object.entries(hp)) {
+      if (hk === 'w:r') continue
+      walkParagraphNode(hv, rels, runs, href)
+    }
+  }
+}
+
+/**
  * Recursively walk a DOCX paragraph node, collecting runs into the array.
+ * Delegates hyperlink processing to processHyperlinkEntries to reduce complexity.
  */
 function walkParagraphNode(node, rels, runs, currentHref = null) {
-  if (!node) return
+  if (!node) {
+    return
+  }
   if (Array.isArray(node)) {
     for (const n of node) {
       walkParagraphNode(n, rels, runs, currentHref)
     }
     return
   }
-  if (typeof node !== 'object') return
+  if (typeof node !== 'object') {
+    return
+  }
 
   // Iterate keys in insertion order so we preserve sequence where possible
   for (const [key, val] of Object.entries(node)) {
-    if (val == null) continue
-
-    // Handle hyperlink nodes: resolve relationship id -> href and process inner runs
-    if (key === 'w:hyperlink') {
-      for (const hp of ensureArray(val)) {
-        // common attribute name variants used by different parsers
-        const rid =
-          hp['r:id'] ||
-          hp['@_r:id'] ||
-          hp['@_rId'] ||
-          hp['r:embed'] ||
-          hp['r:Id'] ||
-          hp['r:ID'] ||
-          null
-        const href = rid && rels ? rels[rid] || null : null
-
-        // If hyperlink directly contains runs, process them right here so they
-        // are emitted at the current paragraph position with the href attached.
-        if (hp['w:r']) {
-          processDocxRuns(hp['w:r'], runs, href)
-        }
-
-        // Recurse other children of the hyperlink (rare) to capture nested text
-        for (const [hk, hv] of Object.entries(hp)) {
-          if (hk === 'w:r') continue
-          walkParagraphNode(hv, rels, runs, href)
-        }
-      }
-      continue
-    }
-
-    // explicit run(s) at this position — push them with currentHref
-    if (key === 'w:r') {
+    if (val == null) {
+      // nothing to do for this key
+    } else if (key === 'w:hyperlink') {
+      processHyperlinkEntries(val, rels, runs)
+    } else if (key === 'w:r') {
       processDocxRuns(val, runs, currentHref)
-      continue
-    }
-
-    // direct text node at this level
-    if (key === 'w:t') {
+    } else if (key === 'w:t') {
       pushDocxRun(runs, readDocxNodeText(node), { href: currentHref })
-      continue
+    } else {
+      // otherwise recurse into the child (preserves order as much as parser allows)
+      walkParagraphNode(val, rels, runs, currentHref)
     }
-
-    // otherwise recurse into the child (preserves order as much as parser allows)
-    walkParagraphNode(val, rels, runs, currentHref)
   }
 }
 
 /**
+ * Decide whether a paragraph looks like a TOC entry.
+ */
+function isParagraphToc(p, pStyle, visibleLine, rawParagraphJson) {
+  const visibleHasTabPage = /\t\s*\d+\s*$/.test(visibleLine)
+  const visibleHasDotsPage = /\.{2,}\s*\d+\s*$/.test(visibleLine)
+  const looksLikeTocField =
+    /(?:\bTOC\b|_Toc\b)/i.test(rawParagraphJson) ||
+    rawParagraphJson.includes('"w:fldSimple"') ||
+    rawParagraphJson.includes('"w:instrText"')
+  return (
+    (typeof pStyle === 'string' && /^TOC/i.test(pStyle)) ||
+    looksLikeTocField ||
+    visibleHasTabPage ||
+    visibleHasDotsPage
+  )
+}
+
+/**
+ * Collect runs for a paragraph using the ordered preserved node when provided.
+ */
+function collectParagraphRuns(p, rels, preservedNode) {
+  const runs = []
+  if (preservedNode) {
+    walkParagraphNode(preservedNode, rels, runs)
+  } else {
+    walkParagraphNode(p, rels, runs)
+  }
+  return runs
+}
+
+/**
+ * Clean TOC-like runs by removing long numeric/hex tokens and collapsing whitespace.
+ */
+function cleanTocRuns(runs) {
+  return runs
+    .map((r) => {
+      const raw = sanitizeRunText(r.text)
+      const t = raw
+        .replaceAll(/\b\d{6,}\b/g, '') // remove long digit sequences
+        .replaceAll(/\b00[A-Fa-f0-9]{2}(?:[A-Fa-f0-9]{2})*\b/g, '') // hex-like tokens
+        .replaceAll(/\s{2,}/g, ' ')
+        .trim()
+      return { ...r, text: t }
+    })
+    .filter((r) => r.text && r.text.length > 0)
+}
+
+/**
  * Convert a single DOCX paragraph into a { type, runs } block.
+ * Complexity reduced by delegating subtasks to helpers.
  */
 function processDocxParagraph(p, rels, preservedNode = null) {
   const pPr = p['w:pPr'] || {}
@@ -424,48 +482,58 @@ function processDocxParagraph(p, rels, preservedNode = null) {
   const isList = !!pPr['w:numPr']
 
   const visibleLine = (readDocxNodeText(p) || '').replaceAll('\u00A0', ' ')
-  // common visible indicators of a TOC entry: a tab or leader dots followed by a page number
-  const visibleHasTabPage = /\t\s*\d+\s*$/.test(visibleLine)
-  const visibleHasDotsPage = /\.{2,}\s*\d+\s*$/.test(visibleLine)
-
-  // detect explicit TOC fields or simple field nodes in the paragraph XML
   const rawParagraphJson = JSON.stringify(p)
-  const looksLikeTocField =
-    /(?:\bTOC\b|_Toc\b)/i.test(rawParagraphJson) ||
-    rawParagraphJson.includes('"w:fldSimple"') ||
-    rawParagraphJson.includes('"w:instrText"')
 
-  const isToc =
-    (typeof pStyle === 'string' && /^TOC/i.test(pStyle)) ||
-    looksLikeTocField ||
-    visibleHasTabPage ||
-    visibleHasDotsPage
+  const isToc = isParagraphToc(p, pStyle, visibleLine, rawParagraphJson)
 
-  const runs = []
-  // use preservedNode (ordered child array) when available so hyperlink/run order is correct
-  if (preservedNode) {
-    walkParagraphNode(preservedNode, rels, runs)
-  } else {
-    walkParagraphNode(p, rels, runs)
+  const runs = collectParagraphRuns(p, rels, preservedNode)
+
+  // DIAGNOSTIC: log when digits are lost during run extraction (enabled via DOCX_DEBUG=1)
+  if (process.env.DOCX_DEBUG === '1') {
+    try {
+      const rawDigits = (rawParagraphJson.match(/\d/g) || []).length
+      const visibleDigits = (visibleLine.match(/\d/g) || []).length
+      const runsRendered = runs.map((r) => String(r.text || '')).join('')
+      const runsDigits = (runsRendered.match(/\d/g) || []).length
+      if (
+        (visibleDigits > 0 && runsDigits < visibleDigits) ||
+        (rawDigits > 0 && runsDigits < rawDigits)
+      ) {
+        logger.warn(
+          {
+            reason: 'digits-lost',
+            rawDigits,
+            visibleDigits,
+            runsDigits,
+            previewVisibleLine: visibleLine.slice(0, 200),
+            runsCount: runs.length
+          },
+          'DOCX diagnostic: paragraph appears to lose numeric characters'
+        )
+        const snippet =
+          rawParagraphJson.length > 2000
+            ? rawParagraphJson.slice(0, 2000) + '...'
+            : rawParagraphJson
+        // eslint-disable-next-line no-console
+        console.log(
+          '--- DOCX PARAGRAPH RAW SNIPPET ---\n',
+          snippet,
+          '\n--- END SNIPPET ---'
+        )
+        // eslint-disable-next-line no-console
+        console.log(
+          '--- DOCX PARAGRAPH RUNS (first 50) ---\n',
+          JSON.stringify(runs.slice(0, 50), null, 2),
+          '\n--- END RUNS ---'
+        )
+      }
+    } catch (e) {
+      // swallow diagnostics
+    }
   }
 
-  // If paragraph is a TOC entry, strip long/internal numeric and hex tokens
-  // that come from attributes/rsids and collapse excess whitespace.
   if (isToc && runs.length > 0) {
-    const cleaned = runs
-      .map((r) => {
-        const raw = sanitizeRunText(r.text)
-        const t = raw
-          // remove long digit sequences (>5 digits) likely internal IDs
-          .replaceAll(/\b\d{6,}\b/g, '')
-          // remove hex-like control tokens e.g. 00AF001C
-          .replaceAll(/\b00[A-Fa-f0-9]{2}(?:[A-Fa-f0-9]{2})*\b/g, '')
-          // collapse excess whitespace
-          .replaceAll(/\s{2,}/g, ' ')
-          .trim()
-        return { ...r, text: t }
-      })
-      .filter((r) => r.text && r.text.length > 0)
+    const cleaned = cleanTocRuns(runs)
     return { type: classifyDocxBlock(isHeading, isList), runs: cleaned }
   }
 
@@ -502,7 +570,7 @@ function parseDocxRels(parser, relsXml) {
  * @param {string|null} relsXml
  * @returns {Array<{ type: string, runs: Array }>}
  */
-export function docxXmlToParagraphObjects(documentXml, relsXml) {
+function docxXmlToParagraphObjects(documentXml, relsXml) {
   const parser = new XMLParser({
     ignoreAttributes: false,
     attributeNamePrefix: '',
@@ -527,12 +595,14 @@ export function docxXmlToParagraphObjects(documentXml, relsXml) {
 
   const rels = parseDocxRels(parser, relsXml)
   // parse ordered representation and extract ordered paragraph nodes
-  let preservedParagraphs = []
+  const preservedParagraphs = []
   try {
     const docPres = orderedParser.parse(documentXml)
     // helper to find first element with given tag in the preserved array
     const findFirst = (arr, tag) => {
-      if (!Array.isArray(arr)) return null
+      if (!Array.isArray(arr)) {
+        return null
+      }
       for (const item of arr) {
         if (
           item &&
@@ -549,11 +619,7 @@ export function docxXmlToParagraphObjects(documentXml, relsXml) {
     if (Array.isArray(bodyNode)) {
       // collect each w:p value in order
       for (const child of bodyNode) {
-        if (
-          child &&
-          typeof child === 'object' &&
-          Object.prototype.hasOwnProperty.call(child, 'w:p')
-        ) {
+        if (child && typeof child === 'object' && Object.hasOwn(child, 'w:p')) {
           preservedParagraphs.push(child['w:p'])
         }
       }
@@ -649,7 +715,7 @@ function renderDocxBlock(block) {
  * @param {Array<{ type: string, runs: Array }>} blocks
  * @returns {string}
  */
-export function blocksToDocxText(blocks) {
+function blocksToDocxText(blocks) {
   return blocks.map(renderDocxBlock).filter(Boolean).join('\n\n')
 }
 
