@@ -68,20 +68,6 @@ export class ReviewProcessor {
   }
 
   /**
-   * Log message processing start
-   */
-  logMessageProcessingStart(message, body) {
-    logger.info({
-      messageId: message.MessageId,
-      uploadId: body.uploadId,
-      reviewId: body.reviewId,
-      messageType: body.messageType,
-      s3Key: body.s3Key,
-      receiptHandle: truncateReceiptHandle(message.ReceiptHandle)
-    })
-  }
-
-  /**
    * Check whether a message has exceeded the maximum receive count and, if so,
    * mark the review as permanently failed and delete the message.
    * Returns true when the message should be skipped (dead-lettered by the app).
@@ -190,8 +176,6 @@ export class ReviewProcessor {
         clearInterval(heartbeat)
         return
       }
-
-      this.logMessageProcessingStart(message, body)
 
       await this.processContentReview(body)
       clearInterval(heartbeat)

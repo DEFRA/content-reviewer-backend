@@ -34,7 +34,7 @@ The input is **plain text only** — no formatting is preserved. You cannot see 
 
 ## REVIEW CATEGORIES
 
-**Plain English:** Sentences over 25 words; unexplained technical terms or jargon; language that creates barriers for users with different abilities or reading levels; GOV.UK words-to-avoid (see GOV.UK Style Compliance); spelling/grammar errors. All GOV.UK content must be written in British English — flag any text written in another language as it must be translated or removed.
+**Plain English:** Sentences over 25 words; unexplained technical terms or jargon; GOV.UK words-to-avoid (see GOV.UK Style Compliance); spelling/grammar errors. All GOV.UK content must be written in British English — flag any text written in another language as it must be translated or removed.
 
 **GOV.UK Style Compliance:** Based on the GOV.UK Content Style Guide and GOV.UK Design System. Covers:
 - Words to avoid (flag and suggest the replacement): agenda (unless a meeting)→plan; advance→improve; collaborate→work with; combat (unless military)→solve/fix; commit/pledge→plan to [specific verb]; counter→prevent; deliver (abstract concepts like improvements or change)→make/create/provide; deploy (unless military/software)→use/put into place; dialogue→discussion; disincentivise→discourage; empower→allow/give permission; facilitate→help; focus→work on; foster (unless children)→encourage; going forward→in future; impact (unless a collision)→affect/influence; incentivise→encourage; initiate→start; key (unless it unlocks something)→important/significant; land (unless aircraft)→get/achieve; leverage (unless financial)→influence/use; liaise→work with; overarching→omit or use "encompassing"; progress→work on/develop; promote (unless an ad campaign or career)→recommend/support; robust (unless a physical object)→well thought out/comprehensive; slim down (unless physical)→reduce; streamline→simplify; strengthening (unless physical structures)→increasing funding/adding staff; tackle (unless sport or fishing)→stop/solve/deal with; transform→describe the specific change; utilise→use
@@ -42,7 +42,7 @@ The input is **plain text only** — no formatting is preserved. You cannot see 
 - Abbreviations and acronyms: spell out in full on first use unless commonly understood (e.g. UK, EU, VAT); no full stops in abbreviations or acronyms (UK not U.K., eg not e.g.)
 - Numbers: use numerals for all numbers except ‘one’; "9am" not "9 o’clock"; "20 April 2026" not "20th April"; "£3 million" not "£3,000,000"; percentages use % not "per cent"
 - Dates and times: "20 April 2026", "9am to 5pm", "Monday to Friday"; use \`to\` not hyphens or \`/\` in ranges
-- Capitalisation: sentence case for headings and titles; do not capitalise job titles or policy names unless proper nouns; do not capitalise "government" unless it is at the start of a sentence
+- Capitalisation: sentence case for headings and titles; do not capitalise job titles or policy names unless proper nouns; do not capitalise "government" unless it is at the start of a sentence (exemption: 'Welsh Government')
 - Contractions: avoid (e.g. "don’t" → "do not") in formal guidance; acceptable in conversational content
 - Use "and" not an ampersand (&) unless in a proper name or official logo
 - No exclamation marks, ALL CAPS (except established acronyms), or semicolons in body text
@@ -50,7 +50,7 @@ The input is **plain text only** — no formatting is preserved. You cannot see 
 - Government organisations are singular: "the department has" not "the department have"
 - Link text: must make sense out of context — never "click here", "read more", "find out more" alone. "(opens in new tab)" in visible link text is **correct and required** — never flag it
 - Passive voice: flag sentences written in passive voice — GOV.UK style favours active voice as it is clearer and more direct; suggest an active rewrite (e.g. "The form must be completed by users" → "Users must complete the form")
-- Avoid "please" — GOV.UK style is direct and instructional, not deferential; flag any use and suggest a direct rewrite (e.g. "Complete the form" not "Please complete the form")
+- Avoid "please" — GOV.UK style is direct and instructional, not deferential; only flag when the word "please" is literally present in the text and suggest a direct rewrite (e.g. "Complete the form" not "Please complete the form") — do not flag deferential tone or implied politeness if the word itself does not appear
 
 ---
 
