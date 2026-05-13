@@ -11,11 +11,10 @@ import {
   walkParagraphNode,
   readDocxNodeText,
   extractParagraphStyle,
-  visibleLineHasTabPage,
-  visibleLineHasDotsPage,
   smartConcat,
   spaceAroundDashes,
-  sanitizeRunText
+  sanitizeRunText,
+  isAsciiWhitespaceCode
 } from './docx-text-extractor.helpers.js'
 
 const logger = createLogger()
@@ -26,6 +25,9 @@ const MAX_ZIP_ENTRIES = 1000
 const MAX_XML_SIZE_MB = 50
 const MAX_EXTRACTED_XML_BYTES = MAX_XML_SIZE_MB * 1024 * 1024
 const MAX_INPUT_BUFFER_BYTES = MAX_XML_SIZE_MB * 1024 * 1024
+const ASCII_DIGIT_0 = 48
+const ASCII_DIGIT_9 = 57
+const ASCII_DOT = 46
 
 /* Normalisation helpers */
 
@@ -266,6 +268,52 @@ function buildParagraphObjectFromNode(p, preserved, rels) {
   return null
 }
 
+function visibleLineHasTabPage(visibleLine) {
+  const tabIdx = visibleLine.lastIndexOf('\t')
+  if (tabIdx === -1) {
+    return false
+  }
+
+  const len = visibleLine.length
+  let i = nextNonWhitespaceIndex(visibleLine, tabIdx + 1)
+  if (i >= len) {
+    return false
+  }
+
+  const { digitCount, indexAfterDigits } = countDigitsFrom(visibleLine, i)
+  if (digitCount === 0) {
+    return false
+  }
+
+  i = nextNonWhitespaceIndex(visibleLine, indexAfterDigits)
+  return i === len
+}
+
+function countDigitsFrom(str, from) {
+  const len = str.length
+  let i = from
+  let digitCount = 0
+  while (i < len) {
+    const cp = str.codePointAt(i)
+    if (cp >= ASCII_DIGIT_0 && cp <= ASCII_DIGIT_9) {
+      digitCount++
+      i++
+    } else {
+      break
+    }
+  }
+  return { digitCount, indexAfterDigits: i }
+}
+
+function nextNonWhitespaceIndex(str, from) {
+  const len = str.length
+  let i = from
+  while (i < len && isAsciiWhitespaceCode(str.codePointAt(i))) {
+    i++
+  }
+  return i
+}
+
 function isParagraphToc(pStyle, visibleLine, rawParagraphJson) {
   const visibleHasTabPage = visibleLineHasTabPage(visibleLine)
   const visibleHasDotsPage = visibleLineHasDotsPage(visibleLine)
@@ -273,15 +321,70 @@ function isParagraphToc(pStyle, visibleLine, rawParagraphJson) {
     /(?:\bTOC\b|_Toc\b)/i.test(rawParagraphJson) ||
     rawParagraphJson.includes('"w:fldSimple"') ||
     rawParagraphJson.includes('"w:instrText"')
-  if (
+  return (
     (typeof pStyle === 'string' && /^TOC/i.test(pStyle)) ||
     looksLikeTocField ||
     visibleHasTabPage ||
     visibleHasDotsPage
-  ) {
-    return true
+  )
+}
+
+function visibleLineHasDotsPage(visibleLine) {
+  let i = trimTrailingWhitespaceIndex(visibleLine)
+  const { digitCount, nextIndex } = countTrailingDigitsFromIndex(visibleLine, i)
+  if (digitCount === 0) {
+    return false
   }
-  return false
+
+  i = skipWhitespaceReverse(visibleLine, nextIndex)
+  const dotCount = countTrailingDotsFromIndex(visibleLine, i)
+  if (dotCount < 2) {
+    return false
+  }
+
+  return true
+}
+
+function trimTrailingWhitespaceIndex(str) {
+  const len = str.length
+  let i = len - 1
+  while (i >= 0 && isAsciiWhitespaceCode(str.codePointAt(i))) {
+    i--
+  }
+  return i
+}
+
+function countTrailingDigitsFromIndex(str, index) {
+  let i = index
+  let digitCount = 0
+  while (i >= 0) {
+    const cp = str.codePointAt(i)
+    if (cp >= ASCII_DIGIT_0 && cp <= ASCII_DIGIT_9) {
+      digitCount++
+      i--
+    } else {
+      break
+    }
+  }
+  return { digitCount, nextIndex: i }
+}
+
+function skipWhitespaceReverse(str, index) {
+  let i = index
+  while (i >= 0 && isAsciiWhitespaceCode(str.codePointAt(i))) {
+    i--
+  }
+  return i
+}
+
+function countTrailingDotsFromIndex(str, index) {
+  let i = index
+  let dotCount = 0
+  while (i >= 0 && str.codePointAt(i) === ASCII_DOT) {
+    dotCount++
+    i--
+  }
+  return dotCount
 }
 
 function parseDocxRelsSafe(relsXml, parser) {
