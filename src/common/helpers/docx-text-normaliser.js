@@ -4,11 +4,15 @@ import {
   renderDocxGroupedRun,
   smartConcat,
   walkParagraphNode,
-  hasOwn
+  classifyDocxBlock,
+  extractParagraphStyle
 } from './docx-text-extractor.helpers.js'
 import { createLogger } from './logging/logger.js'
 const logger = createLogger()
 
+const ASCII_DIGIT_0 = 48
+const ASCII_DIGIT_9 = 57
+const ASCII_DOT = 46
 function canRedistributeTrailingCapital(cur, next) {
   if (!cur || !next) {
     return false
@@ -185,17 +189,80 @@ function renderCellFromTc(tc, rels) {
     .trim()
   return normalized
 }
-export function extractPreservedParagraphsSafe(documentXml, orderedParser) {
-  try {
-    const docPres = orderedParser.parse(documentXml)
-    const docNode = findFirstPreserved(docPres, 'w:document')
-    if (!docNode) {
-      return []
+
+function findFirstPreserved(arr, tag) {
+  if (!Array.isArray(arr)) {
+    return null
+  }
+  for (const node of arr) {
+    if (node && typeof node === 'object' && Object.hasOwn(node, tag)) {
+      return node[tag]
     }
+  }
+  return null
+}
+
+function collectPreservedFromBody(bodyNode, originalBody, rels) {
+  if (!Array.isArray(bodyNode)) {
+    return []
+  }
+
+  const out = []
+  const paragraphs = ensureArray(originalBody?.['w:p'])
+  const tables = ensureArray(originalBody?.['w:tbl'])
+  let pIndex = 0
+  let tIndex = 0
+
+  const pushParagraph = (preserved) => {
+    const originalP = paragraphs[pIndex] || preserved
+    pIndex += 1
+    const paraObj = buildParagraphObjectFromNode(originalP, preserved, rels)
+    if (paraObj) {
+      out.push(paraObj)
+    }
+  }
+
+  const pushTable = (preservedTbl) => {
+    const originalTbl = tables[tIndex] || preservedTbl
+    tIndex += 1
+    const tableBlock = processTableNode(originalTbl, rels)
+    if (tableBlock) {
+      out.push(tableBlock)
+    }
+  }
+
+  for (const child of bodyNode) {
+    if (!child || typeof child !== 'object') {
+      continue
+    }
+    if (Object.hasOwn(child, 'w:p')) {
+      pushParagraph(child['w:p'])
+    } else if (Object.hasOwn(child, 'w:tbl')) {
+      pushTable(child['w:tbl'])
+    } else {
+      // unrecognized node type in body — ignore but log for debugging
+    }
+  }
+
+  return out
+}
+
+export function extractPreservedParagraphsSafe(
+  documentXml,
+  orderedParser,
+  rels,
+  body
+) {
+  // return buildParagraphsFromNodes(paragraphs, preservedParagraphs, rels, body)
+  // Try to use an ordered parse so we can emit paragraphs and tables
+  // in the exact sequence they appear in the document.xml body.
+  try {
+    const preserved = orderedParser.parse(documentXml)
+    const docNode = findFirstPreserved(preserved, 'w:document')
     const bodyNode = findFirstPreserved(docNode || [], 'w:body')
-    return collectPreservedParagraphsFromBody(bodyNode)
+    return collectPreservedFromBody(bodyNode, body, rels)
   } catch (err) {
-    logger.error(
+    logger.info(
       { err: err.message },
       'Ordered parse failed; falling back to unordered walk'
     )
@@ -203,25 +270,23 @@ export function extractPreservedParagraphsSafe(documentXml, orderedParser) {
   }
 }
 
-function findFirstPreserved(arr, tag) {
-  if (!Array.isArray(arr)) {
-    return null
+function buildParagraphObjectFromNode(p, preserved, rels) {
+  const pPr = p['w:pPr'] || {}
+  const pStyle = extractParagraphStyle(pPr)
+  const isHeading = typeof pStyle === 'string' && /^Heading/i.test(pStyle)
+  const isList = !!pPr['w:numPr']
+  //const visibleLine = (readDocxNodeText(p) || '').replaceAll('\u00A0', ' ')
+  //const rawParagraphJson = JSON.stringify(p)
+  //const toc = isParagraphToc(pStyle, visibleLine, rawParagraphJson)
+  const runs = []
+  if (preserved) {
+    walkParagraphNode(preserved, rels, runs)
+  } else {
+    walkParagraphNode(p, rels, runs)
   }
-  for (const item of arr) {
-    if (item && typeof item === 'object' && hasOwn(item, tag)) {
-      return item[tag]
-    }
+
+  if (runs.length > 0) {
+    return { type: classifyDocxBlock(isHeading, isList), runs }
   }
   return null
-}
-
-function collectPreservedParagraphsFromBody(bodyNode) {
-  if (!Array.isArray(bodyNode)) {
-    return []
-  }
-  return bodyNode
-    .filter(
-      (child) => child && typeof child === 'object' && hasOwn(child, 'w:p')
-    )
-    .map((child) => child['w:p'])
 }
