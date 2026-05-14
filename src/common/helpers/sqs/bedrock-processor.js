@@ -588,9 +588,14 @@ export class BedrockReviewProcessor {
     const chunkResults = []
     for (const chunk of chunks) {
       const estimatedTokens = this._estimateChunkTokens(chunk.text.length)
+      // First chunk is 'normal' priority (new review starting).
+      // Subsequent chunks are 'high' priority so they drain before the first
+      // chunk of any other review that is waiting in the queue.
+      const priority = chunk.index === 1 ? 'normal' : 'high'
       await rateLimiter.acquire(
         estimatedTokens,
-        `${reviewId}_chunk_${chunk.index}`
+        `${reviewId}_chunk_${chunk.index}`,
+        priority
       )
       const result = await this.processChunk(reviewId, chunk)
       chunkResults.push(result)
