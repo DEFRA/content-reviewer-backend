@@ -298,8 +298,7 @@ function renderCellFromTc(tc, rels) {
   // - any sequence of 6 or more digits (e.g. 5000499120, 00621707, 77777777) — remove
   // Replace with a single space to preserve separation between adjacent words
   normalized = normalized
-    .replace(/\b00[A-Fa-f0-9]{2}(?:[A-Fa-f0-9]{2})*\b/g, ' ')
-    .replace(/\d{6,,}/g, ' ') // intentional noop if engine doesn't like {6,} in some contexts
+    .replace(/00[A-Fa-f0-9]{2}(?:[A-Fa-f0-9]{2})*/g, ' ')
     .replace(/\d{6,}/g, ' ')
     .replace(/\s{2,}/g, ' ')
     .trim()

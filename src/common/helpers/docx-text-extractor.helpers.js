@@ -347,9 +347,18 @@ export function spaceAroundDashes(s) {
 
 // Grouping/render helpers used by blocksToDocxText
 export function groupDocxRunsByHref(runs) {
+  // sanitize once and operate on a shallow copy to avoid mutating caller data
+  const normalizedRuns = runs.map((r) => ({
+    ...r,
+    text: sanitizeRunText(r.text)
+  }))
+
+  // redistribute chained uppercase residues into following runs, then attach single-letter fragments
+  redistributeTrailingCapital(normalizedRuns)
+  normalizeSingleLetterFragments(normalizedRuns)
   const groups = []
   let current = null
-  for (const r of runs) {
+  for (const r of normalizedRuns) {
     const rText = sanitizeRunText(r.text)
     if (r.href && current?.href === r.href) {
       current.text = smartConcat(current.text, rText)
@@ -516,4 +525,76 @@ function collectPreservedParagraphsFromBody(bodyNode) {
       (child) => child && typeof child === 'object' && hasOwn(child, 'w:p')
     )
     .map((child) => child['w:p'])
+}
+
+function redistributeTrailingCapital(runs) {
+  if (!Array.isArray(runs) || runs.length < 2) {
+    return
+  }
+  let changed = true
+  while (changed) {
+    changed = false
+    for (let i = 0; i < runs.length - 1; i++) {
+      const cur = runs[i]
+      const next = runs[i + 1]
+      if (
+        !cur ||
+        !next ||
+        typeof cur.text !== 'string' ||
+        typeof next.text !== 'string'
+      ) {
+        continue
+      }
+      // do not move text across differing href boundaries
+      if ((cur.href || null) !== (next.href || null)) {
+        continue
+      }
+      const curText = cur.text
+      const nextText = next.text
+      if (/[A-Za-z][A-Z]$/.test(curText) && /^\s*[a-z]/.test(nextText)) {
+        const moved = curText.slice(-1)
+        cur.text = curText.slice(0, -1)
+        next.text = moved + nextText.replace(/^\s+/, '')
+        changed = true
+      }
+    }
+  }
+}
+
+function normalizeSingleLetterFragments(runs) {
+  if (!Array.isArray(runs) || runs.length === 0) {
+    return
+  }
+  for (let i = 0; i < runs.length; i++) {
+    const cur = runs[i]
+    if (!cur || typeof cur.text !== 'string') {
+      continue
+    }
+    const trimmed = cur.text.trim()
+    if (trimmed.length === 1 && /^[A-Za-z]$/.test(trimmed)) {
+      const next = runs[i + 1]
+      const prev = runs[i - 1]
+      // Only attach when next exists and href boundary permits merging
+      if (
+        next &&
+        typeof next.text === 'string' &&
+        (cur.href || null) === (next.href || null)
+      ) {
+        if (prev && !/\s$/.test(String(prev.text || ''))) {
+          prev.text = String(prev.text || '') + ' '
+        }
+        next.text = trimmed + next.text.replace(/^\s+/, '')
+        runs.splice(i, 1)
+        i -= 1
+      } else if (prev && (cur.href || null) === (prev.href || null)) {
+        // trailing single-letter: only adjust spacing on same-href boundary
+        if (!/\s$/.test(String(prev.text || ''))) {
+          prev.text = String(prev.text || '') + ' '
+        }
+        runs.splice(i, 1)
+        i -= 1
+      }
+      // otherwise leave single-letter fragment as-is to preserve href separation
+    }
+  }
 }
