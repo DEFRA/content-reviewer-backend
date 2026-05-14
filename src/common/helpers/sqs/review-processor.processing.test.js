@@ -8,7 +8,7 @@ const TEST_UPLOAD_ID = 'upload-123'
 const TEST_MESSAGE_ID = 'msg-123'
 
 // Test constants - Visibility timeout
-const HEARTBEAT_VISIBILITY_SECONDS = HEARTBEAT_VISIBILITY_SECONDS
+const HEARTBEAT_VISIBILITY_SECONDS = 180
 
 // Test constants - Content strings
 const TEST_SAMPLE_TEXT = 'Sample text'
