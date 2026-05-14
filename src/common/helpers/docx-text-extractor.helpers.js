@@ -72,9 +72,13 @@ export function coercePrimitiveToString(obj) {
 
 export function sanitizeRunText(v) {
   const raw = extractStringFromObject(v)
+  // normalize NBSP -> space, collapse consecutive whitespace to single spaces,
+  // remove accidental "[object Object]" and trim leading/trailing whitespace
   return String(raw ?? '')
     .replaceAll('\u00A0', ' ')
     .replaceAll('[object Object]', '')
+    .replace(/\s+/g, ' ')
+    .trim()
 }
 
 export function extractStringFromObject(obj) {
@@ -343,9 +347,18 @@ export function spaceAroundDashes(s) {
 
 // Grouping/render helpers used by blocksToDocxText
 export function groupDocxRunsByHref(runs) {
+  // sanitize once and operate on a shallow copy to avoid mutating caller data
+  const normalizedRuns = runs.map((r) => ({
+    ...r,
+    text: sanitizeRunText(r.text)
+  }))
+
+  // redistribute chained uppercase residues into following runs, then attach single-letter fragments
+  redistributeTrailingCapital(normalizedRuns)
+  normalizeSingleLetterFragments(normalizedRuns)
   const groups = []
   let current = null
-  for (const r of runs) {
+  for (const r of normalizedRuns) {
     const rText = sanitizeRunText(r.text)
     if (r.href && current?.href === r.href) {
       current.text = smartConcat(current.text, rText)
@@ -387,6 +400,7 @@ export function pushDocxRun(
   if (isArtifactRunText(t)) {
     return
   }
+
   runs.push({ text: t, bold, italic, href })
 }
 
@@ -482,7 +496,7 @@ export function extractPreservedParagraphsSafe(documentXml, orderedParser) {
     const bodyNode = findFirstPreserved(docNode || [], 'w:body')
     return collectPreservedParagraphsFromBody(bodyNode)
   } catch (err) {
-    logger.debug(
+    logger.error(
       { err: err.message },
       'Ordered parse failed; falling back to unordered walk'
     )
@@ -511,4 +525,118 @@ function collectPreservedParagraphsFromBody(bodyNode) {
       (child) => child && typeof child === 'object' && hasOwn(child, 'w:p')
     )
     .map((child) => child['w:p'])
+}
+
+function canRedistributeTrailingCapital(cur, next) {
+  if (!cur || !next) {
+    return false
+  }
+  if (typeof cur.text !== 'string' || typeof next.text !== 'string') {
+    return false
+  }
+  // do not move text across differing href boundaries
+  if ((cur.href || null) !== (next.href || null)) {
+    return false
+  }
+  const curText = cur.text
+  const nextText = next.text
+  // pattern: letter then uppercase at end of current, and next starts with optional whitespace + lowercase
+  return /[A-Za-z][A-Z]$/.test(curText) && /^\s*[a-z]/.test(nextText)
+}
+
+function doRedistributeTrailingCapital(cur, next) {
+  const moved = cur.text.slice(-1)
+  cur.text = cur.text.slice(0, -1)
+  next.text = moved + next.text.replace(/^\s+/, '')
+}
+
+function redistributeTrailingCapital(runs) {
+  if (!Array.isArray(runs) || runs.length < 2) {
+    return
+  }
+  let changed = true
+  while (changed) {
+    changed = false
+    for (let i = 0; i < runs.length - 1; i++) {
+      const cur = runs[i]
+      const next = runs[i + 1]
+      if (canRedistributeTrailingCapital(cur, next)) {
+        doRedistributeTrailingCapital(cur, next)
+        changed = true
+      }
+    }
+  }
+}
+
+function isSingleLetterRun(r) {
+  if (!r || typeof r.text !== 'string') {
+    return false
+  }
+  const t = r.text.trim()
+  return t.length === 1 && /^[A-Za-z]$/.test(t)
+}
+
+function sameHref(a, b) {
+  return (a?.href || null) === (b?.href || null)
+}
+
+function ensurePrevEndsWithSpace(prev) {
+  if (!prev) {
+    return
+  }
+  if (!/\s$/.test(String(prev.text || ''))) {
+    prev.text = String(prev.text || '') + ' '
+  }
+}
+
+function attachToNext(runs, idx, letter) {
+  const next = runs[idx + 1]
+  if (!next || typeof next.text !== 'string') {
+    return false
+  }
+  // attach letter to next run (strip next leading spaces)
+  next.text = letter + next.text.replace(/^\s+/, '')
+  runs.splice(idx, 1)
+  return true
+}
+
+function removeTrailingSingleAttachedToPrev(runs, idx) {
+  const prev = runs[idx - 1]
+  if (!prev) {
+    return false
+  }
+  ensurePrevEndsWithSpace(prev)
+  runs.splice(idx, 1)
+  return true
+}
+
+function normalizeSingleLetterFragments(runs) {
+  if (!Array.isArray(runs) || runs.length === 0) {
+    return
+  }
+
+  let i = 0
+  while (i < runs.length) {
+    const cur = runs[i]
+    if (!isSingleLetterRun(cur)) {
+      i += 1
+      continue
+    }
+
+    const letter = cur.text.trim()
+    const next = runs[i + 1]
+    const prev = runs[i - 1]
+
+    if (next && typeof next.text === 'string' && sameHref(cur, next)) {
+      ensurePrevEndsWithSpace(prev)
+      attachToNext(runs, i, letter)
+      // attachToNext removes current entry; do not advance index
+    } else if (prev && sameHref(cur, prev)) {
+      removeTrailingSingleAttachedToPrev(runs, i)
+      // removeTrailingSingleAttachedToPrev removes current entry; do not advance index
+    } else {
+      // Nothing to do for this single-letter fragment (preserve boundaries)
+      i += 1
+    }
+  }
 }

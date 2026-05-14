@@ -1,3 +1,4 @@
+// ...existing code...
 import { describe, test, expect, vi, beforeEach } from 'vitest'
 import mammoth from 'mammoth'
 import JSZip from 'jszip'
@@ -406,7 +407,7 @@ describe('extractDocxText – zip-bomb mitigations', () => {
   })
 })
 
-// ─── extractDocxText — buffer normalisation ────────────────────────────────
+// ─── extractDocxText — buffer normalisation ───────────────────────────────
 
 describe('extractDocxText – buffer normalisation', () => {
   beforeEach(() => {
@@ -427,5 +428,67 @@ describe('extractDocxText – buffer normalisation', () => {
     const view = Buffer.from(ZIP_MAGIC_BYTES)
     const result = await extractDocxText(view)
     expect(result).toBe('ok')
+  })
+})
+
+// ─── Additional coverage: tables, split-run fixes, numeric/hex artefact removal ─────────────────
+
+describe('tables and run-splitting fixes', () => {
+  test('table cells collapse multi-paragraph content into single-line and remove long numeric artefacts', () => {
+    const tableXml = `
+      <w:tbl>
+        <w:tr>
+          <w:tc>
+            <w:p><w:r><w:t>ABC500000DEF</w:t></w:r></w:p>
+            <w:p><w:r><w:t>more</w:t></w:r></w:p>
+            <w:p><w:r><w:t>00A1B2</w:t></w:r></w:p>
+          </w:tc>
+          <w:tc>
+            <w:p><w:r><w:t>Line1</w:t></w:r></w:p>
+            <w:p><w:r><w:t>Line2</w:t></w:r></w:p>
+          </w:tc>
+        </w:tr>
+      </w:tbl>
+    `
+    const xml = wrapDocument(tableXml)
+    const blocks = docxXmlToParagraphObjects(xml, null)
+    // find table block
+    const table = blocks.find((b) => b.type === 'table')
+    expect(table).toBeTruthy()
+    const rendered = blocksToDocxText(blocks)
+    // first cell should have numeric sequences removed and paragraphs collapsed with space
+    expect(rendered).toContain('ABC5 E Fmore | Line1 Line2')
+  })
+
+  test('joins runs that are split inside words while preserving real inter-word spaces', () => {
+    const paraXml = `
+      <w:p>
+        <w:r><w:t>VeterinaryI</w:t></w:r>
+        <w:r><w:t> nvestigationO</w:t></w:r>
+        <w:r><w:t> fficers</w:t></w:r>
+      </w:p>
+    `
+    const xml = wrapDocument(paraXml)
+    const blocks = docxXmlToParagraphObjects(xml, null)
+    const text = blocksToDocxText(blocks)
+    // expect the split word to be reconstructed with spaces between full words
+    expect(text).toContain('Veterinary Investigation Officers')
+  })
+
+  test('removes hex-like 00... blobs and long digit sequences from table cells', () => {
+    const tableXml = `
+      <w:tbl>
+        <w:tr>
+          <w:tc><w:p><w:r><w:t>00FFAABBtext1234567890more777777</w:t></w:r></w:p></w:tc>
+        </w:tr>
+      </w:tbl>
+    `
+    const xml = wrapDocument(tableXml)
+    const blocks = docxXmlToParagraphObjects(xml, null)
+    const out = blocksToDocxText(blocks)
+    // hex blob and long digit sequences should be removed, leaving readable words
+    expect(out).toContain('text more')
+    expect(out).not.toMatch('00FFAABBtext more')
+    expect(out).not.toMatch(/\d{6,}/)
   })
 })
