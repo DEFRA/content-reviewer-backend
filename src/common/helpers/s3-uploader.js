@@ -167,31 +167,6 @@ class S3Uploader {
   }
 
   /**
-   * Log successful upload
-   * @private
-   */
-  _logUploadSuccess(
-    uploadId,
-    filename,
-    contentToUpload,
-    key,
-    duration,
-    redactionResult
-  ) {
-    logger.info({
-      uploadId,
-      filename,
-      contentLength: contentToUpload.length,
-      bucket: this.bucket,
-      key,
-      s3Location: `s3://${this.bucket}/${key}`,
-      durationMs: duration,
-      piiRedacted: redactionResult.hasPII,
-      piiRedactionCount: redactionResult.redactionCount
-    })
-  }
-
-  /**
    * Log upload error
    * @private
    */
@@ -272,16 +247,6 @@ class S3Uploader {
 
     try {
       await this.s3Client.send(command)
-
-      const duration = Math.round(performance.now() - startTime)
-      this._logUploadSuccess(
-        uploadId,
-        filename,
-        contentToUpload,
-        key,
-        duration,
-        redactionResult
-      )
 
       return this._createUploadResponse(
         uploadId,

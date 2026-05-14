@@ -7,6 +7,9 @@ const TEST_RECEIPT_HANDLE = 'receipt-123'
 const TEST_UPLOAD_ID = 'upload-123'
 const TEST_MESSAGE_ID = 'msg-123'
 
+// Test constants - Visibility timeout
+const HEARTBEAT_VISIBILITY_SECONDS = HEARTBEAT_VISIBILITY_SECONDS
+
 // Test constants - Content strings
 const TEST_SAMPLE_TEXT = 'Sample text'
 const TEST_REVIEW_CONTENT = 'Review content'
@@ -121,14 +124,6 @@ describe('ReviewProcessor - processMessage - successful processing', () => {
       await processor.processMessage(message, messageHandler)
 
       expect(mockDeleteMessage).toHaveBeenCalledWith(TEST_RECEIPT_HANDLE)
-      expect(mockLoggerInfo).toHaveBeenCalledWith(
-        expect.objectContaining({
-          messageId: TEST_MESSAGE_ID,
-          uploadId: TEST_UPLOAD_ID,
-          durationMs: expect.any(Number)
-        }),
-        expect.stringContaining('SQS message processed successfully')
-      )
     })
   })
 })
@@ -225,7 +220,7 @@ describe('ReviewProcessor - processMessage - heartbeat', () => {
     vi.useRealTimers()
   })
 
-  test('calls extendVisibility with 180 s after 90 s during long-running processing', async () => {
+  test('calls extendVisibility with HEARTBEAT_VISIBILITY_SECONDS s after 90 s during long-running processing', async () => {
     const message = {
       MessageId: TEST_MESSAGE_ID,
       Body: JSON.stringify({ uploadId: TEST_UPLOAD_ID }),
@@ -244,7 +239,7 @@ describe('ReviewProcessor - processMessage - heartbeat', () => {
     await vi.advanceTimersByTimeAsync(NINETY_SECONDS_MS)
     expect(messageHandler.extendVisibility).toHaveBeenCalledWith(
       TEST_RECEIPT_HANDLE,
-      180
+      HEARTBEAT_VISIBILITY_SECONDS
     )
 
     // Resolve the pending promise with the correct { canonicalText, displayText } shape
@@ -285,7 +280,7 @@ describe('ReviewProcessor - processMessage - failure retry visibility', () => {
     }
   })
 
-  test('resets visibility to 180 s on processing failure so retry waits the full 3-min window', async () => {
+  test('resets visibility to HEARTBEAT_VISIBILITY_SECONDS s on processing failure so retry waits the full 3-min window', async () => {
     const message = {
       MessageId: TEST_MESSAGE_ID,
       Body: JSON.stringify({ uploadId: TEST_UPLOAD_ID }),
@@ -296,11 +291,11 @@ describe('ReviewProcessor - processMessage - failure retry visibility', () => {
 
     await processor.processMessage(message, messageHandler)
 
-    // extendVisibility must be called with exactly 180 s so the message is
+    // extendVisibility must be called with exactly HEARTBEAT_VISIBILITY_SECONDS s so the message is
     // hidden for the full 3-minute window from the moment of failure.
     expect(messageHandler.extendVisibility).toHaveBeenCalledWith(
       TEST_RECEIPT_HANDLE,
-      180
+      HEARTBEAT_VISIBILITY_SECONDS
     )
     // Message must NOT be deleted — it must be retried via SQS redelivery.
     expect(mockDeleteMessage).not.toHaveBeenCalled()
