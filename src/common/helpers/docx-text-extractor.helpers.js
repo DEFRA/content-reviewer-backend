@@ -511,23 +511,9 @@ function collectPreservedParagraphsFromBody(bodyNode) {
   if (!Array.isArray(bodyNode)) {
     return []
   }
-  const out = []
-  for (const child of bodyNode) {
-    if (child && typeof child === 'object') {
-      if (hasOwn(child, 'w:p')) {
-        const p = child['w:p']
-        const paraObj = buildParagraphObjectFromNode(p, null, rels)
-        if (paraObj) {
-          out.push(paraObj)
-        }
-      } else if (hasOwn(child, 'w:tbl')) {
-        const tbl = child['w:tbl']
-        const tableBlock = processTableNode(tbl, rels)
-        if (tableBlock) {
-          out.push(tableBlock)
-        }
-      }
-    }
-  }
-  return out
+  return bodyNode
+    .filter(
+      (child) => child && typeof child === 'object' && hasOwn(child, 'w:p')
+    )
+    .map((child) => child['w:p'])
 }
