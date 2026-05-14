@@ -32,6 +32,13 @@ vi.mock('../../../config.js', () => ({
   }
 }))
 
+// Rate limiter must be mocked so performChunkedReview does not hit the real
+// singleton or block on token budget during unit tests.
+const mockAcquire = vi.fn().mockResolvedValue(undefined)
+vi.mock('./token-rate-limiter.js', () => ({
+  getTokenRateLimiter: vi.fn(() => ({ acquire: mockAcquire }))
+}))
+
 // ─── Test constants ──────────────────────────────────────────────────────────
 
 const CONFIG_CHUNK_SIZE_KEY = 'bedrock.chunkSizeChars'
@@ -65,25 +72,25 @@ const EXPECTED_THREE_CHUNKS = 3
 
 function setupDefaultConfig() {
   mockConfigGet.mockImplementation((key) => {
-    if (key === CONFIG_CHUNK_SIZE_KEY) {
-      return DEFAULT_CHUNK_SIZE
+    const values = {
+      [CONFIG_CHUNK_SIZE_KEY]: DEFAULT_CHUNK_SIZE,
+      [CONFIG_MAX_TOKENS_KEY]: DEFAULT_MAX_TOKENS_PER_CHUNK,
+      'bedrock.maxTokensPerMinute': 45_000,
+      'bedrock.systemPromptOverheadTokens': 4_000
     }
-    if (key === CONFIG_MAX_TOKENS_KEY) {
-      return DEFAULT_MAX_TOKENS_PER_CHUNK
-    }
-    return undefined
+    return values[key] ?? undefined
   })
 }
 
 function setupSmallChunkConfig() {
   mockConfigGet.mockImplementation((key) => {
-    if (key === CONFIG_CHUNK_SIZE_KEY) {
-      return SMALL_CHUNK_SIZE
+    const values = {
+      [CONFIG_CHUNK_SIZE_KEY]: SMALL_CHUNK_SIZE,
+      [CONFIG_MAX_TOKENS_KEY]: DEFAULT_MAX_TOKENS_PER_CHUNK,
+      'bedrock.maxTokensPerMinute': 45_000,
+      'bedrock.systemPromptOverheadTokens': 4_000
     }
-    if (key === CONFIG_MAX_TOKENS_KEY) {
-      return DEFAULT_MAX_TOKENS_PER_CHUNK
-    }
-    return undefined
+    return values[key] ?? undefined
   })
 }
 
@@ -217,7 +224,7 @@ describe('BedrockReviewProcessor - performChunkedReview - above threshold', () =
     processor = new BedrockReviewProcessor()
   })
 
-  test('calls processChunk once per chunk in parallel', async () => {
+  test('calls processChunk once per chunk sequentially', async () => {
     // text length=30, chunkSize=10 → 3 chunks
     const longText = 'aaaa bbbbb cccc ddddd eeeee ff'
     const chunkResults = [
