@@ -3,6 +3,7 @@ import { config } from '../../../config.js'
 import { bedrockClient } from '../bedrock-client.js'
 import { promptManager } from '../prompt-manager.js'
 import { parseBedrockResponse } from '../review-parser.js'
+import { getTokenRateLimiter } from './token-rate-limiter.js'
 
 const logger = createLogger()
 
@@ -428,6 +429,21 @@ export class BedrockReviewProcessor {
   }
 
   /**
+   * Estimate the total tokens (input + max output) for a chunk before sending.
+   * Used by the rate limiter to gate calls before the system prompt is loaded.
+   *
+   * Formula: content tokens + system prompt + overhead + max output tokens
+   * @param {number} textLength - Character count of the chunk
+   * @returns {number} Estimated token count
+   */
+  _estimateChunkTokens(textLength) {
+    const contentTokens = Math.ceil(textLength / CHARS_PER_TOKEN)
+    const overheadTokens = config.get('bedrock.systemPromptOverheadTokens')
+    const maxOutputTokens = config.get('bedrock.maxTokensPerChunk')
+    return contentTokens + overheadTokens + maxOutputTokens
+  }
+
+  /**
    * Process a single chunk: call Bedrock, parse the response, adjust offsets.
    * @param {string} reviewId - Base review ID (chunk suffix added internally)
    * @param {{ text: string, startOffset: number, index: number }} chunk
@@ -490,79 +506,68 @@ export class BedrockReviewProcessor {
   }
 
   /**
-   * Entry point for all Bedrock review processing.
-   *
-   * Splits canonicalText into chunks of `bedrock.chunkSizeChars` characters,
-   * fires all chunks to Bedrock in parallel via Promise.all, then collates the
-   * results into a single combined parsed review and usage summary.
-   *
-   * If ANY chunk fails (Bedrock error, guardrail block, timeout) the entire
-   * Promise.all rejects and the caller receives an error — the review is
-   * marked as failed by the error handler in review-processor.js.
-   *
+   * Handle the below-threshold case: single Bedrock call, no chunking overhead.
+   * Acquires token budget from the rate limiter, calls Bedrock, and returns a
+   * result shaped identically to the multi-chunk path for easy consumption by
+   * callers.
    * @param {string} reviewId
    * @param {string} canonicalText
-   * @returns {Promise<{
-   *   parsedReview: Object,
-   *   parseDuration: number,
-   *   finalReviewContent: string,
-   *   bedrockResult: Object,
-   *   bedrockDuration: number,
-   *   chunks: { index: number, startOffset: number, rawResponse: string }[]
-   * }>}
+   * @param {import('./token-rate-limiter.js').TokenRateLimiter} rateLimiter
    */
-  async performChunkedReview(reviewId, canonicalText) {
-    const chunkSizeChars = config.get('bedrock.chunkSizeChars')
-
-    // Below the threshold: single Bedrock call, no chunking overhead.
-    if (canonicalText.length <= chunkSizeChars) {
-      logger.info(
-        { reviewId, totalChars: canonicalText.length, chunkSizeChars },
-        '[CHUNKING] Text within single-chunk threshold — skipping chunking'
-      )
-      const bedrockResult = await this.performBedrockReview(
-        reviewId,
-        canonicalText
-      )
-      const parseResult = await this.parseBedrockResponseData(
-        reviewId,
-        bedrockResult,
-        canonicalText
-      )
-      return {
-        parsedReview: parseResult.parsedReview,
-        parseDuration: parseResult.parseDuration,
-        finalReviewContent: parseResult.finalReviewContent,
-        bedrockResult,
-        bedrockDuration: bedrockResult.bedrockDuration,
-        chunks: [
-          {
-            index: 1,
-            startOffset: 0,
-            rawResponse: parseResult.finalReviewContent
-          }
-        ]
-      }
+  async _processSingleChunk(reviewId, canonicalText, rateLimiter) {
+    const estimatedTokens = this._estimateChunkTokens(canonicalText.length)
+    await rateLimiter.acquire(estimatedTokens, reviewId)
+    const bedrockResult = await this.performBedrockReview(
+      reviewId,
+      canonicalText
+    )
+    const parseResult = await this.parseBedrockResponseData(
+      reviewId,
+      bedrockResult,
+      canonicalText
+    )
+    return {
+      parsedReview: parseResult.parsedReview,
+      parseDuration: parseResult.parseDuration,
+      finalReviewContent: parseResult.finalReviewContent,
+      bedrockResult,
+      bedrockDuration: bedrockResult.bedrockDuration,
+      chunks: [
+        {
+          index: 1,
+          startOffset: 0,
+          rawResponse: parseResult.finalReviewContent
+        }
+      ]
     }
+  }
 
-    // Above the threshold: split into chunks and fire all in parallel.
-    const chunks = this.splitIntoChunks(canonicalText, chunkSizeChars)
-
-    logger.info(
-      {
-        reviewId,
-        chunkCount: chunks.length,
-        totalChars: canonicalText.length,
-        chunkSizeChars
-      },
-      `[CHUNKING] Text exceeds threshold — split into ${chunks.length} chunks, processing in parallel`
-    )
-
-    // All chunks run concurrently. Promise.all rejects immediately if any chunk
-    // fails — the caller (processContentReview) catches this and fails the review.
-    const chunkResults = await Promise.all(
-      chunks.map((chunk) => this.processChunk(reviewId, chunk))
-    )
+  /**
+   * Handle the above-threshold case: process each chunk sequentially, gating
+   * each call through the rate limiter before sending.  Continuation chunks
+   * (index > 1) use 'high' priority so they drain before a new review's first
+   * chunk can claim budget.
+   * @param {string} reviewId
+   * @param {string} canonicalText
+   * @param {{ text: string, startOffset: number, index: number }[]} chunks
+   * @param {import('./token-rate-limiter.js').TokenRateLimiter} rateLimiter
+   */
+  async _processMultipleChunks(reviewId, canonicalText, chunks, rateLimiter) {
+    const chunkResults = []
+    for (const chunk of chunks) {
+      const estimatedTokens = this._estimateChunkTokens(chunk.text.length)
+      // First chunk is 'normal' priority (new review starting).
+      // Subsequent chunks are 'high' priority so they drain before the first
+      // chunk of any other review that is waiting in the queue.
+      const priority = chunk.index === 1 ? 'normal' : 'high'
+      await rateLimiter.acquire(
+        estimatedTokens,
+        `${reviewId}_chunk_${chunk.index}`,
+        priority
+      )
+      const result = await this.processChunk(reviewId, chunk)
+      chunkResults.push(result)
+    }
 
     const { combinedParsedReview, combinedBedrockResult } =
       this.collateChunkResults(chunkResults, canonicalText)
@@ -587,5 +592,50 @@ export class BedrockReviewProcessor {
         rawResponse: r.finalReviewContent
       }))
     }
+  }
+
+  /**
+   * Entry point for all Bedrock review processing.
+   *
+   * Splits canonicalText into chunks of `bedrock.chunkSizeChars` characters
+   * and processes them sequentially via `_processMultipleChunks`, or delegates
+   * to `_processSingleChunk` when the text fits within the threshold.  Both
+   * paths gate each Bedrock call through the global TokenRateLimiter to keep
+   * total token usage within `bedrock.maxTokensPerMinute`.
+   *
+   * @param {string} reviewId
+   * @param {string} canonicalText
+   */
+  async performChunkedReview(reviewId, canonicalText) {
+    const chunkSizeChars = config.get('bedrock.chunkSizeChars')
+    const rateLimiter = getTokenRateLimiter(
+      config.get('bedrock.maxTokensPerMinute')
+    )
+
+    if (canonicalText.length <= chunkSizeChars) {
+      logger.info(
+        { reviewId, totalChars: canonicalText.length, chunkSizeChars },
+        '[CHUNKING] Text within single-chunk threshold — skipping chunking'
+      )
+      return this._processSingleChunk(reviewId, canonicalText, rateLimiter)
+    }
+
+    const chunks = this.splitIntoChunks(canonicalText, chunkSizeChars)
+    logger.info(
+      {
+        reviewId,
+        chunkCount: chunks.length,
+        totalChars: canonicalText.length,
+        chunkSizeChars,
+        maxTokensPerMinute: config.get('bedrock.maxTokensPerMinute')
+      },
+      `[CHUNKING] Text exceeds threshold — split into ${chunks.length} chunks, processing sequentially with TPM rate limiting`
+    )
+    return this._processMultipleChunks(
+      reviewId,
+      canonicalText,
+      chunks,
+      rateLimiter
+    )
   }
 }
