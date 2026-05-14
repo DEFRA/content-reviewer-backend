@@ -527,6 +527,29 @@ function collectPreservedParagraphsFromBody(bodyNode) {
     .map((child) => child['w:p'])
 }
 
+function canRedistributeTrailingCapital(cur, next) {
+  if (!cur || !next) {
+    return false
+  }
+  if (typeof cur.text !== 'string' || typeof next.text !== 'string') {
+    return false
+  }
+  // do not move text across differing href boundaries
+  if ((cur.href || null) !== (next.href || null)) {
+    return false
+  }
+  const curText = cur.text
+  const nextText = next.text
+  // pattern: letter then uppercase at end of current, and next starts with optional whitespace + lowercase
+  return /[A-Za-z][A-Z]$/.test(curText) && /^\s*[a-z]/.test(nextText)
+}
+
+function doRedistributeTrailingCapital(cur, next) {
+  const moved = cur.text.slice(-1)
+  cur.text = cur.text.slice(0, -1)
+  next.text = moved + next.text.replace(/^\s+/, '')
+}
+
 function redistributeTrailingCapital(runs) {
   if (!Array.isArray(runs) || runs.length < 2) {
     return
@@ -537,64 +560,76 @@ function redistributeTrailingCapital(runs) {
     for (let i = 0; i < runs.length - 1; i++) {
       const cur = runs[i]
       const next = runs[i + 1]
-      if (
-        !cur ||
-        !next ||
-        typeof cur.text !== 'string' ||
-        typeof next.text !== 'string'
-      ) {
-        continue
-      }
-      // do not move text across differing href boundaries
-      if ((cur.href || null) !== (next.href || null)) {
-        continue
-      }
-      const curText = cur.text
-      const nextText = next.text
-      if (/[A-Za-z][A-Z]$/.test(curText) && /^\s*[a-z]/.test(nextText)) {
-        const moved = curText.slice(-1)
-        cur.text = curText.slice(0, -1)
-        next.text = moved + nextText.replace(/^\s+/, '')
+      if (canRedistributeTrailingCapital(cur, next)) {
+        doRedistributeTrailingCapital(cur, next)
         changed = true
       }
     }
   }
 }
 
-function normalizeSingleLetterFragments(runs) {
-  if (!Array.isArray(runs) || runs.length === 0) {
-    return
+function isSingleLetterRun(r) {
+  if (!r || typeof r.text !== 'string') return false
+  const t = r.text.trim()
+  return t.length === 1 && /^[A-Za-z]$/.test(t)
+}
+
+function sameHref(a, b) {
+  return (a?.href || null) === (b?.href || null)
+}
+
+function ensurePrevEndsWithSpace(prev) {
+  if (!prev) return
+  if (!/\s$/.test(String(prev.text || ''))) {
+    prev.text = String(prev.text || '') + ' '
   }
+}
+
+function attachToNext(runs, idx, letter) {
+  const next = runs[idx + 1]
+  if (!next || typeof next.text !== 'string') return false
+  // attach letter to next run (strip next leading spaces)
+  next.text = letter + next.text.replace(/^\s+/, '')
+  runs.splice(idx, 1)
+  return true
+}
+
+function removeTrailingSingleAttachedToPrev(runs, idx) {
+  const prev = runs[idx - 1]
+  if (!prev) return false
+  ensurePrevEndsWithSpace(prev)
+  runs.splice(idx, 1)
+  return true
+}
+
+function normalizeSingleLetterFragments(runs) {
+  if (!Array.isArray(runs) || runs.length === 0) return
+
   for (let i = 0; i < runs.length; i++) {
     const cur = runs[i]
-    if (!cur || typeof cur.text !== 'string') {
-      continue
-    }
-    const trimmed = cur.text.trim()
-    if (trimmed.length === 1 && /^[A-Za-z]$/.test(trimmed)) {
-      const next = runs[i + 1]
-      const prev = runs[i - 1]
-      // Only attach when next exists and href boundary permits merging
-      if (
-        next &&
-        typeof next.text === 'string' &&
-        (cur.href || null) === (next.href || null)
-      ) {
-        if (prev && !/\s$/.test(String(prev.text || ''))) {
-          prev.text = String(prev.text || '') + ' '
-        }
-        next.text = trimmed + next.text.replace(/^\s+/, '')
-        runs.splice(i, 1)
+    if (!isSingleLetterRun(cur)) continue
+
+    const letter = cur.text.trim()
+    const next = runs[i + 1]
+    const prev = runs[i - 1]
+
+    // Prefer attaching to next when href allows
+    if (next && typeof next.text === 'string' && sameHref(cur, next)) {
+      ensurePrevEndsWithSpace(prev)
+      if (attachToNext(runs, i, letter)) {
         i -= 1
-      } else if (prev && (cur.href || null) === (prev.href || null)) {
-        // trailing single-letter: only adjust spacing on same-href boundary
-        if (!/\s$/.test(String(prev.text || ''))) {
-          prev.text = String(prev.text || '') + ' '
-        }
-        runs.splice(i, 1)
-        i -= 1
+        continue
       }
-      // otherwise leave single-letter fragment as-is to preserve href separation
     }
+
+    // Otherwise, if previous run shares href, ensure separation and drop current
+    if (prev && sameHref(cur, prev)) {
+      if (removeTrailingSingleAttachedToPrev(runs, i)) {
+        i -= 1
+        continue
+      }
+    }
+
+    // Otherwise leave the single-letter run as-is (preserve href boundaries)
   }
 }
