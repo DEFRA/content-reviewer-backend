@@ -7,6 +7,7 @@ import { ContentExtractor } from './content-extractor.js'
 import { BedrockReviewProcessor } from './bedrock-processor.js'
 import { ErrorHandler } from './error-handler.js'
 import { truncateReceiptHandle } from './message-handler.js'
+import { enforceMandatoryRules } from './rule-enforcer.js'
 
 const logger = createLogger()
 
@@ -264,7 +265,7 @@ export class ReviewProcessor {
       // and improvements (merged with adjusted offsets) into a single result.
       // If any chunk fails, Promise.all rejects here and the review is marked failed.
       const {
-        parsedReview,
+        parsedReview: rawParsedReview,
         parseDuration,
         finalReviewContent,
         bedrockResult,
@@ -274,6 +275,7 @@ export class ReviewProcessor {
         canonicalText
       )
 
+      const parsedReview = enforceMandatoryRules(rawParsedReview, canonicalText)
       const parseResult = { parsedReview, parseDuration, finalReviewContent }
 
       // Pass canonicalText, linkMap, and sourceMap so the result envelope can
