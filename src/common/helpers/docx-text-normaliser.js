@@ -5,8 +5,7 @@ import {
   smartConcat,
   walkParagraphNode,
   classifyDocxBlock,
-  extractParagraphStyle,
-  isAsciiWhitespaceCode
+  extractParagraphStyle
 } from './docx-text-extractor.helpers.js'
 import { createLogger } from './logging/logger.js'
 const logger = createLogger()
@@ -190,77 +189,65 @@ function renderCellFromTc(tc, rels) {
     .trim()
   return normalized
 }
+
+function findFirstPreserved(arr, tag) {
+  if (!Array.isArray(arr)) return null
+  for (const node of arr) {
+    if (node && typeof node === 'object' && Object.hasOwn(node, tag)) {
+      return node[tag]
+    }
+  }
+  return null
+}
+
+function collectPreservedFromBody(bodyNode, originalBody, rels) {
+  if (!Array.isArray(bodyNode)) {
+    return []
+  }
+
+  const out = []
+  const paragraphs = ensureArray(originalBody?.['w:p'])
+  const tables = ensureArray(originalBody?.['w:tbl'])
+  let pIndex = 0
+  let tIndex = 0
+
+  for (const child of bodyNode) {
+    // skip non-objects
+    if (!child || typeof child !== 'object') {
+      continue
+    }
+
+    if (Object.hasOwn(child, 'w:p')) {
+      const preserved = child['w:p']
+      const originalP = paragraphs[pIndex] || preserved
+      pIndex += 1
+      const paraObj = buildParagraphObjectFromNode(originalP, preserved, rels)
+      if (paraObj) out.push(paraObj)
+    } else if (Object.hasOwn(child, 'w:tbl')) {
+      const originalTbl = tables[tIndex] || child['w:tbl']
+      tIndex += 1
+      const tableBlock = processTableNode(originalTbl, rels)
+      if (tableBlock) out.push(tableBlock)
+    }
+  }
+
+  return out
+}
+
 export function extractPreservedParagraphsSafe(
   documentXml,
   orderedParser,
   rels,
   body
 ) {
-  // const preservedParagraphs = extractPreservedParagraphsSafe(
-  //   documentXml,
-  //   orderedParser
-  // )
-  // const paragraphs = ensureArray(body['w:p'])
   // return buildParagraphsFromNodes(paragraphs, preservedParagraphs, rels, body)
   // Try to use an ordered parse so we can emit paragraphs and tables
   // in the exact sequence they appear in the document.xml body.
   try {
     const preserved = orderedParser.parse(documentXml)
-
-    // helper: find first preserved node that contains the given tag
-    const findFirstPreserved = (arr, tag) => {
-      if (!Array.isArray(arr)) return null
-      for (const node of arr) {
-        if (
-          node &&
-          typeof node === 'object' &&
-          Object.prototype.hasOwnProperty.call(node, tag)
-        ) {
-          return node[tag]
-        }
-      }
-      return null
-    }
-
     const docNode = findFirstPreserved(preserved, 'w:document')
     const bodyNode = findFirstPreserved(docNode || [], 'w:body')
-
-    if (Array.isArray(bodyNode)) {
-      const out = []
-      const paragraphs = ensureArray(body['w:p'])
-      const tables = ensureArray(body['w:tbl'])
-      let pIndex = 0
-      let tIndex = 0
-      for (const child of bodyNode) {
-        if (!child || typeof child !== 'object') {
-          continue
-        }
-        if (Object.prototype.hasOwnProperty.call(child, 'w:p')) {
-          const preserved = child['w:p']
-          const originalP = paragraphs[pIndex++] || preserved
-          const paraObj = buildParagraphObjectFromNode(
-            originalP,
-            preserved,
-            rels
-          )
-          if (paraObj) {
-            out.push(paraObj)
-          }
-          continue
-        }
-
-        if (Object.prototype.hasOwnProperty.call(child, 'w:tbl')) {
-          // prefer the original parsed table node (to match processTableNode expectations)
-          const originalTbl = tables[tIndex++] || child['w:tbl']
-          const tableBlock = processTableNode(originalTbl, rels)
-          if (tableBlock) {
-            out.push(tableBlock)
-          }
-          continue
-        }
-      }
-      return out
-    }
+    return collectPreservedFromBody(bodyNode, body, rels)
   } catch (err) {
     logger.info(
       { err: err.message },
