@@ -579,7 +579,9 @@ function sameHref(a, b) {
 }
 
 function ensurePrevEndsWithSpace(prev) {
-  if (!prev) return
+  if (!prev) {
+    return
+  }
   if (!/\s$/.test(String(prev.text || ''))) {
     prev.text = String(prev.text || '') + ' '
   }
@@ -587,7 +589,9 @@ function ensurePrevEndsWithSpace(prev) {
 
 function attachToNext(runs, idx, letter) {
   const next = runs[idx + 1]
-  if (!next || typeof next.text !== 'string') return false
+  if (!next || typeof next.text !== 'string') {
+    return false
+  }
   // attach letter to next run (strip next leading spaces)
   next.text = letter + next.text.replace(/^\s+/, '')
   runs.splice(idx, 1)
@@ -596,40 +600,43 @@ function attachToNext(runs, idx, letter) {
 
 function removeTrailingSingleAttachedToPrev(runs, idx) {
   const prev = runs[idx - 1]
-  if (!prev) return false
+  if (!prev) {
+    return false
+  }
   ensurePrevEndsWithSpace(prev)
   runs.splice(idx, 1)
   return true
 }
 
 function normalizeSingleLetterFragments(runs) {
-  if (!Array.isArray(runs) || runs.length === 0) return
+  if (!Array.isArray(runs) || runs.length === 0) {
+    return
+  }
 
-  for (let i = 0; i < runs.length; i++) {
+  let i = 0
+  while (i < runs.length) {
     const cur = runs[i]
-    if (!isSingleLetterRun(cur)) continue
+    if (!isSingleLetterRun(cur)) {
+      i += 1
+      continue
+    }
 
     const letter = cur.text.trim()
     const next = runs[i + 1]
     const prev = runs[i - 1]
 
-    // Prefer attaching to next when href allows
-    if (next && typeof next.text === 'string' && sameHref(cur, next)) {
+    if (sameHref(cur, next) && next && typeof next.text === 'string') {
       ensurePrevEndsWithSpace(prev)
-      if (attachToNext(runs, i, letter)) {
-        i -= 1
-        continue
-      }
+      // attachToNext removes current entry; do not advance index
+      attachToNext(runs, i, letter)
+      continue
+    } else if (sameHref(cur, prev) && prev) {
+      // removeTrailingSingleAttachedToPrev removes current entry; do not advance index
+      removeTrailingSingleAttachedToPrev(runs, i)
+      continue
     }
 
-    // Otherwise, if previous run shares href, ensure separation and drop current
-    if (prev && sameHref(cur, prev)) {
-      if (removeTrailingSingleAttachedToPrev(runs, i)) {
-        i -= 1
-        continue
-      }
-    }
-
-    // Otherwise leave the single-letter run as-is (preserve href boundaries)
+    // Nothing to do for this single-letter fragment (preserve boundaries)
+    i += 1
   }
 }
