@@ -180,17 +180,6 @@ export class ReviewProcessor {
       await this.processContentReview(body)
       clearInterval(heartbeat)
       await messageHandler.deleteMessage(message.ReceiptHandle)
-
-      const duration = Math.round(performance.now() - startTime)
-      logger.info(
-        {
-          messageId: message.MessageId,
-          uploadId: body.uploadId,
-          reviewId: body.reviewId,
-          durationMs: duration
-        },
-        `[RESPONSE TIME] SQS message processed successfully in ${duration}ms`
-      )
     } catch (error) {
       clearInterval(heartbeat)
       const duration = Math.round(performance.now() - startTime)
@@ -483,7 +472,7 @@ export class ReviewProcessor {
     const endToEndSuffix =
       endToEndDurationMs === null
         ? ''
-        : ` | End-to-end: ${endToEndDurationMs}ms`
+        : ` | End-to-end (submission to completion): ${endToEndDurationMs}ms`
 
     logger.info(
       {
@@ -494,7 +483,7 @@ export class ReviewProcessor {
         envelopeDurationMs: envelopeDuration,
         ...(endToEndDurationMs === null ? {} : { endToEndDurationMs })
       },
-      `[RESPONSE TIME] [STEP 6/6] Content review processing COMPLETED - TOTAL: ${totalProcessingDuration}ms (Bedrock: ${bedrockResult.bedrockDuration}ms, Parse: ${parseResult.parseDuration}ms, Envelope: ${envelopeDuration}ms)${endToEndSuffix}`
+      `[RESPONSE TIME] [STEP 6/6] Content review processing COMPLETED - Worker processing: ${totalProcessingDuration}ms (Bedrock: ${bedrockResult.bedrockDuration}ms, Parse: ${parseResult.parseDuration}ms, Envelope: ${envelopeDuration}ms)${endToEndSuffix}`
     )
   }
 

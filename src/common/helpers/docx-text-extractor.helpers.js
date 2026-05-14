@@ -1,4 +1,8 @@
 import { createLogger } from './logging/logger.js'
+import {
+  redistributeTrailingCapital,
+  normalizeSingleLetterFragments
+} from './docx-text-normaliser.js'
 
 const logger = createLogger()
 
@@ -72,9 +76,13 @@ export function coercePrimitiveToString(obj) {
 
 export function sanitizeRunText(v) {
   const raw = extractStringFromObject(v)
+  // normalize NBSP -> space, collapse consecutive whitespace to single spaces,
+  // remove accidental "[object Object]" and trim leading/trailing whitespace
   return String(raw ?? '')
     .replaceAll('\u00A0', ' ')
     .replaceAll('[object Object]', '')
+    .replace(/\s+/g, ' ')
+    .trim()
 }
 
 export function extractStringFromObject(obj) {
@@ -343,9 +351,18 @@ export function spaceAroundDashes(s) {
 
 // Grouping/render helpers used by blocksToDocxText
 export function groupDocxRunsByHref(runs) {
+  // sanitize once and operate on a shallow copy to avoid mutating caller data
+  const normalizedRuns = runs.map((r) => ({
+    ...r,
+    text: sanitizeRunText(r.text)
+  }))
+
+  // redistribute chained uppercase residues into following runs, then attach single-letter fragments
+  redistributeTrailingCapital(normalizedRuns)
+  normalizeSingleLetterFragments(normalizedRuns)
   const groups = []
   let current = null
-  for (const r of runs) {
+  for (const r of normalizedRuns) {
     const rText = sanitizeRunText(r.text)
     if (r.href && current?.href === r.href) {
       current.text = smartConcat(current.text, rText)
@@ -387,6 +404,7 @@ export function pushDocxRun(
   if (isArtifactRunText(t)) {
     return
   }
+
   runs.push({ text: t, bold, italic, href })
 }
 
@@ -470,45 +488,4 @@ export function walkParagraphNode(node, rels, runs, currentHref = null) {
       walkParagraphNode(val, rels, runs, currentHref)
     }
   }
-}
-
-export function extractPreservedParagraphsSafe(documentXml, orderedParser) {
-  try {
-    const docPres = orderedParser.parse(documentXml)
-    const docNode = findFirstPreserved(docPres, 'w:document')
-    if (!docNode) {
-      return []
-    }
-    const bodyNode = findFirstPreserved(docNode || [], 'w:body')
-    return collectPreservedParagraphsFromBody(bodyNode)
-  } catch (err) {
-    logger.debug(
-      { err: err.message },
-      'Ordered parse failed; falling back to unordered walk'
-    )
-    return []
-  }
-}
-
-function findFirstPreserved(arr, tag) {
-  if (!Array.isArray(arr)) {
-    return null
-  }
-  for (const item of arr) {
-    if (item && typeof item === 'object' && hasOwn(item, tag)) {
-      return item[tag]
-    }
-  }
-  return null
-}
-
-function collectPreservedParagraphsFromBody(bodyNode) {
-  if (!Array.isArray(bodyNode)) {
-    return []
-  }
-  return bodyNode
-    .filter(
-      (child) => child && typeof child === 'object' && hasOwn(child, 'w:p')
-    )
-    .map((child) => child['w:p'])
 }

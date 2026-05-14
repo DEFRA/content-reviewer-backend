@@ -3,7 +3,6 @@ import { XMLParser } from 'fast-xml-parser'
 import JSZip from 'jszip'
 import { createLogger } from './logging/logger.js'
 import {
-  extractPreservedParagraphsSafe,
   ensureArray,
   classifyDocxBlock,
   groupDocxRunsByHref,
@@ -16,6 +15,10 @@ import {
   sanitizeRunText,
   isAsciiWhitespaceCode
 } from './docx-text-extractor.helpers.js'
+import {
+  processTableNode,
+  extractPreservedParagraphsSafe
+} from './docx-text-normaliser.js'
 
 const logger = createLogger()
 
@@ -134,7 +137,13 @@ export function blocksToDocxText(blocks) {
 }
 
 function renderDocxBlock(block) {
-  const groups = groupDocxRunsByHref(block.runs)
+  if (!block) {
+    return ''
+  }
+  if (block.type === 'table') {
+    return renderTableBlock(block)
+  }
+  const groups = groupDocxRunsByHref(block.runs || [])
   const pieces = groups.map((g) => renderDocxGroupedRun(g))
   const merged = pieces.reduce((acc, p) => smartConcat(acc, p), '')
   const spacedDashes = spaceAroundDashes(String(merged))
@@ -146,6 +155,21 @@ function renderDocxBlock(block) {
     return `- ${text}`
   }
   return text
+}
+
+function renderTableBlock(block) {
+  // block.table is array of rows (array of cell strings)
+  const rows = block.table || []
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return ''
+  }
+
+  const lines = rows.map((r) => {
+    const cells = Array.isArray(r) ? r : []
+    return cells.join(' | ')
+  })
+
+  return lines.join('\n')
 }
 
 async function runDocxExtraction(buffer) {
@@ -226,10 +250,10 @@ export function docxXmlToParagraphObjects(documentXml, relsXml) {
     orderedParser
   )
   const paragraphs = ensureArray(body['w:p'])
-  return buildParagraphsFromNodes(paragraphs, preservedParagraphs, rels)
+  return buildParagraphsFromNodes(paragraphs, preservedParagraphs, rels, body)
 }
 
-function buildParagraphsFromNodes(paragraphs, preservedParagraphs, rels) {
+function buildParagraphsFromNodes(paragraphs, preservedParagraphs, rels, body) {
   const out = []
   for (let i = 0; i < paragraphs.length; i++) {
     const p = paragraphs[i]
@@ -239,6 +263,16 @@ function buildParagraphsFromNodes(paragraphs, preservedParagraphs, rels) {
       out.push(paraObj)
     }
   }
+
+  // extract tables (w:tbl) from body and append as table blocks
+  const tables = ensureArray(body['w:tbl'])
+  for (const tbl of tables) {
+    const tableBlock = processTableNode(tbl, rels)
+    if (tableBlock) {
+      out.push(tableBlock)
+    }
+  }
+
   return out
 }
 

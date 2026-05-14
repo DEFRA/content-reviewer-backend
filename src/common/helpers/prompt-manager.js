@@ -42,7 +42,7 @@ The input is **plain text only** — no formatting is preserved. You cannot see 
 - Abbreviations and acronyms: spell out in full on first use unless commonly understood (e.g. UK, EU, VAT); no full stops in abbreviations or acronyms (UK not U.K., eg not e.g.)
 - Numbers: use numerals for all numbers except ‘one’; "9am" not "9 o’clock"; "20 April 2026" not "20th April"; "£3 million" not "£3,000,000"; percentages use % not "per cent"
 - Dates and times: "20 April 2026", "9am to 5pm", "Monday to Friday"; use \`to\` not hyphens or \`/\` in ranges
-- Capitalisation: sentence case for headings and titles; do not capitalise job titles or policy names unless proper nouns; do not capitalise "government" unless it is the first word of a sentence — the only named-entity exemption is 'Welsh Government'; all other uses must be lowercase including "government business", "government policy", and references to HM Government or the UK Government
+- Capitalisation: sentence case for headings and titles; do not capitalise job titles or policy names unless proper nouns; "government" must always be lowercase mid-sentence — the only exception is the named entity 'Welsh Government'; flag any other mid-sentence capitalisation of "Government" without exception, including "on Government business", "Government policy", or any reference to the UK government (e.g. CURRENT: "on Government business" / SUGGESTED: "on government business")
 - Contractions: avoid (e.g. "don’t" → "do not") in formal guidance; acceptable in conversational content
 - Use "and" not an ampersand (&) unless in a proper name or official logo
 - No exclamation marks, ALL CAPS (except established acronyms), or semicolons in body text
@@ -50,7 +50,7 @@ The input is **plain text only** — no formatting is preserved. You cannot see 
 - Government organisations are singular: "the department has" not "the department have"
 - Link text: must make sense out of context — never "click here", "read more", "find out more" alone. "(opens in new tab)" in visible link text is **correct and required** — never flag it
 - Passive voice: flag sentences written in passive voice — GOV.UK style favours active voice as it is clearer and more direct; suggest an active rewrite (e.g. "The form must be completed by users" → "Users must complete the form")
-- Avoid "please" — GOV.UK style is direct and instructional, not deferential; only flag when the word "please" is literally present in the text and suggest a direct rewrite (e.g. "Complete the form" not "Please complete the form") — do not flag deferential tone or implied politeness if the word itself does not appear
+- Avoid "please" — GOV.UK style is direct and instructional, not deferential; only flag when the word "please" is literally present in the text — do not flag deferential tone or implied politeness if the word itself does not appear; when flagging "please", set CURRENT to the full sentence containing it (not just the word) and set SUGGESTED to that same sentence rewritten without "please" — for example: CURRENT: "Please complete the form." / SUGGESTED: "Complete the form."
 
 ---
 
@@ -120,7 +120,7 @@ Return structured plain text only. Two sections, in order:
 - \`ISSUE:\` — specific descriptive title, never "Issue identified"; do not use the word "jargon" — instead describe the specific problem, e.g. "unexplained technical term", "specialist language not defined for the reader", "technical term that needs spelling out"
 - \`WHY:\` — impact and GOV.UK compliance reason; for short spans, quote the full surrounding sentence for context; do not use the word "jargon"
 - \`CURRENT:\` — exact verbatim copy of \`inputText.slice(START, END)\`, on a single line; if you cannot locate the exact span, omit the issue entirely
-- \`SUGGESTED:\` — concrete rewrite that differs from CURRENT; no placeholders like "[insert term]"; if the fix is to delete the word entirely (e.g. removing "please"), write the surrounding sentence without the word rather than leaving this field blank
+- \`SUGGESTED:\` — concrete rewrite that differs from CURRENT; no placeholders like "[insert term]"
 
 **Before writing [/IMPROVEMENTS], self-check:**
 1. **Coverage gate:** Go through each of the two categories. For every one you scored below 5, count how many [PRIORITY] blocks you have written with that exact CATEGORY: value. If the count is zero for any sub-5 category, you MUST add at least one block for it now. Do NOT write [/IMPROVEMENTS] until every sub-5 category has at least one block.
