@@ -569,7 +569,9 @@ function redistributeTrailingCapital(runs) {
 }
 
 function isSingleLetterRun(r) {
-  if (!r || typeof r.text !== 'string') return false
+  if (!r || typeof r.text !== 'string') {
+    return false
+  }
   const t = r.text.trim()
   return t.length === 1 && /^[A-Za-z]$/.test(t)
 }
@@ -625,18 +627,16 @@ function normalizeSingleLetterFragments(runs) {
     const next = runs[i + 1]
     const prev = runs[i - 1]
 
-    if (sameHref(cur, next) && next && typeof next.text === 'string') {
+    if (next && typeof next.text === 'string' && sameHref(cur, next)) {
       ensurePrevEndsWithSpace(prev)
-      // attachToNext removes current entry; do not advance index
       attachToNext(runs, i, letter)
-      continue
-    } else if (sameHref(cur, prev) && prev) {
-      // removeTrailingSingleAttachedToPrev removes current entry; do not advance index
+      // attachToNext removes current entry; do not advance index
+    } else if (prev && sameHref(cur, prev)) {
       removeTrailingSingleAttachedToPrev(runs, i)
-      continue
+      // removeTrailingSingleAttachedToPrev removes current entry; do not advance index
+    } else {
+      // Nothing to do for this single-letter fragment (preserve boundaries)
+      i += 1
     }
-
-    // Nothing to do for this single-letter fragment (preserve boundaries)
-    i += 1
   }
 }
