@@ -4,11 +4,16 @@ import {
   renderDocxGroupedRun,
   smartConcat,
   walkParagraphNode,
-  hasOwn
+  classifyDocxBlock,
+  extractParagraphStyle,
+  isAsciiWhitespaceCode
 } from './docx-text-extractor.helpers.js'
 import { createLogger } from './logging/logger.js'
 const logger = createLogger()
 
+const ASCII_DIGIT_0 = 48
+const ASCII_DIGIT_9 = 57
+const ASCII_DOT = 46
 function canRedistributeTrailingCapital(cur, next) {
   if (!cur || !next) {
     return false
@@ -185,17 +190,79 @@ function renderCellFromTc(tc, rels) {
     .trim()
   return normalized
 }
-export function extractPreservedParagraphsSafe(documentXml, orderedParser) {
+export function extractPreservedParagraphsSafe(
+  documentXml,
+  orderedParser,
+  rels,
+  body
+) {
+  // const preservedParagraphs = extractPreservedParagraphsSafe(
+  //   documentXml,
+  //   orderedParser
+  // )
+  // const paragraphs = ensureArray(body['w:p'])
+  // return buildParagraphsFromNodes(paragraphs, preservedParagraphs, rels, body)
+  // Try to use an ordered parse so we can emit paragraphs and tables
+  // in the exact sequence they appear in the document.xml body.
   try {
-    const docPres = orderedParser.parse(documentXml)
-    const docNode = findFirstPreserved(docPres, 'w:document')
-    if (!docNode) {
-      return []
+    const preserved = orderedParser.parse(documentXml)
+
+    // helper: find first preserved node that contains the given tag
+    const findFirstPreserved = (arr, tag) => {
+      if (!Array.isArray(arr)) return null
+      for (const node of arr) {
+        if (
+          node &&
+          typeof node === 'object' &&
+          Object.prototype.hasOwnProperty.call(node, tag)
+        ) {
+          return node[tag]
+        }
+      }
+      return null
     }
+
+    const docNode = findFirstPreserved(preserved, 'w:document')
     const bodyNode = findFirstPreserved(docNode || [], 'w:body')
-    return collectPreservedParagraphsFromBody(bodyNode)
+
+    if (Array.isArray(bodyNode)) {
+      const out = []
+      const paragraphs = ensureArray(body['w:p'])
+      const tables = ensureArray(body['w:tbl'])
+      let pIndex = 0
+      let tIndex = 0
+      for (const child of bodyNode) {
+        if (!child || typeof child !== 'object') {
+          continue
+        }
+        if (Object.prototype.hasOwnProperty.call(child, 'w:p')) {
+          const preserved = child['w:p']
+          const originalP = paragraphs[pIndex++] || preserved
+          const paraObj = buildParagraphObjectFromNode(
+            originalP,
+            preserved,
+            rels
+          )
+          if (paraObj) {
+            out.push(paraObj)
+          }
+          continue
+        }
+
+        if (Object.prototype.hasOwnProperty.call(child, 'w:tbl')) {
+          // prefer the original parsed table node (to match processTableNode expectations)
+          const originalTbl = tables[tIndex++] || child['w:tbl']
+          const tableBlock = processTableNode(originalTbl, rels)
+          if (tableBlock) {
+            out.push(tableBlock)
+          }
+          continue
+        }
+      }
+      return out
+    }
   } catch (err) {
-    logger.error(
+    logger.info(
       { err: err.message },
       'Ordered parse failed; falling back to unordered walk'
     )
@@ -203,25 +270,144 @@ export function extractPreservedParagraphsSafe(documentXml, orderedParser) {
   }
 }
 
-function findFirstPreserved(arr, tag) {
-  if (!Array.isArray(arr)) {
-    return null
+function buildParagraphObjectFromNode(p, preserved, rels) {
+  const pPr = p['w:pPr'] || {}
+  const pStyle = extractParagraphStyle(pPr)
+  const isHeading = typeof pStyle === 'string' && /^Heading/i.test(pStyle)
+  const isList = !!pPr['w:numPr']
+  //const visibleLine = (readDocxNodeText(p) || '').replaceAll('\u00A0', ' ')
+  //const rawParagraphJson = JSON.stringify(p)
+  //const toc = isParagraphToc(pStyle, visibleLine, rawParagraphJson)
+  const runs = []
+  if (preserved) {
+    walkParagraphNode(preserved, rels, runs)
+  } else {
+    walkParagraphNode(p, rels, runs)
   }
-  for (const item of arr) {
-    if (item && typeof item === 'object' && hasOwn(item, tag)) {
-      return item[tag]
-    }
+  //   if (toc && runs.length > 0) {
+  //     return {
+  //       type: classifyDocxBlock(isHeading, isList),
+  //       runs: cleanTocRuns(runs)
+  //     }
+  //   }
+  if (runs.length > 0) {
+    return { type: classifyDocxBlock(isHeading, isList), runs }
   }
   return null
 }
 
-function collectPreservedParagraphsFromBody(bodyNode) {
-  if (!Array.isArray(bodyNode)) {
-    return []
+function cleanTocRuns(runs) {
+  return runs
+    .map((r) => {
+      const raw = sanitizeRunText(r.text)
+      const t = raw
+        .replaceAll(/\b\d{6,}\b/g, '')
+        .replaceAll(/\b00[A-Fa-f0-9]{2}(?:[A-Fa-f0-9]{2})*\b/g, '')
+        .replaceAll(/\s{2,}/g, ' ')
+        .trim()
+      return { ...r, text: t }
+    })
+    .filter((r) => r?.text?.length > 0)
+}
+function isParagraphToc(pStyle, visibleLine, rawParagraphJson) {
+  const visibleHasTabPage = visibleLineHasTabPage(visibleLine)
+  const visibleHasDotsPage = visibleLineHasDotsPage(visibleLine)
+  const looksLikeTocField =
+    /(?:\bTOC\b|_Toc\b)/i.test(rawParagraphJson) ||
+    rawParagraphJson.includes('"w:fldSimple"') ||
+    rawParagraphJson.includes('"w:instrText"')
+  return (
+    (typeof pStyle === 'string' && /^TOC/i.test(pStyle)) ||
+    looksLikeTocField ||
+    visibleHasTabPage ||
+    visibleHasDotsPage
+  )
+}
+
+function visibleLineHasDotsPage(visibleLine) {
+  let i = trimTrailingWhitespaceIndex(visibleLine)
+  const { digitCount, nextIndex } = countTrailingDigitsFromIndex(visibleLine, i)
+  if (digitCount === 0) {
+    return false
   }
-  return bodyNode
-    .filter(
-      (child) => child && typeof child === 'object' && hasOwn(child, 'w:p')
-    )
-    .map((child) => child['w:p'])
+
+  i = skipWhitespaceReverse(visibleLine, nextIndex)
+  const dotCount = countTrailingDotsFromIndex(visibleLine, i)
+  if (dotCount < 2) {
+    return false
+  }
+
+  return true
+}
+
+function visibleLineHasTabPage(visibleLine) {
+  const tabIdx = visibleLine.lastIndexOf('\t')
+  if (tabIdx === -1) {
+    return false
+  }
+
+  const len = visibleLine.length
+  let i = nextNonWhitespaceIndex(visibleLine, tabIdx + 1)
+  if (i >= len) {
+    return false
+  }
+
+  const { digitCount, indexAfterDigits } = countDigitsFrom(visibleLine, i)
+  if (digitCount === 0) {
+    return false
+  }
+
+  i = nextNonWhitespaceIndex(visibleLine, indexAfterDigits)
+  return i === len
+}
+
+function nextNonWhitespaceIndex(str, from) {
+  const len = str.length
+  let i = from
+  while (i < len && isAsciiWhitespaceCode(str.codePointAt(i))) {
+    i++
+  }
+  return i
+}
+
+function trimTrailingWhitespaceIndex(str) {
+  const len = str.length
+  let i = len - 1
+  while (i >= 0 && isAsciiWhitespaceCode(str.codePointAt(i))) {
+    i--
+  }
+  return i
+}
+
+function countTrailingDigitsFromIndex(str, index) {
+  let i = index
+  let digitCount = 0
+  while (i >= 0) {
+    const cp = str.codePointAt(i)
+    if (cp >= ASCII_DIGIT_0 && cp <= ASCII_DIGIT_9) {
+      digitCount++
+      i--
+    } else {
+      break
+    }
+  }
+  return { digitCount, nextIndex: i }
+}
+
+function skipWhitespaceReverse(str, index) {
+  let i = index
+  while (i >= 0 && isAsciiWhitespaceCode(str.codePointAt(i))) {
+    i--
+  }
+  return i
+}
+
+function countTrailingDotsFromIndex(str, index) {
+  let i = index
+  let dotCount = 0
+  while (i >= 0 && str.codePointAt(i) === ASCII_DOT) {
+    dotCount++
+    i--
+  }
+  return dotCount
 }
