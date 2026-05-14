@@ -506,85 +506,53 @@ export class BedrockReviewProcessor {
   }
 
   /**
-   * Entry point for all Bedrock review processing.
-   *
-   * Splits canonicalText into chunks of `bedrock.chunkSizeChars` characters
-   * and processes them sequentially.  Before each chunk is sent, the global
-   * TokenRateLimiter is consulted to ensure total token usage stays within
-   * `bedrock.maxTokensPerMinute` (default 45,000 TPM) across all concurrent
-   * reviews running in this worker process.
-   *
-   * If ANY chunk fails (Bedrock error, guardrail block, timeout) the error
-   * propagates to the caller — the review is marked as failed by the error
-   * handler in review-processor.js.
-   *
+   * Handle the below-threshold case: single Bedrock call, no chunking overhead.
+   * Acquires token budget from the rate limiter, calls Bedrock, and returns a
+   * result shaped identically to the multi-chunk path for easy consumption by
+   * callers.
    * @param {string} reviewId
    * @param {string} canonicalText
-   * @returns {Promise<{
-   *   parsedReview: Object,
-   *   parseDuration: number,
-   *   finalReviewContent: string,
-   *   bedrockResult: Object,
-   *   bedrockDuration: number,
-   *   chunks: { index: number, startOffset: number, rawResponse: string }[]
-   * }>}
+   * @param {import('./token-rate-limiter.js').TokenRateLimiter} rateLimiter
    */
-  async performChunkedReview(reviewId, canonicalText) {
-    const chunkSizeChars = config.get('bedrock.chunkSizeChars')
-
-    const rateLimiter = getTokenRateLimiter(
-      config.get('bedrock.maxTokensPerMinute')
+  async _processSingleChunk(reviewId, canonicalText, rateLimiter) {
+    const estimatedTokens = this._estimateChunkTokens(canonicalText.length)
+    await rateLimiter.acquire(estimatedTokens, reviewId)
+    const bedrockResult = await this.performBedrockReview(
+      reviewId,
+      canonicalText
     )
-
-    // Below the threshold: single Bedrock call, no chunking overhead.
-    if (canonicalText.length <= chunkSizeChars) {
-      logger.info(
-        { reviewId, totalChars: canonicalText.length, chunkSizeChars },
-        '[CHUNKING] Text within single-chunk threshold — skipping chunking'
-      )
-      const estimatedTokens = this._estimateChunkTokens(canonicalText.length)
-      await rateLimiter.acquire(estimatedTokens, reviewId)
-      const bedrockResult = await this.performBedrockReview(
-        reviewId,
-        canonicalText
-      )
-      const parseResult = await this.parseBedrockResponseData(
-        reviewId,
-        bedrockResult,
-        canonicalText
-      )
-      return {
-        parsedReview: parseResult.parsedReview,
-        parseDuration: parseResult.parseDuration,
-        finalReviewContent: parseResult.finalReviewContent,
-        bedrockResult,
-        bedrockDuration: bedrockResult.bedrockDuration,
-        chunks: [
-          {
-            index: 1,
-            startOffset: 0,
-            rawResponse: parseResult.finalReviewContent
-          }
-        ]
-      }
+    const parseResult = await this.parseBedrockResponseData(
+      reviewId,
+      bedrockResult,
+      canonicalText
+    )
+    return {
+      parsedReview: parseResult.parsedReview,
+      parseDuration: parseResult.parseDuration,
+      finalReviewContent: parseResult.finalReviewContent,
+      bedrockResult,
+      bedrockDuration: bedrockResult.bedrockDuration,
+      chunks: [
+        {
+          index: 1,
+          startOffset: 0,
+          rawResponse: parseResult.finalReviewContent
+        }
+      ]
     }
+  }
 
-    // Above the threshold: split into chunks and process sequentially so that
-    // no single review floods the shared Bedrock TPM quota.  Each chunk waits
-    // for the rate limiter to confirm there is capacity before sending.
-    const chunks = this.splitIntoChunks(canonicalText, chunkSizeChars)
-
-    logger.info(
-      {
-        reviewId,
-        chunkCount: chunks.length,
-        totalChars: canonicalText.length,
-        chunkSizeChars,
-        maxTokensPerMinute: config.get('bedrock.maxTokensPerMinute')
-      },
-      `[CHUNKING] Text exceeds threshold — split into ${chunks.length} chunks, processing sequentially with TPM rate limiting`
-    )
-
+  /**
+   * Handle the above-threshold case: process each chunk sequentially, gating
+   * each call through the rate limiter before sending.  Continuation chunks
+   * (index > 1) use 'high' priority so they drain before a new review's first
+   * chunk can claim budget.
+   * @param {string} reviewId
+   * @param {string} canonicalText
+   * @param {{ text: string, startOffset: number, index: number }[]} chunks
+   * @param {import('./token-rate-limiter.js').TokenRateLimiter} rateLimiter
+   */
+  async _processMultipleChunks(reviewId, canonicalText, chunks, rateLimiter) {
     const chunkResults = []
     for (const chunk of chunks) {
       const estimatedTokens = this._estimateChunkTokens(chunk.text.length)
@@ -624,5 +592,50 @@ export class BedrockReviewProcessor {
         rawResponse: r.finalReviewContent
       }))
     }
+  }
+
+  /**
+   * Entry point for all Bedrock review processing.
+   *
+   * Splits canonicalText into chunks of `bedrock.chunkSizeChars` characters
+   * and processes them sequentially via `_processMultipleChunks`, or delegates
+   * to `_processSingleChunk` when the text fits within the threshold.  Both
+   * paths gate each Bedrock call through the global TokenRateLimiter to keep
+   * total token usage within `bedrock.maxTokensPerMinute`.
+   *
+   * @param {string} reviewId
+   * @param {string} canonicalText
+   */
+  async performChunkedReview(reviewId, canonicalText) {
+    const chunkSizeChars = config.get('bedrock.chunkSizeChars')
+    const rateLimiter = getTokenRateLimiter(
+      config.get('bedrock.maxTokensPerMinute')
+    )
+
+    if (canonicalText.length <= chunkSizeChars) {
+      logger.info(
+        { reviewId, totalChars: canonicalText.length, chunkSizeChars },
+        '[CHUNKING] Text within single-chunk threshold — skipping chunking'
+      )
+      return this._processSingleChunk(reviewId, canonicalText, rateLimiter)
+    }
+
+    const chunks = this.splitIntoChunks(canonicalText, chunkSizeChars)
+    logger.info(
+      {
+        reviewId,
+        chunkCount: chunks.length,
+        totalChars: canonicalText.length,
+        chunkSizeChars,
+        maxTokensPerMinute: config.get('bedrock.maxTokensPerMinute')
+      },
+      `[CHUNKING] Text exceeds threshold — split into ${chunks.length} chunks, processing sequentially with TPM rate limiting`
+    )
+    return this._processMultipleChunks(
+      reviewId,
+      canonicalText,
+      chunks,
+      rateLimiter
+    )
   }
 }
