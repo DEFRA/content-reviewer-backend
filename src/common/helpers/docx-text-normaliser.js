@@ -296,19 +296,6 @@ function buildParagraphObjectFromNode(p, preserved, rels) {
   return null
 }
 
-function cleanTocRuns(runs) {
-  return runs
-    .map((r) => {
-      const raw = sanitizeRunText(r.text)
-      const t = raw
-        .replaceAll(/\b\d{6,}\b/g, '')
-        .replaceAll(/\b00[A-Fa-f0-9]{2}(?:[A-Fa-f0-9]{2})*\b/g, '')
-        .replaceAll(/\s{2,}/g, ' ')
-        .trim()
-      return { ...r, text: t }
-    })
-    .filter((r) => r?.text?.length > 0)
-}
 function isParagraphToc(pStyle, visibleLine, rawParagraphJson) {
   const visibleHasTabPage = visibleLineHasTabPage(visibleLine)
   const visibleHasDotsPage = visibleLineHasDotsPage(visibleLine)
