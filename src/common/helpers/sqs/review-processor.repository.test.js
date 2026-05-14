@@ -3,16 +3,8 @@ import { describe, test, expect, beforeEach, vi } from 'vitest'
 import { ReviewProcessor } from './review-processor.js'
 
 // Test constants - IDs and handles
-const TEST_UPLOAD_ID = 'upload-123'
 const TEST_REVIEW_ID = 'review-123'
-const TEST_MESSAGE_ID = 'msg-123'
 const TEST_TRUNCATED_HANDLE = 'ABC123...'
-
-// Test constants - File paths and keys
-const TEST_S3_KEY_UPLOADS = 'uploads/file.txt'
-
-// Test constants - Message types
-const MESSAGE_TYPE_REVIEW_REQUEST = 'review-request'
 
 // Test constants - Content strings
 const TEST_REVIEW_CONTENT = 'Review content'
@@ -268,7 +260,7 @@ describe('ReviewProcessor - logReviewCompletion', () => {
           reviewId: TEST_REVIEW_ID,
           endToEndDurationMs: expect.any(Number)
         }),
-        expect.stringContaining('End-to-end:')
+        expect.stringContaining('End-to-end (submission to completion):')
       )
     })
   })
