@@ -226,13 +226,16 @@ describe('BedrockReviewProcessor - performChunkedReview - acquire multi-chunk pa
   })
 
   test('passes high priority for chunks 2 and beyond', async () => {
-    // text with chunkSize=10 → at least 3 chunks
-    const text = 'aaaa bbbbb cccc ddddd'
+    // 'aa bb cc dd ee ff gg' = 20 chars with chunkSize=10 → 3 chunks
+    // chunk 1: 'aa bb cc ' (snap at space@8 → end=9)
+    // chunk 2: 'dd ee ff ' (snap at space@17 → end=18)
+    // chunk 3: 'gg'
+    const text = 'aa bb cc dd ee ff gg'
     processor.processChunk = vi
       .fn()
       .mockResolvedValueOnce(makeChunkResult(1, 0))
-      .mockResolvedValueOnce(makeChunkResult(2, 5))
-      .mockResolvedValueOnce(makeChunkResult(3, 11))
+      .mockResolvedValueOnce(makeChunkResult(2, 9))
+      .mockResolvedValueOnce(makeChunkResult(3, 18))
 
     await processor.performChunkedReview('r', text)
 
