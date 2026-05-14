@@ -4,21 +4,12 @@ import JSZip from 'jszip'
 import { createLogger } from './logging/logger.js'
 import {
   ensureArray,
-  classifyDocxBlock,
   groupDocxRunsByHref,
   renderDocxGroupedRun,
-  walkParagraphNode,
-  readDocxNodeText,
-  extractParagraphStyle,
   smartConcat,
-  spaceAroundDashes,
-  sanitizeRunText,
-  isAsciiWhitespaceCode
+  spaceAroundDashes
 } from './docx-text-extractor.helpers.js'
-import {
-  processTableNode,
-  extractPreservedParagraphsSafe
-} from './docx-text-normaliser.js'
+import { extractPreservedParagraphsSafe } from './docx-text-normaliser.js'
 
 const logger = createLogger()
 
@@ -28,9 +19,6 @@ const MAX_ZIP_ENTRIES = 1000
 const MAX_XML_SIZE_MB = 50
 const MAX_EXTRACTED_XML_BYTES = MAX_XML_SIZE_MB * 1024 * 1024
 const MAX_INPUT_BUFFER_BYTES = MAX_XML_SIZE_MB * 1024 * 1024
-const ASCII_DIGIT_0 = 48
-const ASCII_DIGIT_9 = 57
-const ASCII_DOT = 46
 
 /* Normalisation helpers */
 
@@ -245,180 +233,9 @@ export function docxXmlToParagraphObjects(documentXml, relsXml) {
   }
 
   const rels = parseDocxRelsSafe(relsXml, parser)
-  const preservedParagraphs = extractPreservedParagraphsSafe(
-    documentXml,
-    orderedParser
-  )
-  const paragraphs = ensureArray(body['w:p'])
-  return buildParagraphsFromNodes(paragraphs, preservedParagraphs, rels, body)
-}
 
-function buildParagraphsFromNodes(paragraphs, preservedParagraphs, rels, body) {
-  const out = []
-  for (let i = 0; i < paragraphs.length; i++) {
-    const p = paragraphs[i]
-    const preserved = preservedParagraphs[i] || null
-    const paraObj = buildParagraphObjectFromNode(p, preserved, rels)
-    if (paraObj) {
-      out.push(paraObj)
-    }
-  }
-
-  // extract tables (w:tbl) from body and append as table blocks
-  const tables = ensureArray(body['w:tbl'])
-  for (const tbl of tables) {
-    const tableBlock = processTableNode(tbl, rels)
-    if (tableBlock) {
-      out.push(tableBlock)
-    }
-  }
-
-  return out
-}
-
-function buildParagraphObjectFromNode(p, preserved, rels) {
-  const pPr = p['w:pPr'] || {}
-  const pStyle = extractParagraphStyle(pPr)
-  const isHeading = typeof pStyle === 'string' && /^Heading/i.test(pStyle)
-  const isList = !!pPr['w:numPr']
-  const visibleLine = (readDocxNodeText(p) || '').replaceAll('\u00A0', ' ')
-  const rawParagraphJson = JSON.stringify(p)
-  const toc = isParagraphToc(pStyle, visibleLine, rawParagraphJson)
-  const runs = []
-  if (preserved) {
-    walkParagraphNode(preserved, rels, runs)
-  } else {
-    walkParagraphNode(p, rels, runs)
-  }
-  if (toc && runs.length > 0) {
-    return {
-      type: classifyDocxBlock(isHeading, isList),
-      runs: cleanTocRuns(runs)
-    }
-  }
-  if (runs.length > 0) {
-    return { type: classifyDocxBlock(isHeading, isList), runs }
-  }
-  return null
-}
-
-function visibleLineHasTabPage(visibleLine) {
-  const tabIdx = visibleLine.lastIndexOf('\t')
-  if (tabIdx === -1) {
-    return false
-  }
-
-  const len = visibleLine.length
-  let i = nextNonWhitespaceIndex(visibleLine, tabIdx + 1)
-  if (i >= len) {
-    return false
-  }
-
-  const { digitCount, indexAfterDigits } = countDigitsFrom(visibleLine, i)
-  if (digitCount === 0) {
-    return false
-  }
-
-  i = nextNonWhitespaceIndex(visibleLine, indexAfterDigits)
-  return i === len
-}
-
-function countDigitsFrom(str, from) {
-  const len = str.length
-  let i = from
-  let digitCount = 0
-  while (i < len) {
-    const cp = str.codePointAt(i)
-    if (cp >= ASCII_DIGIT_0 && cp <= ASCII_DIGIT_9) {
-      digitCount++
-      i++
-    } else {
-      break
-    }
-  }
-  return { digitCount, indexAfterDigits: i }
-}
-
-function nextNonWhitespaceIndex(str, from) {
-  const len = str.length
-  let i = from
-  while (i < len && isAsciiWhitespaceCode(str.codePointAt(i))) {
-    i++
-  }
-  return i
-}
-
-function isParagraphToc(pStyle, visibleLine, rawParagraphJson) {
-  const visibleHasTabPage = visibleLineHasTabPage(visibleLine)
-  const visibleHasDotsPage = visibleLineHasDotsPage(visibleLine)
-  const looksLikeTocField =
-    /(?:\bTOC\b|_Toc\b)/i.test(rawParagraphJson) ||
-    rawParagraphJson.includes('"w:fldSimple"') ||
-    rawParagraphJson.includes('"w:instrText"')
-  return (
-    (typeof pStyle === 'string' && /^TOC/i.test(pStyle)) ||
-    looksLikeTocField ||
-    visibleHasTabPage ||
-    visibleHasDotsPage
-  )
-}
-
-function visibleLineHasDotsPage(visibleLine) {
-  let i = trimTrailingWhitespaceIndex(visibleLine)
-  const { digitCount, nextIndex } = countTrailingDigitsFromIndex(visibleLine, i)
-  if (digitCount === 0) {
-    return false
-  }
-
-  i = skipWhitespaceReverse(visibleLine, nextIndex)
-  const dotCount = countTrailingDotsFromIndex(visibleLine, i)
-  if (dotCount < 2) {
-    return false
-  }
-
-  return true
-}
-
-function trimTrailingWhitespaceIndex(str) {
-  const len = str.length
-  let i = len - 1
-  while (i >= 0 && isAsciiWhitespaceCode(str.codePointAt(i))) {
-    i--
-  }
-  return i
-}
-
-function countTrailingDigitsFromIndex(str, index) {
-  let i = index
-  let digitCount = 0
-  while (i >= 0) {
-    const cp = str.codePointAt(i)
-    if (cp >= ASCII_DIGIT_0 && cp <= ASCII_DIGIT_9) {
-      digitCount++
-      i--
-    } else {
-      break
-    }
-  }
-  return { digitCount, nextIndex: i }
-}
-
-function skipWhitespaceReverse(str, index) {
-  let i = index
-  while (i >= 0 && isAsciiWhitespaceCode(str.codePointAt(i))) {
-    i--
-  }
-  return i
-}
-
-function countTrailingDotsFromIndex(str, index) {
-  let i = index
-  let dotCount = 0
-  while (i >= 0 && str.codePointAt(i) === ASCII_DOT) {
-    dotCount++
-    i--
-  }
-  return dotCount
+  // Fallback: previous behaviour (paragraphs first, then tables)
+  return extractPreservedParagraphsSafe(documentXml, orderedParser, rels, body)
 }
 
 function parseDocxRelsSafe(relsXml, parser) {
@@ -446,18 +263,4 @@ export function buildDocxRelsMap(relsDoc) {
     }
   }
   return rels
-}
-
-function cleanTocRuns(runs) {
-  return runs
-    .map((r) => {
-      const raw = sanitizeRunText(r.text)
-      const t = raw
-        .replaceAll(/\b\d{6,}\b/g, '')
-        .replaceAll(/\b00[A-Fa-f0-9]{2}(?:[A-Fa-f0-9]{2})*\b/g, '')
-        .replaceAll(/\s{2,}/g, ' ')
-        .trim()
-      return { ...r, text: t }
-    })
-    .filter((r) => r?.text?.length > 0)
 }
