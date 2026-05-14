@@ -3,7 +3,6 @@ import { XMLParser } from 'fast-xml-parser'
 import JSZip from 'jszip'
 import { createLogger } from './logging/logger.js'
 import {
-  extractPreservedParagraphsSafe,
   ensureArray,
   classifyDocxBlock,
   groupDocxRunsByHref,
@@ -16,6 +15,10 @@ import {
   sanitizeRunText,
   isAsciiWhitespaceCode
 } from './docx-text-extractor.helpers.js'
+import {
+  processTableNode,
+  extractPreservedParagraphsSafe
+} from './docx-text-normaliser.js'
 
 const logger = createLogger()
 
@@ -271,69 +274,6 @@ function buildParagraphsFromNodes(paragraphs, preservedParagraphs, rels, body) {
   }
 
   return out
-}
-
-/**
- * Render text for a single table cell node (w:tc):
- * - collects sanitized runs via walkParagraphNode
- * - groups runs by href, renders them, smart-concats pieces
- * - collapses any internal newlines/whitespace to single spaces
- * - returns an empty string for empty cells
- */
-function renderCellFromTc(tc, rels) {
-  const runs = []
-  walkParagraphNode(tc, rels, runs)
-
-  if (runs.length === 0) {
-    return ''
-  }
-
-  const groups = groupDocxRunsByHref(runs)
-  const pieces = groups.map((g) => renderDocxGroupedRun(g))
-  const merged = pieces.reduce((acc, p) => smartConcat(acc, p), '')
-  // collapse internal whitespace/newlines into single spaces and trim
-  let normalized = String(merged).replace(/\s+/g, ' ').trim()
-  // remove long numeric/artifact sequences which appear injected into table cells
-  // - hex-like blobs starting with 00 (e.g. 00A1B2...) — remove
-  // - any sequence of 6 or more digits (e.g. 5000499120, 00621707, 77777777) — remove
-  // Replace with a single space to preserve separation between adjacent words
-  normalized = normalized
-    .replace(/00[A-Fa-f0-9]{2}(?:[A-Fa-f0-9]{2})*/g, ' ')
-    .replace(/\d{6,}/g, ' ')
-    .replace(/\s{2,}/g, ' ')
-    .trim()
-  return normalized
-}
-
-/* Table processing */
-
-function processTableNode(tblNode, rels) {
-  if (!tblNode || typeof tblNode !== 'object') {
-    return null
-  }
-  const rows = []
-  const trList = ensureArray(tblNode['w:tr'])
-  for (const tr of trList) {
-    const cells = []
-    const tcList = ensureArray(tr['w:tc'])
-    for (const tc of tcList) {
-      // cell text can be composed of multiple paragraphs/runs — use readDocxNodeText to flatten
-      const cellText = renderCellFromTc(tc, rels) || ''
-      if (cellText) {
-        cells.push(cellText)
-      } else {
-        cells.push('')
-      }
-    }
-    if (cells.length > 0) {
-      rows.push(cells)
-    }
-  }
-  if (rows.length === 0) {
-    return null
-  }
-
-  return { type: 'table', table: rows }
 }
 
 function buildParagraphObjectFromNode(p, preserved, rels) {
