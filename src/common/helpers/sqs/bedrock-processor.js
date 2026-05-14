@@ -3,6 +3,7 @@ import { config } from '../../../config.js'
 import { bedrockClient } from '../bedrock-client.js'
 import { promptManager } from '../prompt-manager.js'
 import { parseBedrockResponse } from '../review-parser.js'
+import { getTokenRateLimiter } from './token-rate-limiter.js'
 
 const logger = createLogger()
 
@@ -428,6 +429,21 @@ export class BedrockReviewProcessor {
   }
 
   /**
+   * Estimate the total tokens (input + max output) for a chunk before sending.
+   * Used by the rate limiter to gate calls before the system prompt is loaded.
+   *
+   * Formula: content tokens + system prompt + overhead + max output tokens
+   * @param {number} textLength - Character count of the chunk
+   * @returns {number} Estimated token count
+   */
+  _estimateChunkTokens(textLength) {
+    const contentTokens = Math.ceil(textLength / CHARS_PER_TOKEN)
+    const overheadTokens = config.get('bedrock.systemPromptOverheadTokens')
+    const maxOutputTokens = config.get('bedrock.maxTokensPerChunk')
+    return contentTokens + overheadTokens + maxOutputTokens
+  }
+
+  /**
    * Process a single chunk: call Bedrock, parse the response, adjust offsets.
    * @param {string} reviewId - Base review ID (chunk suffix added internally)
    * @param {{ text: string, startOffset: number, index: number }} chunk
@@ -492,13 +508,15 @@ export class BedrockReviewProcessor {
   /**
    * Entry point for all Bedrock review processing.
    *
-   * Splits canonicalText into chunks of `bedrock.chunkSizeChars` characters,
-   * fires all chunks to Bedrock in parallel via Promise.all, then collates the
-   * results into a single combined parsed review and usage summary.
+   * Splits canonicalText into chunks of `bedrock.chunkSizeChars` characters
+   * and processes them sequentially.  Before each chunk is sent, the global
+   * TokenRateLimiter is consulted to ensure total token usage stays within
+   * `bedrock.maxTokensPerMinute` (default 45,000 TPM) across all concurrent
+   * reviews running in this worker process.
    *
-   * If ANY chunk fails (Bedrock error, guardrail block, timeout) the entire
-   * Promise.all rejects and the caller receives an error — the review is
-   * marked as failed by the error handler in review-processor.js.
+   * If ANY chunk fails (Bedrock error, guardrail block, timeout) the error
+   * propagates to the caller — the review is marked as failed by the error
+   * handler in review-processor.js.
    *
    * @param {string} reviewId
    * @param {string} canonicalText
@@ -514,12 +532,18 @@ export class BedrockReviewProcessor {
   async performChunkedReview(reviewId, canonicalText) {
     const chunkSizeChars = config.get('bedrock.chunkSizeChars')
 
+    const rateLimiter = getTokenRateLimiter(
+      config.get('bedrock.maxTokensPerMinute')
+    )
+
     // Below the threshold: single Bedrock call, no chunking overhead.
     if (canonicalText.length <= chunkSizeChars) {
       logger.info(
         { reviewId, totalChars: canonicalText.length, chunkSizeChars },
         '[CHUNKING] Text within single-chunk threshold — skipping chunking'
       )
+      const estimatedTokens = this._estimateChunkTokens(canonicalText.length)
+      await rateLimiter.acquire(estimatedTokens, reviewId)
       const bedrockResult = await this.performBedrockReview(
         reviewId,
         canonicalText
@@ -545,7 +569,9 @@ export class BedrockReviewProcessor {
       }
     }
 
-    // Above the threshold: split into chunks and fire all in parallel.
+    // Above the threshold: split into chunks and process sequentially so that
+    // no single review floods the shared Bedrock TPM quota.  Each chunk waits
+    // for the rate limiter to confirm there is capacity before sending.
     const chunks = this.splitIntoChunks(canonicalText, chunkSizeChars)
 
     logger.info(
@@ -553,16 +579,22 @@ export class BedrockReviewProcessor {
         reviewId,
         chunkCount: chunks.length,
         totalChars: canonicalText.length,
-        chunkSizeChars
+        chunkSizeChars,
+        maxTokensPerMinute: config.get('bedrock.maxTokensPerMinute')
       },
-      `[CHUNKING] Text exceeds threshold — split into ${chunks.length} chunks, processing in parallel`
+      `[CHUNKING] Text exceeds threshold — split into ${chunks.length} chunks, processing sequentially with TPM rate limiting`
     )
 
-    // All chunks run concurrently. Promise.all rejects immediately if any chunk
-    // fails — the caller (processContentReview) catches this and fails the review.
-    const chunkResults = await Promise.all(
-      chunks.map((chunk) => this.processChunk(reviewId, chunk))
-    )
+    const chunkResults = []
+    for (const chunk of chunks) {
+      const estimatedTokens = this._estimateChunkTokens(chunk.text.length)
+      await rateLimiter.acquire(
+        estimatedTokens,
+        `${reviewId}_chunk_${chunk.index}`
+      )
+      const result = await this.processChunk(reviewId, chunk)
+      chunkResults.push(result)
+    }
 
     const { combinedParsedReview, combinedBedrockResult } =
       this.collateChunkResults(chunkResults, canonicalText)

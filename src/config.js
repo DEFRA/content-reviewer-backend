@@ -394,6 +394,18 @@ const config = convict({
       format: Number,
       default: 4096,
       env: 'BEDROCK_MAX_TOKENS_PER_CHUNK'
+    },
+    maxTokensPerMinute: {
+      doc: 'Global token-per-minute cap across all concurrent Bedrock calls. CDP shared platform quota is ~50,000 TPM; default is 45,000 to leave a 10% safety margin. Chunks are processed sequentially and gated by this limit so no single user can exhaust the shared quota.',
+      format: Number,
+      default: 45000,
+      env: 'BEDROCK_MAX_TOKENS_PER_MINUTE'
+    },
+    systemPromptOverheadTokens: {
+      doc: 'Conservative token allowance added to each chunk estimate to account for the system prompt, user prompt wrapper, and request overhead. Used by the rate limiter before the prompt is loaded. System prompt ~3,000 + overhead ~400 + safety margin = 4,000.',
+      format: Number,
+      default: 4000,
+      env: 'BEDROCK_SYSTEM_PROMPT_OVERHEAD_TOKENS'
     }
   },
   mockMode: {
