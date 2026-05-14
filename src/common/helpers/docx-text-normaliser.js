@@ -191,7 +191,9 @@ function renderCellFromTc(tc, rels) {
 }
 
 function findFirstPreserved(arr, tag) {
-  if (!Array.isArray(arr)) return null
+  if (!Array.isArray(arr)) {
+    return null
+  }
   for (const node of arr) {
     if (node && typeof node === 'object' && Object.hasOwn(node, tag)) {
       return node[tag]
@@ -211,23 +213,34 @@ function collectPreservedFromBody(bodyNode, originalBody, rels) {
   let pIndex = 0
   let tIndex = 0
 
+  const pushParagraph = (preserved) => {
+    const originalP = paragraphs[pIndex] || preserved
+    pIndex += 1
+    const paraObj = buildParagraphObjectFromNode(originalP, preserved, rels)
+    if (paraObj) {
+      out.push(paraObj)
+    }
+  }
+
+  const pushTable = (preservedTbl) => {
+    const originalTbl = tables[tIndex] || preservedTbl
+    tIndex += 1
+    const tableBlock = processTableNode(originalTbl, rels)
+    if (tableBlock) {
+      out.push(tableBlock)
+    }
+  }
+
   for (const child of bodyNode) {
-    // skip non-objects
     if (!child || typeof child !== 'object') {
       continue
     }
-
     if (Object.hasOwn(child, 'w:p')) {
-      const preserved = child['w:p']
-      const originalP = paragraphs[pIndex] || preserved
-      pIndex += 1
-      const paraObj = buildParagraphObjectFromNode(originalP, preserved, rels)
-      if (paraObj) out.push(paraObj)
+      pushParagraph(child['w:p'])
     } else if (Object.hasOwn(child, 'w:tbl')) {
-      const originalTbl = tables[tIndex] || child['w:tbl']
-      tIndex += 1
-      const tableBlock = processTableNode(originalTbl, rels)
-      if (tableBlock) out.push(tableBlock)
+      pushTable(child['w:tbl'])
+    } else {
+      // unrecognized node type in body — ignore but log for debugging
     }
   }
 
@@ -271,12 +284,7 @@ function buildParagraphObjectFromNode(p, preserved, rels) {
   } else {
     walkParagraphNode(p, rels, runs)
   }
-  //   if (toc && runs.length > 0) {
-  //     return {
-  //       type: classifyDocxBlock(isHeading, isList),
-  //       runs: cleanTocRuns(runs)
-  //     }
-  //   }
+
   if (runs.length > 0) {
     return { type: classifyDocxBlock(isHeading, isList), runs }
   }
