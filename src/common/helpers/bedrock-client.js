@@ -419,10 +419,9 @@ class BedrockClient {
       throw new Error('Bedrock AI is not enabled')
     }
 
-    // No Bedrock-level retries — SQS re-delivery handles retries.
-    const MAX_RETRIES = 0
-    const BASE_BACKOFF_MS = 90_000
-    const MAX_BACKOFF_MS = 180_000
+    const MAX_RETRIES = config.get('bedrock.throttleMaxRetries')
+    const BASE_BACKOFF_MS = config.get('bedrock.throttleBackoffMs')
+    const MAX_BACKOFF_MS = config.get('bedrock.throttleBackoffMaxMs')
 
     const messages = this._buildMessages(userMessage, conversationHistory)
     const guardrailConfig = this._buildGuardrailConfig()

@@ -439,7 +439,7 @@ export class BedrockReviewProcessor {
   _estimateChunkTokens(textLength) {
     const contentTokens = Math.ceil(textLength / CHARS_PER_TOKEN)
     const overheadTokens = config.get('bedrock.systemPromptOverheadTokens')
-    const maxOutputTokens = config.get('bedrock.maxTokensPerChunk')
+    const maxOutputTokens = config.get('bedrock.maxTokens')
     return contentTokens + overheadTokens + maxOutputTokens
   }
 
@@ -451,23 +451,20 @@ export class BedrockReviewProcessor {
    */
   async processChunk(reviewId, chunk) {
     const chunkReviewId = `${reviewId}_chunk_${chunk.index}`
-    const maxTokensPerChunk = config.get('bedrock.maxTokensPerChunk')
 
     logger.info(
       {
         reviewId,
         chunkIndex: chunk.index,
         chunkStart: chunk.startOffset,
-        chunkLength: chunk.text.length,
-        maxTokensPerChunk
+        chunkLength: chunk.text.length
       },
       `[CHUNKING] Sending chunk ${chunk.index} to Bedrock`
     )
 
     const bedrockResult = await this.performBedrockReview(
       chunkReviewId,
-      chunk.text,
-      maxTokensPerChunk
+      chunk.text
     )
     const parseResult = await this.parseBedrockResponseData(
       chunkReviewId,
@@ -521,6 +518,10 @@ export class BedrockReviewProcessor {
       reviewId,
       canonicalText
     )
+    rateLimiter.release(
+      reviewId,
+      bedrockResult.bedrockResponse.usage?.totalTokens
+    )
     const parseResult = await this.parseBedrockResponseData(
       reviewId,
       bedrockResult,
@@ -556,16 +557,14 @@ export class BedrockReviewProcessor {
     const chunkResults = []
     for (const chunk of chunks) {
       const estimatedTokens = this._estimateChunkTokens(chunk.text.length)
-      // First chunk is 'normal' priority (new review starting).
-      // Subsequent chunks are 'high' priority so they drain before the first
-      // chunk of any other review that is waiting in the queue.
       const priority = chunk.index === 1 ? 'normal' : 'high'
-      await rateLimiter.acquire(
-        estimatedTokens,
-        `${reviewId}_chunk_${chunk.index}`,
-        priority
-      )
+      const chunkLabel = `${reviewId}_chunk_${chunk.index}`
+      await rateLimiter.acquire(estimatedTokens, chunkLabel, priority)
       const result = await this.processChunk(reviewId, chunk)
+      rateLimiter.release(
+        chunkLabel,
+        result.bedrockResult.bedrockResponse.usage?.totalTokens
+      )
       chunkResults.push(result)
     }
 
