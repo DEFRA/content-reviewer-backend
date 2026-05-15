@@ -8,7 +8,6 @@ convict.addFormats(convictFormatWithValidator)
 
 const isProduction = process.env.NODE_ENV === 'production'
 const isTest = process.env.NODE_ENV === 'test'
-const cdpEnvironment = process.env.ENVIRONMENT || 'local'
 
 const config = convict({
   serviceVersion: {
@@ -54,21 +53,6 @@ const config = convict({
       default: 85_000,
       env: 'HAPI_SERVER_TIMEOUT_MS'
     }
-  },
-  cdpEnvironment: {
-    doc: 'The CDP environment the app is running in. With the addition of "local" for local development',
-    format: [
-      'local',
-      'infra-dev',
-      'management',
-      'dev',
-      'test',
-      'perf-test',
-      'ext-test',
-      'prod'
-    ],
-    default: 'local',
-    env: 'ENVIRONMENT'
   },
   log: {
     isEnabled: {
@@ -179,42 +163,12 @@ const config = convict({
       env: 'CORS_CREDENTIALS'
     }
   },
-  upload: {
-    allowedMimeTypes: {
-      doc: 'Allowed MIME types for file uploads',
-      format: Array,
-      default: [
-        'application/pdf',
-        'application/msword',
-        'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-      ],
-      env: 'UPLOAD_ALLOWED_MIME_TYPES'
-    },
-    maxFileSize: {
-      doc: 'Maximum file size in bytes (10MB default)',
-      format: Number,
-      default: 10 * 1024 * 1024,
-      env: 'UPLOAD_MAX_FILE_SIZE'
-    }
-  },
   cdpUploader: {
     url: {
       doc: 'cdp-uploader service URL for file uploads',
       format: String,
       default: 'https://cdp-uploader.dev.cdp-int.defra.cloud',
       env: 'CDP_UPLOADER_URL'
-    },
-    pollTimeoutMs: {
-      doc: 'cdp-uploader polling timeout in milliseconds',
-      format: Number,
-      default: 60000,
-      env: 'CDP_POLL_TIMEOUT_MS'
-    },
-    pollIntervalMs: {
-      doc: 'cdp-uploader poll interval in milliseconds',
-      format: Number,
-      default: 1500,
-      env: 'CDP_POLL_INTERVAL_MS'
     }
   },
   s3: {
@@ -230,12 +184,6 @@ const config = convict({
       default: 'prompts/system-prompt.md',
       env: 'S3_PROMPT_KEY'
     },
-    s3Path: {
-      doc: 'S3 path for the storage',
-      format: String,
-      default: 'reviews',
-      env: 'S3_PATH'
-    },
     rawS3Path: {
       doc: 'S3 path for the raw file storage',
       format: String,
@@ -250,12 +198,6 @@ const config = convict({
     }
   },
   aws: {
-    accountId: {
-      doc: 'AWS Account ID',
-      format: String,
-      default: '332499610595',
-      env: 'AWS_ACCOUNT_ID'
-    },
     region: {
       doc: 'AWS region (global)',
       format: String,
