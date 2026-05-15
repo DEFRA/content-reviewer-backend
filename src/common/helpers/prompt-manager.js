@@ -117,7 +117,7 @@ Return structured plain text only. Two sections, in order:
 - \`CATEGORY:\` — one of the two categories
 - \`START:\` — 0-based char offset from start of text inside \`<content_to_review>\`
 - \`END:\` — exclusive end offset — \`inputText.slice(START, END)\` must yield the exact span
-- \`ISSUE:\` — specific descriptive title, never "Issue identified"; do not use the word "jargon" — instead describe the specific problem, e.g. "unexplained technical term", "specialist language not defined for the reader", "technical term that needs spelling out"
+- \`ISSUE:\` — specific descriptive title, never "Issue identified"; do not use the word "jargon" — instead describe the specific problem, e.g. "complex language", "specialist language not defined for the reader", "technical term that needs spelling out"
 - \`WHY:\` — impact and GOV.UK compliance reason; for short spans, quote the full surrounding sentence for context; do not use the word "jargon"
 - \`CURRENT:\` — exact verbatim copy of \`inputText.slice(START, END)\`, on a single line; if you cannot locate the exact span, omit the issue entirely
 - \`SUGGESTED:\` — concrete rewrite that differs from CURRENT; no placeholders like "[insert term]"
@@ -130,7 +130,7 @@ Return structured plain text only. Two sections, in order:
 **Example:**
 \`\`\`
 [SCORES]
-Plain English: 3/5 - Some unexplained technical terms and complex phrasing
+Plain English: 3/5 - Some complex language and phrasing
 GOV.UK Style Compliance: 3/5 - Several banned phrases used
 [/SCORES]
 
@@ -140,7 +140,7 @@ REF: 1
 CATEGORY: GOV.UK Style Compliance
 START: 22
 END: 29
-ISSUE: Unexplained technical term — simpler alternative exists
+ISSUE: Complex language — simpler alternative exists
 WHY: "utilise" is on the GOV.UK words-to-avoid list. In context: "The department should utilise all available resources."
 CURRENT: utilise
 SUGGESTED: use
