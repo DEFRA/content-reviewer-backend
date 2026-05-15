@@ -6,6 +6,7 @@ import { BedrockReviewProcessor } from './bedrock-processor.js'
 
 const mockConfigGet = vi.fn()
 const mockAcquire = vi.fn().mockResolvedValue(undefined)
+const mockRelease = vi.fn()
 
 vi.mock('../logging/logger.js', () => ({
   createLogger: () => ({
@@ -32,14 +33,17 @@ vi.mock('../../../config.js', () => ({
 }))
 
 vi.mock('./token-rate-limiter.js', () => ({
-  getTokenRateLimiter: vi.fn(() => ({ acquire: mockAcquire }))
+  getTokenRateLimiter: vi.fn(() => ({
+    acquire: mockAcquire,
+    release: mockRelease
+  }))
 }))
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const CHARS_PER_TOKEN = 4
 const DEFAULT_OVERHEAD_TOKENS = 4_000
-const DEFAULT_MAX_TOKENS_PER_CHUNK = 4_096
+const DEFAULT_MAX_TOKENS = 8_192
 const DEFAULT_MAX_TOKENS_PER_MINUTE = 45_000
 const DEFAULT_CHUNK_SIZE = 25_000
 const SMALL_CHUNK_SIZE = 10
@@ -56,7 +60,7 @@ function setupConfig(chunkSize = DEFAULT_CHUNK_SIZE) {
   mockConfigGet.mockImplementation((key) => {
     const values = {
       'bedrock.chunkSizeChars': chunkSize,
-      'bedrock.maxTokensPerChunk': DEFAULT_MAX_TOKENS_PER_CHUNK,
+      'bedrock.maxTokens': DEFAULT_MAX_TOKENS,
       'bedrock.maxTokensPerMinute': DEFAULT_MAX_TOKENS_PER_MINUTE,
       'bedrock.systemPromptOverheadTokens': DEFAULT_OVERHEAD_TOKENS
     }
@@ -105,27 +109,27 @@ describe('BedrockReviewProcessor - _estimateChunkTokens', () => {
 
   test('returns content tokens + overhead + max output tokens', () => {
     // textLength=4000 → ceil(4000/4)=1000 content tokens
-    // 1000 + 4000 + 4096 = 9096
-    expect(processor._estimateChunkTokens(4000)).toBe(9096)
+    // 1000 + 4000 + 8192 = 13192
+    expect(processor._estimateChunkTokens(4000)).toBe(13192)
   })
 
   test('rounds up content tokens for non-divisible text lengths', () => {
     // textLength=5 → ceil(5/4)=2 content tokens
-    // 2 + 4000 + 4096 = 8098
-    expect(processor._estimateChunkTokens(5)).toBe(8098)
+    // 2 + 4000 + 8192 = 12194
+    expect(processor._estimateChunkTokens(5)).toBe(12194)
   })
 
   test('returns only overhead + max output for zero-length text', () => {
-    // ceil(0/4)=0 → 0 + 4000 + 4096 = 8096
-    expect(processor._estimateChunkTokens(0)).toBe(8096)
+    // ceil(0/4)=0 → 0 + 4000 + 8192 = 12192
+    expect(processor._estimateChunkTokens(0)).toBe(12192)
   })
 
   test('scales linearly with text length for a typical 25k-char chunk', () => {
-    // 25000/4=6250 content + 4000 overhead + 4096 output = 14346
+    // 25000/4=6250 content + 4000 overhead + 8192 output = 18442
     expect(processor._estimateChunkTokens(DEFAULT_CHUNK_SIZE)).toBe(
       Math.ceil(DEFAULT_CHUNK_SIZE / CHARS_PER_TOKEN) +
         DEFAULT_OVERHEAD_TOKENS +
-        DEFAULT_MAX_TOKENS_PER_CHUNK
+        DEFAULT_MAX_TOKENS
     )
   })
 })
@@ -166,7 +170,7 @@ describe('BedrockReviewProcessor - performChunkedReview - acquire single-chunk p
     const expectedTokens =
       Math.ceil(400 / CHARS_PER_TOKEN) +
       DEFAULT_OVERHEAD_TOKENS +
-      DEFAULT_MAX_TOKENS_PER_CHUNK
+      DEFAULT_MAX_TOKENS
 
     processor.performBedrockReview = vi.fn().mockResolvedValue({
       bedrockResponse: { content: 'ok', usage: {} },

@@ -389,12 +389,6 @@ const config = convict({
       default: 25000,
       env: 'BEDROCK_CHUNK_SIZE_CHARS'
     },
-    maxTokensPerChunk: {
-      doc: 'Maximum output tokens per Bedrock chunk call. A 25k-char chunk produces ~500-2,000 output tokens; 4,096 provides safe headroom while capping each of the 4 parallel calls well below the full-document limit of 8,192.',
-      format: Number,
-      default: 4096,
-      env: 'BEDROCK_MAX_TOKENS_PER_CHUNK'
-    },
     maxTokensPerMinute: {
       doc: 'Global token-per-minute cap across all concurrent Bedrock calls. CDP shared platform quota is ~50,000 TPM; default is 45,000 to leave a 10% safety margin. Chunks are processed sequentially and gated by this limit so no single user can exhaust the shared quota.',
       format: Number,
@@ -406,6 +400,24 @@ const config = convict({
       format: Number,
       default: 4000,
       env: 'BEDROCK_SYSTEM_PROMPT_OVERHEAD_TOKENS'
+    },
+    throttleMaxRetries: {
+      doc: 'Number of Bedrock-level retries on ThrottlingException before failing. Set to 1 so a transient quota spike retries once with a short backoff rather than immediately failing the review.',
+      format: Number,
+      default: 1,
+      env: 'BEDROCK_THROTTLE_MAX_RETRIES'
+    },
+    throttleBackoffMs: {
+      doc: 'Base backoff in ms before the first Bedrock retry on ThrottlingException. With exponential backoff and 1 retry this is also the fixed wait time.',
+      format: Number,
+      default: 5000,
+      env: 'BEDROCK_THROTTLE_BACKOFF_MS'
+    },
+    throttleBackoffMaxMs: {
+      doc: 'Maximum backoff cap in ms for Bedrock ThrottlingException retries.',
+      format: Number,
+      default: 15000,
+      env: 'BEDROCK_THROTTLE_BACKOFF_MAX_MS'
     }
   },
   mockMode: {
