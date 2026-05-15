@@ -172,9 +172,13 @@ export class TokenRateLimiter {
    * @param {number} actualTokens - Actual total tokens reported by Bedrock usage
    */
   release(label, actualTokens) {
-    if (actualTokens == null || !label) return
+    if (actualTokens == null || !label) {
+      return
+    }
     const entry = this._entries.find((e) => e.label === label)
-    if (!entry || actualTokens >= entry.tokens) return
+    if (!entry || actualTokens >= entry.tokens) {
+      return
+    }
 
     const freed = entry.tokens - actualTokens
     logger.info(
