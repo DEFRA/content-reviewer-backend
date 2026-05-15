@@ -89,6 +89,7 @@ The input is **plain text only** — no formatting is preserved. You cannot see 
 - Do not flag correctly formatted numerals (e.g. "2,400" does not need commas added)
 - Do not flag reference codes or identifiers (e.g. "EPR 6.09", "BS EN 14181")
 - Do not flag a date format issue if your own WHY context quote contains a complete, correctly formatted date
+- Do not flag year-only references in prose (e.g. "In 2018", "since 2020", "by 2030") as date format issues — the GOV.UK date format rule (day month year) applies only to full dates, not standalone year references
 - Do not flag "(opens in new tab)" in link text — GOV.UK explicitly requires it
 
 **Acronym / term check:**
