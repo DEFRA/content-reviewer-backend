@@ -35,10 +35,10 @@ vi.mock('../../../config.js', () => ({
 // ─── Test constants ──────────────────────────────────────────────────────────
 
 const CONFIG_CHUNK_SIZE_KEY = 'bedrock.chunkSizeChars'
-const CONFIG_MAX_TOKENS_KEY = 'bedrock.maxTokensPerChunk'
+const CONFIG_MAX_TOKENS_KEY = 'bedrock.maxTokens'
 
 const DEFAULT_CHUNK_SIZE = 25_000
-const DEFAULT_MAX_TOKENS_PER_CHUNK = 4_096
+const DEFAULT_MAX_TOKENS = 8_192
 
 const CHUNK_OFFSET_1000 = 1000
 const REF_OFFSET_2000 = 2000
@@ -55,7 +55,7 @@ function setupDefaultConfig() {
       return DEFAULT_CHUNK_SIZE
     }
     if (key === CONFIG_MAX_TOKENS_KEY) {
-      return DEFAULT_MAX_TOKENS_PER_CHUNK
+      return DEFAULT_MAX_TOKENS
     }
     return undefined
   })
@@ -88,7 +88,7 @@ describe('BedrockReviewProcessor - processChunk - Bedrock call and parsing', () 
     processor = new BedrockReviewProcessor()
   })
 
-  test('calls performBedrockReview with chunkReviewId and maxTokensPerChunk', async () => {
+  test('calls performBedrockReview with chunkReviewId and chunk text', async () => {
     const chunk = { text: 'chunk text', startOffset: 0, index: 2 }
     const bedrockResult = {
       bedrockResponse: { content: 'response', usage: {} },
@@ -103,8 +103,7 @@ describe('BedrockReviewProcessor - processChunk - Bedrock call and parsing', () 
 
     expect(processor.performBedrockReview).toHaveBeenCalledWith(
       'review-abc_chunk_2',
-      'chunk text',
-      DEFAULT_MAX_TOKENS_PER_CHUNK
+      'chunk text'
     )
   })
 
