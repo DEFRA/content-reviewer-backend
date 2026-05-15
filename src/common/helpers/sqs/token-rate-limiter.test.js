@@ -280,6 +280,62 @@ describe('TokenRateLimiter - acquire - throttling', () => {
   })
 })
 
+// ─── release ──────────────────────────────────────────────────────────────────
+
+describe('TokenRateLimiter - release', () => {
+  let limiter
+
+  beforeEach(() => {
+    limiter = new TokenRateLimiter(BUDGET_100)
+  })
+
+  test('reduces reserved tokens to actual usage when actual is less than reserved', async () => {
+    await limiter.acquire(60, 'req1')
+    limiter.release('req1', 30)
+    expect(limiter._entries.find((e) => e.label === 'req1').tokens).toBe(30)
+    expect(limiter.getStatus().usedTokens).toBe(30)
+  })
+
+  test('is a no-op when label is not found in entries', async () => {
+    await limiter.acquire(60, 'req1')
+    limiter.release('unknown', 10)
+    expect(limiter.getStatus().usedTokens).toBe(60)
+  })
+
+  test('is a no-op when actualTokens is null', async () => {
+    await limiter.acquire(60, 'req1')
+    limiter.release('req1', null)
+    expect(limiter.getStatus().usedTokens).toBe(60)
+  })
+
+  test('is a no-op when actualTokens is undefined', async () => {
+    await limiter.acquire(60, 'req1')
+    limiter.release('req1', undefined)
+    expect(limiter.getStatus().usedTokens).toBe(60)
+  })
+
+  test('is a no-op when actualTokens equals reserved tokens', async () => {
+    await limiter.acquire(60, 'req1')
+    limiter.release('req1', 60)
+    expect(limiter.getStatus().usedTokens).toBe(60)
+  })
+
+  test('is a no-op when actualTokens exceeds reserved tokens', async () => {
+    await limiter.acquire(60, 'req1')
+    limiter.release('req1', 80)
+    expect(limiter.getStatus().usedTokens).toBe(60)
+  })
+
+  test('freeing tokens allows a previously blocked acquire to proceed', async () => {
+    // Budget=100, acquire 80 → only 20 remaining, cannot fit another 40
+    await limiter.acquire(80, 'req1')
+    // Release down to 40 → 60 remaining, now 40 fits
+    limiter.release('req1', 40)
+    await expect(limiter.acquire(40, 'req2')).resolves.toBeUndefined()
+    expect(limiter.getStatus().usedTokens).toBe(80)
+  })
+})
+
 // ─── getStatus ────────────────────────────────────────────────────────────────
 
 describe('TokenRateLimiter - getStatus', () => {

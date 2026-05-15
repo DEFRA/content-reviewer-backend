@@ -35,17 +35,21 @@ vi.mock('../../../config.js', () => ({
 // Rate limiter must be mocked so performChunkedReview does not hit the real
 // singleton or block on token budget during unit tests.
 const mockAcquire = vi.fn().mockResolvedValue(undefined)
+const mockRelease = vi.fn()
 vi.mock('./token-rate-limiter.js', () => ({
-  getTokenRateLimiter: vi.fn(() => ({ acquire: mockAcquire }))
+  getTokenRateLimiter: vi.fn(() => ({
+    acquire: mockAcquire,
+    release: mockRelease
+  }))
 }))
 
 // ─── Test constants ──────────────────────────────────────────────────────────
 
 const CONFIG_CHUNK_SIZE_KEY = 'bedrock.chunkSizeChars'
-const CONFIG_MAX_TOKENS_KEY = 'bedrock.maxTokensPerChunk'
+const CONFIG_MAX_TOKENS_KEY = 'bedrock.maxTokens'
 
 const DEFAULT_CHUNK_SIZE = 25_000
-const DEFAULT_MAX_TOKENS_PER_CHUNK = 4_096
+const DEFAULT_MAX_TOKENS = 8_192
 const SMALL_CHUNK_SIZE = 10
 
 const INPUT_TOKENS_DEFAULT = 100
@@ -74,7 +78,7 @@ function setupDefaultConfig() {
   mockConfigGet.mockImplementation((key) => {
     const values = {
       [CONFIG_CHUNK_SIZE_KEY]: DEFAULT_CHUNK_SIZE,
-      [CONFIG_MAX_TOKENS_KEY]: DEFAULT_MAX_TOKENS_PER_CHUNK,
+      [CONFIG_MAX_TOKENS_KEY]: DEFAULT_MAX_TOKENS,
       'bedrock.maxTokensPerMinute': 45_000,
       'bedrock.systemPromptOverheadTokens': 4_000
     }
@@ -86,7 +90,7 @@ function setupSmallChunkConfig() {
   mockConfigGet.mockImplementation((key) => {
     const values = {
       [CONFIG_CHUNK_SIZE_KEY]: SMALL_CHUNK_SIZE,
-      [CONFIG_MAX_TOKENS_KEY]: DEFAULT_MAX_TOKENS_PER_CHUNK,
+      [CONFIG_MAX_TOKENS_KEY]: DEFAULT_MAX_TOKENS,
       'bedrock.maxTokensPerMinute': 45_000,
       'bedrock.systemPromptOverheadTokens': 4_000
     }

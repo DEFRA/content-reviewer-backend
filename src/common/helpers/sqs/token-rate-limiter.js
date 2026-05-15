@@ -98,7 +98,11 @@ export class TokenRateLimiter {
 
       if (usage + next.tokens <= this.maxTokensPerMinute) {
         this._queue.shift()
-        this._entries.push({ tokens: next.tokens, timestamp: Date.now() })
+        this._entries.push({
+          tokens: next.tokens,
+          timestamp: Date.now(),
+          label: next.label
+        })
 
         logger.info(
           {
@@ -154,6 +158,35 @@ export class TokenRateLimiter {
         this._drainLoop()
       }
     })
+  }
+
+  /**
+   * Update the recorded reservation for a completed request with its actual
+   * token usage, freeing any over-reserved tokens back into the window budget.
+   *
+   * Call this immediately after a successful Bedrock response so that the
+   * next queued chunk can use the freed capacity without waiting for the
+   * 60-second window to expire.
+   *
+   * @param {string} label       - Same label used in the acquire() call
+   * @param {number} actualTokens - Actual total tokens reported by Bedrock usage
+   */
+  release(label, actualTokens) {
+    if (actualTokens == null || !label) return
+    const entry = this._entries.find((e) => e.label === label)
+    if (!entry || actualTokens >= entry.tokens) return
+
+    const freed = entry.tokens - actualTokens
+    logger.info(
+      {
+        label,
+        reservedTokens: entry.tokens,
+        actualTokens,
+        freedTokens: freed
+      },
+      `[RATE-LIMITER] Released ${freed} tokens for ${label} (reserved: ${entry.tokens}, actual: ${actualTokens})`
+    )
+    entry.tokens = actualTokens
   }
 
   /** Current snapshot for status/monitoring endpoints. */
