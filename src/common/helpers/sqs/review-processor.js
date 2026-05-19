@@ -79,7 +79,7 @@ export class ReviewProcessor {
    * @returns {Promise<boolean>}
    */
   async isQueueWaitExceeded(message, messageHandler, body) {
-    const sentTimestamp = parseInt(
+    const sentTimestamp = Number.parseInt(
       message?.Attributes?.SentTimestamp ?? '0',
       10
     )
