@@ -34,6 +34,14 @@ const { MOCK_RECEIVE_MESSAGES } = vi.hoisted(() => ({
   MOCK_RECEIVE_MESSAGES: vi.fn()
 }))
 
+const { MOCK_GET_STATUS } = vi.hoisted(() => ({
+  MOCK_GET_STATUS: vi.fn()
+}))
+
+const { MOCK_LOGGER_INFO } = vi.hoisted(() => ({
+  MOCK_LOGGER_INFO: vi.fn()
+}))
+
 vi.mock('../../config.js', () => ({
   config: {
     get: vi.fn((key) => {
@@ -43,7 +51,11 @@ vi.mock('../../config.js', () => ({
         'sqs.waitTimeSeconds': WAIT_TIME_SECONDS,
         'sqs.visibilityTimeout': VISIBILITY_TIMEOUT,
         'sqs.maxConcurrentRequests': MAX_CONCURRENT,
-        'aws.region': AWS_REGION
+        'aws.region': AWS_REGION,
+        'bedrock.maxTokensPerMinute': 100_000,
+        'bedrock.chunkSizeChars': 25_000,
+        'bedrock.systemPromptOverheadTokens': 4_000,
+        'bedrock.maxTokens': 6_000
       }
       return values[key] ?? null
     })
@@ -52,10 +64,16 @@ vi.mock('../../config.js', () => ({
 
 vi.mock('./logging/logger.js', () => ({
   createLogger: vi.fn(() => ({
-    info: vi.fn(),
+    info: MOCK_LOGGER_INFO,
     warn: vi.fn(),
     error: vi.fn(),
     debug: vi.fn()
+  }))
+}))
+
+vi.mock('./sqs/token-rate-limiter.js', () => ({
+  getTokenRateLimiter: vi.fn(() => ({
+    getStatus: MOCK_GET_STATUS
   }))
 }))
 
@@ -190,9 +208,14 @@ describe('SQSWorker.enqueueMessage', () => {
 
 // ── fetchAndEnqueueMessages() ─────────────────────────────────────────────────
 
+// minTokensForNewReview = ceil(25000/4) + 4000 + 6000 = 16250
+const MIN_TOKENS = 16_250
+
 describe('SQSWorker.fetchAndEnqueueMessages', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    // Default: plenty of budget so existing tests are unaffected
+    MOCK_GET_STATUS.mockReturnValue({ remainingTokens: 100_000 })
   })
 
   it('enqueues received messages', async () => {
@@ -224,6 +247,29 @@ describe('SQSWorker.fetchAndEnqueueMessages', () => {
     MOCK_RECEIVE_MESSAGES.mockResolvedValueOnce(null)
     await worker.fetchAndEnqueueMessages()
     expect(worker.processingQueue.length).toBe(0)
+  })
+
+  it('skips SQS fetch and logs when remaining token budget is below minimum', async () => {
+    MOCK_GET_STATUS.mockReturnValue({ remainingTokens: MIN_TOKENS - 1 })
+    const worker = new SQSWorker()
+    await worker.fetchAndEnqueueMessages()
+    expect(MOCK_RECEIVE_MESSAGES).not.toHaveBeenCalled()
+    expect(MOCK_LOGGER_INFO).toHaveBeenCalledWith(
+      expect.objectContaining({
+        remainingTokens: MIN_TOKENS - 1,
+        minTokensForNewReview: MIN_TOKENS
+      }),
+      '[SQS-WORKER] Token budget near limit — deferring SQS fetch, messages will wait in queue'
+    )
+  })
+
+  it('proceeds with SQS fetch when remaining token budget meets minimum', async () => {
+    MOCK_GET_STATUS.mockReturnValue({ remainingTokens: MIN_TOKENS })
+    const worker = new SQSWorker()
+    MOCK_RECEIVE_MESSAGES.mockResolvedValueOnce([{ MessageId: MESSAGE_ID_1 }])
+    await worker.fetchAndEnqueueMessages()
+    expect(MOCK_RECEIVE_MESSAGES).toHaveBeenCalledTimes(1)
+    expect(worker.processingQueue.length).toBe(1)
   })
 })
 
@@ -385,6 +431,59 @@ describe('SQSWorker.poll', () => {
 
     expect(fetchCalls).toBe(2)
     expect(worker.handlePollingError).toHaveBeenCalledTimes(1)
+  })
+})
+
+// ── _logRateLimiterStatus() ───────────────────────────────────────────────────
+
+describe('SQSWorker._logRateLimiterStatus', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    MOCK_GET_STATUS.mockReturnValue({
+      usedTokens: 50_000,
+      maxTokensPerMinute: 100_000,
+      remainingTokens: 50_000,
+      queueLength: 0,
+      queuedHigh: 0,
+      queuedNormal: 0
+    })
+  })
+
+  it('logs rate limiter snapshot when interval has elapsed', () => {
+    const worker = new SQSWorker()
+    // _lastRateLimiterLogMs starts at 0 so the interval has always elapsed
+    worker._logRateLimiterStatus()
+    expect(MOCK_LOGGER_INFO).toHaveBeenCalledWith(
+      expect.objectContaining({
+        usedTokens: 50_000,
+        maxTokensPerMinute: 100_000,
+        remainingTokens: 50_000,
+        queueLength: 0,
+        queuedHigh: 0,
+        queuedNormal: 0,
+        currentConcurrentRequests: 0,
+        maxConcurrentRequests: MAX_CONCURRENT
+      }),
+      '[RATE-LIMITER] Periodic token budget snapshot'
+    )
+  })
+
+  it('updates _lastRateLimiterLogMs after logging', () => {
+    const worker = new SQSWorker()
+    const before = Date.now()
+    worker._logRateLimiterStatus()
+    expect(worker._lastRateLimiterLogMs).toBeGreaterThanOrEqual(before)
+  })
+
+  it('does not log when interval has not yet elapsed', () => {
+    const worker = new SQSWorker()
+    worker._lastRateLimiterLogMs = Date.now() // just logged
+    MOCK_LOGGER_INFO.mockClear()
+    worker._logRateLimiterStatus()
+    expect(MOCK_LOGGER_INFO).not.toHaveBeenCalledWith(
+      expect.anything(),
+      '[RATE-LIMITER] Periodic token budget snapshot'
+    )
   })
 })
 
