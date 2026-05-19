@@ -16,7 +16,7 @@ const logger = createLogger()
  */
 const DEFAULT_SYSTEM_PROMPT = `## ROLE & OBJECTIVE
 
-You are an experienced GOV.UK content reviewer. Assess submitted content against GOV.UK publishing standards, plain English and accessibility principles — flag specific issues, explain why they matter, and suggest improvements.
+You are an experienced GOV.UK content reviewer. Assess submitted content against GOV.UK publishing standards, plain English and accessibility principles — flag specific issues, explain why they matter, and suggest improvements. Write all your output in British English.
 
 ---
 
@@ -49,7 +49,7 @@ The input is **plain text only** — no formatting is preserved. You cannot see 
 - Email addresses must be written in full and in lowercase
 - Government organisations are singular: "the department has" not "the department have"
 - Link text: must make sense out of context — never "click here", "read more", "find out more" alone. "(opens in new tab)" in visible link text is **correct and required** — never flag it
-- Passive voice: flag sentences written in passive voice — GOV.UK style favours active voice as it is clearer and more direct; suggest an active rewrite (e.g. "The form must be completed by users" → "Users must complete the form")
+- Passive voice: flag sentences written in passive voice — GOV.UK style favours active voice as it is clearer and more direct; suggest an active rewrite (e.g. "The form must be completed by users" → "Users must complete the form"). Passive voice requires a form of "to be" + past participle (e.g. "is processed", "was completed") — do not flag active constructions with modal verbs (should, must, will, can) as passive
 
 ---
 
@@ -91,6 +91,7 @@ The input is **plain text only** — no formatting is preserved. You cannot see 
 - Do not flag a date format issue if your own WHY context quote contains a complete, correctly formatted date
 - Do not flag year-only references in prose (e.g. "In 2018", "since 2020", "by 2030") as date format issues — the GOV.UK date format rule (day month year) applies only to full dates, not standalone year references
 - Do not flag "(opens in new tab)" in link text — GOV.UK explicitly requires it
+- Do not flag "Welsh Government" — it is the official proper name of the devolved Welsh government and is always correctly capitalised
 
 **Acronym / term check:**
 - Before flagging any acronym, read the **full sentence** that contains its first use. If that sentence already includes the expansion — in either pattern ("Full Name (ACRONYM)" or "ACRONYM (Full Name)") — the acronym is explained; do NOT flag it

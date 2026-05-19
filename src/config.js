@@ -267,6 +267,12 @@ const config = convict({
       format: Number,
       default: 180,
       env: 'SQS_HEARTBEAT_VISIBILITY_SECONDS'
+    },
+    maxQueueWaitMs: {
+      doc: 'Maximum time in milliseconds a message may wait in SQS before being failed with a high-demand error. Measured from SentTimestamp to the moment the worker dequeues it. Default 600,000 ms (10 minutes).',
+      format: Number,
+      default: 600_000,
+      env: 'SQS_MAX_QUEUE_WAIT_MS'
     }
   },
   bedrock: {

@@ -2,6 +2,7 @@ import { config } from '../../config.js'
 import { createLogger } from './logging/logger.js'
 import { SQSMessageHandler } from './sqs/message-handler.js'
 import { ReviewProcessor } from './sqs/review-processor.js'
+import { getTokenRateLimiter } from './sqs/token-rate-limiter.js'
 
 const logger = createLogger()
 
@@ -10,6 +11,7 @@ const BASE_BACKOFF_MS = 5000
 const MAX_BACKOFF_MS = 30000
 const MAX_CONSECUTIVE_ERRORS = 10
 const POLL_SLEEP_MS = 100
+const RATE_LIMITER_LOG_INTERVAL_MS = 60_000
 
 /**
  * SQS Worker to process messages from content review queue
@@ -27,6 +29,7 @@ class SQSWorker {
     this.maxConcurrentRequests = config.get('sqs.maxConcurrentRequests')
     this.currentConcurrentRequests = 0
     this.processingQueue = []
+    this._lastRateLimiterLogMs = 0
 
     logger.info(
       {
@@ -97,6 +100,7 @@ class SQSWorker {
         consecutiveErrors = 0
 
         await this.processQueuedMessages()
+        this._logRateLimiterStatus()
 
         await this.sleep(POLL_SLEEP_MS)
       } catch (error) {
@@ -122,6 +126,26 @@ class SQSWorker {
       this.maxConcurrentRequests - this.currentConcurrentRequests
 
     if (availableSlots <= 0) {
+      return
+    }
+
+    // Don't dequeue new messages if the token budget is near exhaustion.
+    // Keeps messages waiting in SQS rather than holding them in-process while
+    // the rate limiter sleeps, which would waste a concurrency slot.
+    const rateLimiter = getTokenRateLimiter(
+      config.get('bedrock.maxTokensPerMinute')
+    )
+    const { remainingTokens } = rateLimiter.getStatus()
+    const minTokensForNewReview =
+      Math.ceil(config.get('bedrock.chunkSizeChars') / 4) +
+      config.get('bedrock.systemPromptOverheadTokens') +
+      config.get('bedrock.maxTokens')
+
+    if (remainingTokens < minTokensForNewReview) {
+      logger.info(
+        { remainingTokens, minTokensForNewReview },
+        '[SQS-WORKER] Token budget near limit — deferring SQS fetch, messages will wait in queue'
+      )
       return
     }
 
@@ -241,6 +265,37 @@ class SQSWorker {
           )
         })
     }
+  }
+
+  /**
+   * Log token rate limiter status once per minute.
+   * Gives a periodic snapshot in app logs for Kibana monitoring.
+   */
+  _logRateLimiterStatus() {
+    const now = Date.now()
+    if (now - this._lastRateLimiterLogMs < RATE_LIMITER_LOG_INTERVAL_MS) {
+      return
+    }
+    this._lastRateLimiterLogMs = now
+
+    const rateLimiter = getTokenRateLimiter(
+      config.get('bedrock.maxTokensPerMinute')
+    )
+    const status = rateLimiter.getStatus()
+
+    logger.info(
+      {
+        usedTokens: status.usedTokens,
+        maxTokensPerMinute: status.maxTokensPerMinute,
+        remainingTokens: status.remainingTokens,
+        queueLength: status.queueLength,
+        queuedHigh: status.queuedHigh,
+        queuedNormal: status.queuedNormal,
+        currentConcurrentRequests: this.currentConcurrentRequests,
+        maxConcurrentRequests: this.maxConcurrentRequests
+      },
+      '[RATE-LIMITER] Periodic token budget snapshot'
+    )
   }
 
   /**
