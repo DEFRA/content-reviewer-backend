@@ -69,6 +69,61 @@ export class ReviewProcessor {
   }
 
   /**
+   * Check whether a message has waited in SQS beyond the maximum allowed time.
+   * If so, mark the review as failed with a user-facing high-demand message and
+   * delete the SQS message so it is not retried.
+   * Returns true when the message should be skipped.
+   * @param {Object} message - Raw SQS message
+   * @param {Object} messageHandler - SQSMessageHandler instance
+   * @param {Object} body - Parsed message body
+   * @returns {Promise<boolean>}
+   */
+  async isQueueWaitExceeded(message, messageHandler, body) {
+    const sentTimestamp = parseInt(
+      message?.Attributes?.SentTimestamp ?? '0',
+      10
+    )
+    if (!sentTimestamp) {
+      return false
+    }
+
+    const waitMs = Date.now() - sentTimestamp
+    const maxWaitMs = config.get('sqs.maxQueueWaitMs')
+
+    if (waitMs <= maxWaitMs) {
+      return false
+    }
+
+    const reviewId = body.reviewId || body.uploadId
+    logger.warn(
+      {
+        messageId: message.MessageId,
+        reviewId,
+        waitMs,
+        maxWaitMs
+      },
+      `[HIGH-DEMAND] Message waited ${waitMs}ms in SQS — exceeds limit of ${maxWaitMs}ms. Failing review with high-demand error.`
+    )
+
+    if (reviewId) {
+      try {
+        await reviewRepository.saveReviewError(
+          reviewId,
+          'Review failed due to high demand. Enter shorter content or try again later.'
+        )
+      } catch (saveErr) {
+        logger.error(
+          { reviewId, error: saveErr.message },
+          'Failed to save high-demand error to repository'
+        )
+      }
+    }
+
+    await messageHandler.deleteMessage(message.ReceiptHandle)
+    return true
+  }
+
+  /**
    * Check whether a message has exceeded the maximum receive count and, if so,
    * mark the review as permanently failed and delete the message.
    * Returns true when the message should be skipped (dead-lettered by the app).
@@ -174,6 +229,12 @@ export class ReviewProcessor {
       // Application-level dead-letter guard: stop processing if the message
       // has been delivered more times than maxReceiveCount.
       if (await this.isDeadLettered(message, messageHandler, body)) {
+        clearInterval(heartbeat)
+        return
+      }
+
+      // High-demand guard: fail the review if it has waited too long in SQS.
+      if (await this.isQueueWaitExceeded(message, messageHandler, body)) {
         clearInterval(heartbeat)
         return
       }
